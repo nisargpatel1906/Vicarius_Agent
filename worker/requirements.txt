@@ -1,0 +1,16 @@
+# Vicarius Agent Local Worker Dependencies
+# Sourced from PRD_academic_task_agent.md (Sections 6.3-6.5, 10 item 7)
+
+supabase>=2.13.0
+psutil>=6.1.0
+google-api-python-client>=2.160.0
+google-auth>=2.38.0
+google-auth-oauthlib>=1.2.1
+google-auth-httplib2>=0.2.0
+python-docx>=1.1.2
+python-pptx>=1.0.2
+openpyxl>=3.1.5
+reportlab>=4.3.1
+requests>=2.32.3
+pytz>=2025.1
+python-dotenv>=1.0.1
