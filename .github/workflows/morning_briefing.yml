@@ -1,0 +1,17 @@
+name: Morning Deadline Briefing
+
+on:
+  schedule:
+    # 02:30 UTC is 08:00 IST
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Morning Briefing
+        run: |
+          curl -X GET "${{ secrets.NEXT_PUBLIC_SITE_URL }}/api/briefing" \
+               -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+               -f -s

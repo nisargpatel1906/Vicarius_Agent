@@ -16,17 +16,27 @@ export interface TelegramUpdate {
     date: number;
     text?: string;
     caption?: string;
+    // Document (PDF, DOCX, etc.)
     document?: {
       file_id: string;
       file_name?: string;
       mime_type?: string;
       file_size?: number;
     };
+    // Photo messages (array of resolutions, use last = highest res)
     photo?: Array<{
       file_id: string;
       width: number;
       height: number;
+      file_size?: number;
     }>;
+    // Voice messages (Telegram voice note .ogg)
+    voice?: {
+      file_id: string;
+      duration: number;
+      mime_type?: string;
+      file_size?: number;
+    };
     reply_to_message?: {
       message_id: number;
       text?: string;
@@ -244,14 +254,15 @@ Extract the structured task details into strict JSON:
 
   await logSystemEvent('info', 'telegram', `New task created from Telegram: '${title}' (ID: ${taskId})`);
 
+  const displayDue = new Date(dueDate).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+
   return (
     `✅ <b>Task Created & Queued!</b>\n\n` +
     `📌 <b>Title:</b> ${escapeHtml(title)}\n` +
     `📚 <b>Course:</b> ${escapeHtml(course)}\n` +
     `🏷️ <b>Type:</b> <code>${taskType}</code>\n` +
-    `⏰ <b>Due Date:</b> ${new Date(dueDate).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n` +
-    `🆔 <b>Task ID:</b> <code>${taskId}</code>\n\n` +
-    `<i>The local worker will claim and build your deliverables automatically.</i>`
+    `⏰ <b>Due:</b> ${displayDue}\n\n` +
+    `<i>The background daemon worker will pick this up automatically.</i>`
   );
 }
 
@@ -525,7 +536,34 @@ Instructions:
       }
 
       const aiText = message?.content || 'I processed your message.';
-      
+
+      // ─────────────────────────────────────────────────────────────────
+      // Phase 1B: AI Safety-Net
+      // If the model returned TEXT that looks like a task outline/content
+      // without calling the create_academic_task tool, auto-intercept.
+      // ─────────────────────────────────────────────────────────────────
+      const looksLikeTaskOutline = (
+        /slide\s*\d+|\d+\.\s+[A-Z]/i.test(aiText) ||
+        /(introduction|overview|conclusion|summary|objectives|methodology)/i.test(aiText)
+      ) && (
+        /(create|build|make|generate|prepare|write|design)/i.test(userPrompt) ||
+        /(ppt|presentation|slide|report|essay|research|code|project|app)/i.test(userPrompt)
+      );
+
+      if (looksLikeTaskOutline) {
+        console.log('[AI-Safety-Net] Model returned outline instead of calling tool — auto-creating task.');
+        try {
+          const autoConfirmation = await createTaskFromTelegram(userPrompt);
+          const safetyMsg = `⚡ <b>Auto-detected:</b> I noticed you want me to build something, so I've automatically queued it!\n\n${autoConfirmation}`;
+          await supabase.from('chat_messages').insert({
+            chat_id: chatId, role: 'assistant', content: safetyMsg
+          });
+          return safetyMsg;
+        } catch (e) {
+          // Fall through to return the AI text if auto-creation fails
+        }
+      }
+
       // Save assistant response to history
       await supabase.from('chat_messages').insert({
         chat_id: chatId,
@@ -541,6 +579,114 @@ Instructions:
   }
 
   return 'I am currently unable to answer (AI key not configured).';
+}
+
+
+/**
+ * Phase 2A: Downloads and transcribes a Telegram voice message via Whisper.
+ */
+async function transcribeVoiceMessage(fileId: string): Promise<string> {
+  const token = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
+  const openRouterKey = process.env.OPENROUTER_API_KEY;
+
+  try {
+    // Step 1: Get file path from Telegram
+    const fileRes = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`);
+    if (!fileRes.ok) throw new Error('Failed to get file info from Telegram');
+    const fileData = await fileRes.json();
+    const filePath = fileData.result?.file_path;
+    if (!filePath) throw new Error('No file_path in Telegram response');
+
+    // Step 2: Download voice file
+    const audioUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
+    const audioRes = await fetch(audioUrl);
+    if (!audioRes.ok) throw new Error('Failed to download voice file');
+    const audioBuffer = await audioRes.arrayBuffer();
+
+    // Step 3: Transcribe via OpenAI Whisper (using standard OpenAI endpoint if key available)
+    const openAiKey = process.env.OPENAI_API_KEY;
+    if (openAiKey) {
+      const formData = new FormData();
+      const audioBlob = new Blob([audioBuffer], { type: 'audio/ogg' });
+      formData.append('file', audioBlob, 'voice.ogg');
+      formData.append('model', 'whisper-1');
+      formData.append('language', 'en');
+
+      const whisperRes = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${openAiKey}` },
+        body: formData,
+      });
+      if (whisperRes.ok) {
+        const whisperData = await whisperRes.json();
+        return whisperData.text || '';
+      }
+    }
+
+    // Fallback: Use OpenRouter MiniMax (text-only fallback message)
+    console.warn('[Whisper] OpenAI key not available, audio transcription skipped.');
+    return '[Voice message received — transcription unavailable. Please type your request.]';
+  } catch (err: any) {
+    console.error('[Whisper] Transcription error:', err?.message);
+    return '[Could not transcribe voice message. Please type your request.]';
+  }
+}
+
+
+/**
+ * Phase 2B: Extracts assignment requirements from a photo or PDF using AI vision.
+ */
+async function extractTaskFromImage(fileId: string, mimeType?: string): Promise<string> {
+  const token = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
+  const openRouterKey = process.env.OPENROUTER_API_KEY;
+  if (!openRouterKey) return '';
+
+  try {
+    // Step 1: Get file download URL
+    const fileRes = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`);
+    const fileData = await fileRes.json();
+    const filePath = fileData.result?.file_path;
+    if (!filePath) return '';
+    const fileUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
+
+    // Step 2: Send to OpenRouter vision model for OCR + extraction
+    const visionRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${openRouterKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'minimax/minimax-m3:free',
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'image_url',
+                image_url: { url: fileUrl },
+              },
+              {
+                type: 'text',
+                text: 'Extract all assignment requirements from this image/document. List: the assignment title, course name, due date, and all specific instructions or requirements. Return as plain text, structured clearly.',
+              },
+            ],
+          },
+        ],
+        temperature: 0.1,
+      }),
+    });
+
+    if (!visionRes.ok) {
+      console.warn(`[Vision] OCR request failed: ${visionRes.status}`);
+      return '';
+    }
+    const visionData = await visionRes.json();
+    return visionData.choices?.[0]?.message?.content || '';
+  } catch (err: any) {
+    console.error('[Vision] Image extraction error:', err?.message);
+    return '';
+  }
 }
 
 /**
@@ -565,10 +711,67 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
   const supabase = getSupabaseAdmin();
   const text = update.message?.text?.trim() || update.message?.caption?.trim() || '';
 
+  // ── Phase 2A: Voice Message → Transcription → AI ──
+  if (update.message?.voice) {
+    const voice = update.message.voice;
+    await reply('🎤 <i>Voice message received — transcribing...</i>');
+    const transcript = await transcribeVoiceMessage(voice.file_id);
+    if (transcript && !transcript.startsWith('[')) {
+      await reply(`🎤 <b>Heard:</b> "${escapeHtml(transcript)}"\n\n<i>Processing...</i>`);
+      const aiResponse = await askAiAssistant(transcript, incomingChatId);
+      await reply(aiResponse);
+    } else {
+      await reply(`🎤 ${escapeHtml(transcript)}`);
+    }
+    return { handled: true, responseText: 'Voice message processed' };
+  }
+
+  // ── Phase 2B: Photo → Vision OCR → Task Extraction ──
+  if (update.message?.photo && update.message.photo.length > 0) {
+    const photos = update.message.photo;
+    const highestRes = photos[photos.length - 1]; // last = highest resolution
+    await reply('📷 <i>Photo received — extracting assignment requirements...</i>');
+    const caption = update.message.caption || '';
+    const extracted = await extractTaskFromImage(highestRes.file_id);
+    if (extracted) {
+      const combinedPrompt = caption
+        ? `${caption}\n\nExtracted from image:\n${extracted}`
+        : `Assignment detected in photo:\n${extracted}`;
+      await reply(`📋 <b>Extracted requirements:</b>\n${escapeHtml(extracted.slice(0, 400))}...\n\n<i>Creating task...</i>`);
+      const aiResponse = await askAiAssistant(combinedPrompt, incomingChatId);
+      await reply(aiResponse);
+    } else {
+      await reply('❌ Could not extract assignment details from the photo. Please type the requirements or send a clearer image.');
+    }
+    return { handled: true, responseText: 'Photo processed' };
+  }
+
   // 1. Check if user attached a document/file
   if (update.message?.document) {
     const doc = update.message.document;
     const caption = text || doc.file_name || 'Academic Assignment Document';
+    
+    // Phase 2B: PDF vision extraction
+    if (doc.mime_type === 'application/pdf') {
+      await reply('📄 <i>PDF received — extracting assignment requirements with AI vision...</i>');
+      const extracted = await extractTaskFromImage(doc.file_id, doc.mime_type);
+      if (extracted) {
+        const prompt = `Assignment from PDF "${doc.file_name || 'document'}": ${caption}\n\nExtracted content:\n${extracted}`;
+        await reply(`📋 <b>Extracted from PDF:</b>\n${escapeHtml(extracted.slice(0, 400))}...\n\n<i>Creating task...</i>`);
+        const aiResponse = await askAiAssistant(prompt, incomingChatId);
+        await reply(aiResponse);
+      } else {
+        const prompt = `Attached PDF: ${doc.file_name || 'document'}\nInstructions: ${caption}`;
+        try {
+          const confirmation = await createTaskFromTelegram(prompt);
+          await reply(confirmation);
+        } catch (err: any) {
+          await reply(`❌ Failed to create task: ${escapeHtml(err.message)}`);
+        }
+      }
+      return { handled: true, responseText: 'PDF task created' };
+    }
+    
     const prompt = `Attached file: ${doc.file_name || 'document'}\nInstructions: ${caption}`;
     try {
       const confirmation = await createTaskFromTelegram(prompt);
@@ -833,7 +1036,7 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
         .eq('id', taskId);
 
       if (!error) {
-        await reply(`🔄 Task <code>${escapeHtml(taskId)}</code> requeued for build.`);
+        await reply(`🔄 Task <code>${escapeHtml(taskId)}</code> requeued for build.\n\n<i>The background worker will pick it up on the next cycle.</i>`);
       } else {
         await reply(`❌ Could not retry task: ${escapeHtml(error.message)}`);
       }
@@ -841,23 +1044,87 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
     }
   }
 
+  // Phase 3D: /ask Command — search past deliverables + AI Q&A
+  if (lower.startsWith('/ask')) {
+    const question = text.replace(/^\/ask\s*/i, '').trim();
+    if (!question) {
+      await reply(
+        '🔍 <b>How to use /ask:</b>\n\n' +
+        '<code>/ask what was my CIFAR-10 accuracy?</code>\n' +
+        '<code>/ask show me links for ML lab report</code>\n' +
+        '<code>/ask what is the deadline for CE-401?</code>'
+      );
+      return { handled: true };
+    }
+
+    // Search deliverables and tasks
+    const keywords = question.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+    const { data: searchTasks } = await supabase
+      .from('tasks')
+      .select('id, title, course, status, due_date, result_summary')
+      .eq('archived', false)
+      .or(keywords.map(k => `title.ilike.%${k}%`).join(','))
+      .limit(5);
+
+    const { data: searchDelivs } = await supabase
+      .from('deliverables')
+      .select('task_id, file_name, file_type, drive_link, created_at')
+      .or(keywords.map(k => `file_name.ilike.%${k}%`).join(','))
+      .limit(5);
+
+    if ((searchTasks && searchTasks.length > 0) || (searchDelivs && searchDelivs.length > 0)) {
+      let resultMsg = `🔍 <b>Results for:</b> "${escapeHtml(question)}"\n\n`;
+
+      if (searchTasks && searchTasks.length > 0) {
+        resultMsg += `<b>📋 Matching Tasks:</b>\n`;
+        searchTasks.forEach(t => {
+          const dueStr = t.due_date ? new Date(t.due_date).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'N/A';
+          resultMsg += `• [${t.status.toUpperCase()}] <b>${escapeHtml(t.title)}</b> — Due: ${dueStr}\n`;
+          if (t.result_summary) resultMsg += `  <i>${escapeHtml(t.result_summary.slice(0, 80))}</i>\n`;
+        });
+        resultMsg += '\n';
+      }
+
+      if (searchDelivs && searchDelivs.length > 0) {
+        resultMsg += `<b>📁 Deliverable Files:</b>\n`;
+        searchDelivs.forEach(d => {
+          if (d.drive_link) {
+            resultMsg += `• <a href="${d.drive_link}">${escapeHtml(d.file_name)}</a>\n`;
+          } else {
+            resultMsg += `• <code>${escapeHtml(d.file_name)}</code>\n`;
+          }
+        });
+      }
+
+      await reply(resultMsg);
+    } else {
+      // No DB results — ask AI assistant
+      const aiAnswer = await askAiAssistant(question, incomingChatId);
+      await reply(`🔍 <b>No records found.</b> Here's what the AI knows:\n\n${aiAnswer}`);
+    }
+    return { handled: true };
+  }
+
   // 9. Help / Start Command
   if (lower === '/help' || lower === '/start') {
     const helpMsg =
-      `🤖 <b>Vicarius Academic Assistant Commands</b>\n\n` +
-      `<b>Task Management:</b>\n` +
-      `• <code>/task &lt;details&gt;</code> — Create & queue a new academic task\n` +
-      `• <code>/tasks</code> or <code>/list</code> — View all active tasks\n` +
-      `• <code>/details &lt;task_id&gt;</code> — View requirements & download links\n` +
-      `• <code>/retry &lt;task_id&gt;</code> — Requeue a flagged or failed task\n` +
+      `🤖 <b>Vicarius Academic Assistant</b>\n\n` +
+      `<b>📝 Task Management:</b>\n` +
+      `• <code>/task &lt;details&gt;</code> — Create &amp; queue task\n` +
+      `• <code>/tasks</code> — View all active tasks\n` +
+      `• <code>/details &lt;task_id&gt;</code> — View requirements &amp; download links\n` +
+      `• <code>/retry &lt;task_id&gt;</code> — Requeue a flagged task\n` +
       `• <code>/cancel &lt;task_id&gt;</code> — Archive / cancel a task\n\n` +
-      `<b>System:</b>\n` +
-      `• <code>/status</code> — System telemetry & queue state\n` +
-      `• <code>/help</code> — Show this command menu\n\n` +
-      `<b>Interactive AI Chat & Ingestion:</b>\n` +
-      `• <b>Direct Chat:</b> Ask any questions about your courses, concepts, or schedule.\n` +
-      `• <b>Document Upload:</b> Send any <code>.pdf</code> or <code>.docx</code> assignment brief to auto-create a task!\n` +
-      `• <b>Clarifications:</b> Reply to any question alert from the bot to guide the build worker.`;
+      `<b>🔍 Search &amp; Ask:</b>\n` +
+      `• <code>/ask &lt;question&gt;</code> — Search past deliverables &amp; results\n` +
+      `• <code>/status</code> — Live system telemetry\n\n` +
+      `<b>🎙️ Natural Language Input:</b>\n` +
+      `• <b>Type naturally:</b> "make me a 10-slide ppt on Cloud Computing" → auto-queued!\n` +
+      `• <b>Voice notes:</b> 🎤 Send a voice message — I'll transcribe and process it\n` +
+      `• <b>Photos:</b> 📷 Send a photo of an assignment sheet — I'll extract requirements\n` +
+      `• <b>PDFs:</b> 📄 Attach a PDF — I'll read and auto-create the task\n\n` +
+      `<b>💬 AI Chat:</b>\n` +
+      `• Ask any academic concept question or just chat!`;
     await reply(helpMsg);
     return { handled: true };
   }
