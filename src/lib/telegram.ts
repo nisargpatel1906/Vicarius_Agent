@@ -667,12 +667,64 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
     return { handled: true };
   }
 
-  // 10. Direct AI Chat & Academic Q&A (fallback for any natural language input)
+  // 10. Natural Language Intent Processing (Agentic Human-Like Interaction)
+  const isExplicitTaskCreation =
+    /\b(create|make|generate|build|write|train|code|prepare|produce|develop|draft)\b/i.test(text) &&
+    /\b(task|presentation|slides|deck|report|essay|paper|project|code|web app|app|model|resnet|cifar|dataset|review|document|assignment|homework|sharding)\b/i.test(text);
+
+  const isStatusInquiry =
+    /\b(what is the status|show my tasks|list tasks|active tasks|current tasks|task status|how many tasks|what tasks|any pending)\b/i.test(text);
+
+  if (isExplicitTaskCreation) {
+    try {
+      const confirmation = await createTaskFromTelegram(text);
+      await reply(confirmation);
+      return { handled: true, responseText: 'Task created from natural language' };
+    } catch (err: any) {
+      await reply(`❌ Failed to create task: ${escapeHtml(err.message)}`);
+      return { handled: true };
+    }
+  }
+
+  if (isStatusInquiry) {
+    const { data: allTasks } = await supabase
+      .from('tasks')
+      .select('id, title, status, course, due_date')
+      .eq('archived', false)
+      .order('due_date', { ascending: true });
+
+    const queued = allTasks?.filter((t) => t.status === 'queued' || t.status === 'new').length || 0;
+    const building = allTasks?.filter((t) => t.status === 'building' || t.status === 'claimed' || t.status === 'verifying').length || 0;
+    const flagged = allTasks?.filter((t) => t.status === 'flagged').length || 0;
+    const done = allTasks?.filter((t) => t.status === 'done').length || 0;
+
+    let statusMsg =
+      `📊 <b>Vicarius Academic System Status</b>\n\n` +
+      `• ⏳ <b>Queued:</b> ${queued}\n` +
+      `• 🔨 <b>In Progress:</b> ${building}\n` +
+      `• ⚠️ <b>Flagged:</b> ${flagged}\n` +
+      `• ✅ <b>Done:</b> ${done}\n\n`;
+
+    if (allTasks && allTasks.length > 0) {
+      statusMsg += `<b>Upcoming Coursework:</b>\n`;
+      allTasks.slice(0, 5).forEach((t) => {
+        const dueStr = t.due_date ? new Date(t.due_date).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'No deadline';
+        statusMsg += `• [${t.status.toUpperCase()}] <b>${escapeHtml(t.title)}</b> (${escapeHtml(t.course || 'General')}) — Due: ${dueStr}\n`;
+      });
+    } else {
+      statusMsg += `<i>No active tasks currently in queue.</i>\n`;
+    }
+
+    await reply(statusMsg);
+    return { handled: true };
+  }
+
+  // 11. Direct AI Chat & Academic Q&A (fallback for conversational queries)
   try {
     const aiResponse = await askAiAssistant(text, incomingChatId);
     await reply(aiResponse);
   } catch (err: any) {
-    await reply("I'm your Vicarius academic assistant. Use <code>/task &lt;prompt&gt;</code> to queue a task or <code>/status</code> to check progress.");
+    await reply("I'm your Vicarius academic assistant. Ask me anything about your coursework or tell me what academic tasks to build!");
   }
 
   return { handled: true };
