@@ -1,7 +1,6 @@
 // Classification & Extraction Engine
 // Sourced from PRD_academic_task_agent.md (Section 6.2, 6.3, 7)
 
-import Groq from 'groq-sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { getSupabaseAdmin, logSystemEvent } from './supabase';
 import { Task, TaskType, ExtractedRequirements } from './types';
@@ -19,30 +18,9 @@ export interface ClassificationOutput {
 }
 
 /**
- * Call Groq with fallback to OpenRouter on rate limits
+ * Call OpenRouter with MiniMax model
  */
 async function callLlmWithFallback(prompt: string, systemPrompt: string): Promise<string> {
-  const groqKey = process.env.GROQ_API_KEY;
-  if (groqKey) {
-    try {
-      const groq = new Groq({ apiKey: groqKey });
-      const completion = await groq.chat.completions.create({
-        model: 'qwen/qwen3.8-27b',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: prompt },
-        ],
-        temperature: 0.1,
-      });
-      const response = completion.choices[0]?.message?.content;
-      if (response) return response;
-    } catch (groqErr: any) {
-      console.warn('Groq API failed or rate-limited. Falling back to OpenRouter:', groqErr?.message || groqErr);
-      await logSystemEvent('warning', 'classify', `Groq rate-limit/error fallback triggered: ${groqErr?.message || groqErr}`);
-    }
-  }
-
-  // OpenRouter Fallback
   const openRouterKey = process.env.OPENROUTER_API_KEY;
   if (openRouterKey) {
     try {
@@ -55,7 +33,7 @@ async function callLlmWithFallback(prompt: string, systemPrompt: string): Promis
           'X-Title': 'Vicarius Agent',
         },
         body: JSON.stringify({
-          model: 'openai/gpt-4o-mini',
+          model: 'minimax/minimax-01',
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: prompt },
@@ -68,13 +46,17 @@ async function callLlmWithFallback(prompt: string, systemPrompt: string): Promis
         const data = await res.json();
         const content = data.choices?.[0]?.message?.content;
         if (content) return content;
+      } else {
+        const errBody = await res.text();
+        throw new Error(`OpenRouter API error: ${res.statusText} - ${errBody}`);
       }
     } catch (orErr: any) {
-      console.error('OpenRouter fallback failed:', orErr);
+      console.error('OpenRouter classification failed:', orErr);
+      await logSystemEvent('error', 'classify', `OpenRouter error: ${orErr?.message || orErr}`);
     }
   }
 
-  throw new Error('All LLM classification providers (Groq, OpenRouter) failed or missing API keys.');
+  throw new Error('LLM classification provider (OpenRouter) failed or missing API keys.');
 }
 
 /**

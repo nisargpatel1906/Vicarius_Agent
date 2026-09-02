@@ -4,7 +4,6 @@
 import { getSupabaseAdmin, logSystemEvent } from './supabase';
 import { getGmailClient } from './google-auth';
 import { TaskType } from './types';
-import Groq from 'groq-sdk';
 
 const TELEGRAM_API_BASE = 'https://api.telegram.org/bot';
 
@@ -156,21 +155,34 @@ Extract the structured task details into strict JSON:
   "build_spec": string (detailed prompt instructions for the build agent)
 }`;
 
-  if (groqKey) {
+  const openRouterKey = process.env.OPENROUTER_API_KEY;
+  if (openRouterKey) {
     try {
-      const groq = new Groq({ apiKey: groqKey });
-      const res = await groq.chat.completions.create({
-        model: 'llama-3.3-70b-versatile',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: rawBody },
-        ],
-        temperature: 0.1,
+      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${openRouterKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'minimax/minimax-01',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: rawBody },
+          ],
+          temperature: 0.1,
+        })
       });
-      const content = res.choices[0]?.message?.content || '{}';
+      
+      if (!res.ok) {
+        throw new Error(`OpenRouter API error: ${res.statusText}`);
+      }
+      
+      const data = await res.json();
+      const content = data.choices?.[0]?.message?.content || '{}';
       parsed = JSON.parse(content.replace(/```json/g, '').replace(/```/g, '').trim());
     } catch (err) {
-      console.warn('Groq parsing error:', err);
+      console.warn('OpenRouter parsing error:', err);
     }
   }
 
@@ -293,19 +305,31 @@ Instructions:
 3. If the student asks you to do/create a task, guide them that you can create it with /task <details> or summarize what you can build.
 4. Output in clean, valid HTML (<b>bold</b>, <i>italic</i>, <code>code</code>, bullet points •). Do NOT use markdown asterisks.`;
 
-  const groqKey = process.env.GROQ_API_KEY;
-  if (groqKey) {
+  const openRouterKey = process.env.OPENROUTER_API_KEY;
+  if (openRouterKey) {
     try {
-      const groq = new Groq({ apiKey: groqKey });
-      const res = await groq.chat.completions.create({
-        model: 'llama3-70b-8192',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          ...historyMessages,
-        ] as any,
-        temperature: 0.3,
+      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${openRouterKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'minimax/minimax-01',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            ...historyMessages,
+          ],
+          temperature: 0.3,
+        })
       });
-      const aiText = res.choices[0]?.message?.content || 'I could not generate a response right now. Please try again.';
+      
+      if (!res.ok) {
+        throw new Error(`OpenRouter API error: ${res.statusText}`);
+      }
+      
+      const data = await res.json();
+      const aiText = data.choices?.[0]?.message?.content || 'I could not generate a response right now. Please try again.';
       
       // Save assistant response to history
       await supabase.from('chat_messages').insert({
@@ -316,7 +340,7 @@ Instructions:
       
       return aiText;
     } catch (err: any) {
-      console.error('Groq AI error:', err);
+      console.error('OpenRouter AI error:', err);
       return `❌ AI service error: ${escapeHtml(err.message)}`;
     }
   }
@@ -387,31 +411,43 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
 
   if (pendingQuestion && text) {
     let finalAnswer = text;
-    const groqKey = process.env.GROQ_API_KEY;
-    if (groqKey) {
+    const openRouterKey = process.env.OPENROUTER_API_KEY;
+    if (openRouterKey) {
       try {
-        const groq = new Groq({ apiKey: groqKey });
-        const res = await groq.chat.completions.create({
-          model: 'llama3-70b-8192',
-          messages: [
-            {
-              role: 'system',
-              content: 'Given the agent question and student reply, extract the precise concise answer string. Return JSON: {"answer": string, "confident": boolean}',
-            },
-            {
-              role: 'user',
-              content: `Question: ${pendingQuestion.question_text}\nUser Reply: ${text}`,
-            },
-          ],
-          temperature: 0.1,
+        const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${openRouterKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: 'minimax/minimax-01',
+            messages: [
+              {
+                role: 'system',
+                content: 'Given the agent question and student reply, extract the precise concise answer string. Return JSON: {"answer": string, "confident": boolean}',
+              },
+              {
+                role: 'user',
+                content: `Question: ${pendingQuestion.question_text}\nUser Reply: ${text}`,
+              },
+            ],
+            temperature: 0.1,
+          })
         });
-        const content = res.choices[0]?.message?.content || '{}';
+        
+        if (!res.ok) {
+          throw new Error(`OpenRouter API error: ${res.statusText}`);
+        }
+        
+        const data = await res.json();
+        const content = data.choices?.[0]?.message?.content || '{}';
         const parsed = JSON.parse(content.replace(/```json/g, '').replace(/```/g, '').trim());
         if (parsed.confident && parsed.answer) {
           finalAnswer = parsed.answer;
         }
       } catch (err) {
-        console.warn('Groq answer parse error, using raw text:', err);
+        console.warn('OpenRouter answer parse error, using raw text:', err);
       }
     }
 
