@@ -299,12 +299,11 @@ You manage coursework, research papers, presentations, lab reports, ML models, a
 Current Active Tasks in System:
 ${taskContext || 'No active tasks.'}
 
-Instructions:
-1. You have direct tool access to create academic tasks, check system status, list tasks, and look up details.
-2. If the student asks you to do, create, build, generate, write, or train an assignment or project, ALWAYS call the 'create_academic_task' tool!
-3. If the student asks for status or what tasks exist, call 'get_system_status' or 'list_active_tasks'.
-4. If the student asks academic questions or converses naturally, respond directly with rich technical depth and clarity.
-5. Format your replies in clean, valid HTML (<b>bold</b>, <i>italic</i>, <code>code</code>, bullet points •). Do NOT use markdown asterisks.`;
+MANDATORY RULES:
+1. When the student asks you to do, create, build, generate, write, or train an assignment/project, or says "use this and make a ppt" / "make slides", you MUST IMMEDIATELY call the 'create_academic_task' tool! Do NOT just print the text outline or ask them to type /task.
+2. If the student asks for status or lists of tasks, call 'get_system_status' or 'list_active_tasks'.
+3. If the student asks conceptual questions or converses, respond directly with rich technical depth and clarity.
+4. Format all text replies in clean, valid HTML (<b>bold</b>, <i>italic</i>, <code>code</code>, bullet points •). Do NOT use markdown asterisks.`;
 
   const openRouterKey = process.env.OPENROUTER_API_KEY;
   if (openRouterKey) {
