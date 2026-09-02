@@ -82,3 +82,19 @@ create policy "Allow all access to deliverables" on deliverables
 
 create policy "Allow all access to system_events" on system_events
   for all using (true) with check (true);
+
+-- Chat History
+create table if not exists chat_messages (
+  id uuid primary key default gen_random_uuid(),
+  chat_id text not null,
+  role text not null check (role in ('user', 'assistant', 'system')),
+  content text not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_chat_messages_chat_id on chat_messages (chat_id, created_at asc);
+
+alter table chat_messages enable row level security;
+
+create policy "Allow all access to chat_messages" on chat_messages
+  for all using (true) with check (true);

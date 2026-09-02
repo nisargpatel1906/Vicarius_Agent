@@ -3,6 +3,7 @@
 
 import { getSupabaseAdmin, logSystemEvent } from './supabase';
 import { getGmailClient } from './google-auth';
+import { TaskType } from './types';
 import Groq from 'groq-sdk';
 
 const TELEGRAM_API_BASE = 'https://api.telegram.org/bot';
@@ -245,9 +246,16 @@ Extract the structured task details into strict JSON:
 /**
  * Intelligent Academic AI Assistant Chat on Telegram
  */
-export async function askAiAssistant(userPrompt: string): Promise<string> {
+export async function askAiAssistant(userPrompt: string, chatId: string): Promise<string> {
   const supabase = getSupabaseAdmin();
   
+  // Save user's incoming message to history
+  await supabase.from('chat_messages').insert({
+    chat_id: chatId,
+    role: 'user',
+    content: userPrompt
+  });
+
   // Fetch active tasks and deliverables for real-time context
   const { data: tasks } = await supabase
     .from('tasks')
@@ -259,6 +267,19 @@ export async function askAiAssistant(userPrompt: string): Promise<string> {
   const taskContext = (tasks || []).map(t => 
     `- [${t.status.toUpperCase()}] ${t.title} (${t.course || 'General'}, Due: ${t.due_date || 'N/A'}, ID: ${t.id})`
   ).join('\n');
+
+  // Fetch recent conversation history
+  const { data: history } = await supabase
+    .from('chat_messages')
+    .select('role, content')
+    .eq('chat_id', chatId)
+    .order('created_at', { ascending: false })
+    .limit(10);
+    
+  const historyMessages = (history || []).reverse().map(msg => ({
+    role: msg.role === 'system' ? 'system' : (msg.role === 'assistant' ? 'assistant' : 'user'),
+    content: msg.content
+  }));
 
   const systemPrompt = `You are Vicarius, an autonomous AI academic assistant for Nisarg Patel (Computer Engineering / AI-ML student at Academic Institution).
 You manage coursework, research papers, presentations, lab reports, ML models, and programming assignments.
@@ -280,17 +301,27 @@ Instructions:
         model: 'llama-3.3-70b-versatile',
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
+          ...historyMessages,
+        ] as any,
         temperature: 0.3,
       });
-      return res.choices[0]?.message?.content || 'I processed your request.';
-    } catch (e: any) {
-      console.warn('Groq chat assistant error:', e);
+      const aiText = res.choices[0]?.message?.content || 'I could not generate a response right now. Please try again.';
+      
+      // Save assistant response to history
+      await supabase.from('chat_messages').insert({
+        chat_id: chatId,
+        role: 'assistant',
+        content: aiText
+      });
+      
+      return aiText;
+    } catch (err: any) {
+      console.error('Groq AI error:', err);
+      return `❌ AI service error: ${escapeHtml(err.message)}`;
     }
   }
 
-  return "I am your Vicarius Academic Agent. Use <code>/task &lt;prompt&gt;</code> to queue a task, <code>/status</code> to check progress, or <code>/help</code> for all commands.";
+  return 'I am currently unable to answer (AI key not configured). Use /task <details> to create tasks.';
 }
 
 /**
@@ -602,7 +633,7 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
 
   // 10. Direct AI Chat & Academic Q&A (fallback for any natural language input)
   try {
-    const aiResponse = await askAiAssistant(text);
+    const aiResponse = await askAiAssistant(text, incomingChatId);
     await reply(aiResponse);
   } catch (err: any) {
     await reply("I'm your Vicarius academic assistant. Use <code>/task &lt;prompt&gt;</code> to queue a task or <code>/status</code> to check progress.");
