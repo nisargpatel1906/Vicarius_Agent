@@ -298,7 +298,7 @@ Instructions:
     try {
       const groq = new Groq({ apiKey: groqKey });
       const res = await groq.chat.completions.create({
-        model: 'llama-3.3-70b-versatile',
+        model: 'llama-3.1-70b-versatile',
         messages: [
           { role: 'system', content: systemPrompt },
           ...historyMessages,
@@ -392,7 +392,7 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
       try {
         const groq = new Groq({ apiKey: groqKey });
         const res = await groq.chat.completions.create({
-          model: 'llama-3.3-70b-versatile',
+          model: 'llama-3.1-70b-versatile',
           messages: [
             {
               role: 'system',
