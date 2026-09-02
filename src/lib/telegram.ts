@@ -165,7 +165,7 @@ Extract the structured task details into strict JSON:
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model: 'minimax/minimax-01',
+          model: 'minimax/minimax-m3:free',
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: rawBody },
@@ -315,7 +315,7 @@ Instructions:
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model: 'minimax/minimax-01',
+          model: 'minimax/minimax-m3:free',
           messages: [
             { role: 'system', content: systemPrompt },
             ...historyMessages,
@@ -421,7 +421,7 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            model: 'minimax/minimax-01',
+            model: 'minimax/minimax-m3:free',
             messages: [
               {
                 role: 'system',

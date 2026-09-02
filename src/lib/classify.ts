@@ -33,7 +33,7 @@ async function callLlmWithFallback(prompt: string, systemPrompt: string): Promis
           'X-Title': 'Vicarius Agent',
         },
         body: JSON.stringify({
-          model: 'minimax/minimax-01',
+          model: 'minimax/minimax-m3:free',
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: prompt },
