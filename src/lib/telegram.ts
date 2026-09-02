@@ -50,9 +50,14 @@ function escapeHtml(str: string): string {
 /**
  * Sends a message via Telegram Bot API with automatic plain text fallback
  */
-export async function sendTelegramMessage(text: string, parseMode: 'Markdown' | 'HTML' = 'HTML'): Promise<boolean> {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_ALLOWED_CHAT_ID;
+export async function sendTelegramMessage(
+  text: string,
+  parseMode: 'Markdown' | 'HTML' = 'HTML',
+  targetChatId?: string | number
+): Promise<boolean> {
+  const token = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
+  const rawChatId = targetChatId || process.env.TELEGRAM_ALLOWED_CHAT_ID;
+  const chatId = rawChatId ? String(rawChatId).replace(/['"\r\n\s]/g, '') : '';
 
   if (!token || !chatId) {
     console.warn('Telegram token or chat ID not configured.');
@@ -75,7 +80,8 @@ export async function sendTelegramMessage(text: string, parseMode: 'Markdown' | 
       return true;
     }
 
-    console.warn(`Telegram sendMessage parse_mode=${parseMode} failed: HTTP ${res.status}. Retrying with plain text...`);
+    const errBody = await res.text().catch(() => '');
+    console.warn(`Telegram sendMessage parse_mode=${parseMode} failed: HTTP ${res.status} (${errBody}). Retrying with plain text...`);
     const cleanText = text.replace(/<[^>]+>/g, '').replace(/[*_`]/g, '');
     const fallbackRes = await fetch(`${TELEGRAM_API_BASE}${token}/sendMessage`, {
       method: 'POST',
@@ -169,7 +175,26 @@ Extract the structured task details into strict JSON:
 
   const title = parsed.title || rawBody.slice(0, 50) || 'Academic Assignment';
   const course = parsed.course || 'General';
-  const taskType = parsed.task_type || 'document';
+  
+  let taskType: TaskType = parsed.task_type || 'document';
+  const lower = rawBody.toLowerCase();
+  if (lower.includes('presentation') || lower.includes('slide') || lower.includes('deck') || lower.includes('.pptx')) {
+    taskType = 'presentation';
+  } else if (lower.includes('code') || lower.includes('react') || lower.includes('next.js') || lower.includes('python script') || lower.includes('web app') || lower.includes('gui')) {
+    taskType = 'code_project';
+  } else if (lower.includes('train') || lower.includes('cifar') || lower.includes('epoch') || lower.includes('accuracy target') || lower.includes('val_acc')) {
+    taskType = 'ml_training';
+  } else if (lower.includes('research') || lower.includes('citation') || lower.includes('literature review') || lower.includes('ieee') || lower.includes('survey')) {
+    taskType = 'research';
+  } else if (lower.includes('handwritten') || lower.includes('by hand') || lower.includes('copy-ready')) {
+    taskType = 'handwritten';
+  }
+
+  let slideCount: number | null = null;
+  const sm = rawBody.match(/(\d+)[\s-]*(?:slide|slides)/i);
+  if (sm) {
+    slideCount = parseInt(sm[1], 10);
+  }
   
   // Default due date: 3 days ahead at 18:00 IST
   const defaultDue = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
@@ -189,8 +214,9 @@ Extract the structured task details into strict JSON:
       summary: title,
       items: parsed.requirements || [rawBody],
       raw_text: rawBody,
+      slide_count: slideCount,
     },
-    success_criteria: parsed.success_criteria || 'Produce complete academic deliverables matching requirements.',
+    success_criteria: parsed.success_criteria || (slideCount ? `Produce a verified ${slideCount}-slide presentation deck (.pptx).` : 'Produce complete academic deliverables matching requirements.'),
     build_spec: parsed.build_spec || rawBody,
     due_date: dueDate,
     status: 'queued',
@@ -271,13 +297,20 @@ Instructions:
  * Handles incoming webhook updates from Telegram
  */
 export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ handled: boolean; responseText?: string }> {
-  const allowedChatId = process.env.TELEGRAM_ALLOWED_CHAT_ID;
-  const incomingChatId = update.message?.chat.id?.toString() || update.callback_query?.message?.chat.id?.toString();
+  const allowedChatId = (process.env.TELEGRAM_ALLOWED_CHAT_ID || '').replace(/['"\r\n\s]/g, '');
+  const rawIncomingId = update.message?.chat.id || update.callback_query?.message?.chat.id || update.message?.from?.id;
+  const incomingChatId = rawIncomingId ? String(rawIncomingId).replace(/['"\r\n\s]/g, '') : '';
 
   // Strict chat-ID authorization: silently ignore unauthorized senders (PRD Section 8 / CLAUDE.md)
-  if (!incomingChatId || (allowedChatId && incomingChatId !== allowedChatId)) {
+  if (!incomingChatId) {
     return { handled: false };
   }
+  if (allowedChatId && incomingChatId !== allowedChatId && !allowedChatId.includes(incomingChatId)) {
+    console.warn(`Unauthorized Telegram sender: ${incomingChatId} (expected: ${allowedChatId})`);
+    return { handled: false };
+  }
+
+  const reply = (msg: string, parseMode: 'Markdown' | 'HTML' = 'HTML') => sendTelegramMessage(msg, parseMode, incomingChatId);
 
   const supabase = getSupabaseAdmin();
   const text = update.message?.text?.trim() || update.message?.caption?.trim() || '';
@@ -289,10 +322,10 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
     const prompt = `Attached file: ${doc.file_name || 'document'}\nInstructions: ${caption}`;
     try {
       const confirmation = await createTaskFromTelegram(prompt);
-      await sendTelegramMessage(confirmation);
+      await reply(confirmation);
       return { handled: true, responseText: 'Task created from document' };
     } catch (err: any) {
-      await sendTelegramMessage(`❌ Failed to create task: ${escapeHtml(err.message)}`);
+      await reply(`❌ Failed to create task: ${escapeHtml(err.message)}`);
       return { handled: true };
     }
   }
@@ -357,7 +390,7 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
       answered_at: new Date().toISOString(),
     }).eq('id', pendingQuestion.id);
 
-    await sendTelegramMessage(`✅ <b>Recorded answer:</b> "${escapeHtml(finalAnswer)}"\n\n<i>The build worker will proceed with your instructions.</i>`);
+    await reply(`✅ <b>Recorded answer:</b> "${escapeHtml(finalAnswer)}"\n\n<i>The build worker will proceed with your instructions.</i>`);
     return { handled: true, responseText: 'Question answered' };
   }
 
@@ -372,7 +405,7 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
   ) {
     const prompt = text.replace(/^\/(task|new|add|create)\s*/i, '').trim();
     if (!prompt) {
-      await sendTelegramMessage(
+      await reply(
         `📝 <b>How to create a task:</b>\n\n` +
         `Type: <code>/task &lt;your assignment details&gt;</code>\n\n` +
         `<b>Examples:</b>\n` +
@@ -384,11 +417,11 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
     }
 
     try {
-      await sendTelegramMessage('⏳ <i>Analyzing requirements and creating task...</i>');
+      await reply('⏳ <i>Analyzing requirements and creating task...</i>');
       const confirmation = await createTaskFromTelegram(prompt);
-      await sendTelegramMessage(confirmation);
+      await reply(confirmation);
     } catch (e: any) {
-      await sendTelegramMessage(`❌ Failed to create task: ${escapeHtml(e.message)}`);
+      await reply(`❌ Failed to create task: ${escapeHtml(e.message)}`);
     }
     return { handled: true };
   }
@@ -403,7 +436,7 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
       .limit(15);
 
     if (!tasks || tasks.length === 0) {
-      await sendTelegramMessage('📋 <b>No active tasks in queue.</b>\n\nUse <code>/task &lt;details&gt;</code> to create one!');
+      await reply('📋 <b>No active tasks in queue.</b>\n\nUse <code>/task &lt;details&gt;</code> to create one!');
       return { handled: true };
     }
 
@@ -416,7 +449,7 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
       msg += `   ⏰ Due: ${dueStr} | 🆔 <code>${t.id}</code>\n\n`;
     });
     msg += `<i>Tip: Type <code>/details &lt;task_id&gt;</code> to view download links.</i>`;
-    await sendTelegramMessage(msg);
+    await reply(msg);
     return { handled: true };
   }
 
@@ -424,7 +457,7 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
   if (lower.startsWith('/details') || lower.startsWith('/info')) {
     const parts = text.split(/\s+/);
     if (parts.length < 2) {
-      await sendTelegramMessage('Usage: <code>/details &lt;task_id&gt;</code>');
+      await reply('Usage: <code>/details &lt;task_id&gt;</code>');
       return { handled: true };
     }
     const taskId = parts[1].trim();
@@ -435,7 +468,7 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
       .maybeSingle();
 
     if (!task) {
-      await sendTelegramMessage(`❌ Task not found: <code>${escapeHtml(taskId)}</code>`);
+      await reply(`❌ Task not found: <code>${escapeHtml(taskId)}</code>`);
       return { handled: true };
     }
 
@@ -465,7 +498,7 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
       });
     }
 
-    await sendTelegramMessage(dMsg);
+    await reply(dMsg);
     return { handled: true };
   }
 
@@ -480,9 +513,9 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
         .eq('id', taskId);
 
       if (!error) {
-        await sendTelegramMessage(`🗑️ Task <code>${escapeHtml(taskId)}</code> has been archived.`);
+        await reply(`🗑️ Task <code>${escapeHtml(taskId)}</code> has been archived.`);
       } else {
-        await sendTelegramMessage(`❌ Could not delete task: ${escapeHtml(error.message)}`);
+        await reply(`❌ Could not delete task: ${escapeHtml(error.message)}`);
       }
       return { handled: true };
     }
@@ -502,7 +535,7 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
       .limit(10);
 
     if (!tasks || tasks.length === 0) {
-      await sendTelegramMessage('📋 <b>No active tasks currently in queue.</b>');
+      await reply('📋 <b>No active tasks currently in queue.</b>');
       return { handled: true };
     }
 
@@ -523,7 +556,7 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
       statusMsg += `• [${t.status.toUpperCase()}] <b>${escapeHtml(t.title)}</b> (${escapeHtml(t.course || 'General')}) — Due: ${dueStr}\n`;
     });
 
-    await sendTelegramMessage(statusMsg);
+    await reply(statusMsg);
     return { handled: true };
   }
 
@@ -538,9 +571,9 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
         .eq('id', taskId);
 
       if (!error) {
-        await sendTelegramMessage(`🔄 Task <code>${escapeHtml(taskId)}</code> requeued for build.`);
+        await reply(`🔄 Task <code>${escapeHtml(taskId)}</code> requeued for build.`);
       } else {
-        await sendTelegramMessage(`❌ Could not retry task: ${escapeHtml(error.message)}`);
+        await reply(`❌ Could not retry task: ${escapeHtml(error.message)}`);
       }
       return { handled: true };
     }
@@ -563,16 +596,16 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
       `• <b>Direct Chat:</b> Ask any questions about your courses, concepts, or schedule.\n` +
       `• <b>Document Upload:</b> Send any <code>.pdf</code> or <code>.docx</code> assignment brief to auto-create a task!\n` +
       `• <b>Clarifications:</b> Reply to any question alert from the bot to guide the build worker.`;
-    await sendTelegramMessage(helpMsg);
+    await reply(helpMsg);
     return { handled: true };
   }
 
   // 10. Direct AI Chat & Academic Q&A (fallback for any natural language input)
   try {
     const aiResponse = await askAiAssistant(text);
-    await sendTelegramMessage(aiResponse);
+    await reply(aiResponse);
   } catch (err: any) {
-    await sendTelegramMessage("I'm your Vicarius academic assistant. Use <code>/task &lt;prompt&gt;</code> to queue a task or <code>/status</code> to check progress.");
+    await reply("I'm your Vicarius academic assistant. Use <code>/task &lt;prompt&gt;</code> to queue a task or <code>/status</code> to check progress.");
   }
 
   return { handled: true };
