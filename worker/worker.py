@@ -814,5 +814,20 @@ if __name__ == "__main__":
     print(f"=== Vicarius Agent Local Worker Started ===")
     print(f"Timezone: {TIMEZONE_STR} | Pinned CLI: {PINNED_AGY_VERSION} | Timeout: {JOB_TIMEOUT_MINUTES}m")
     
-    # Run a cycle
-    run_worker_cycle()
+    daemon_mode = "--daemon" in sys.argv or "-d" in sys.argv or os.getenv("WORKER_DAEMON", "false").lower() == "true"
+    
+    if daemon_mode:
+        print("[Worker] Running in continuous daemon polling mode (interval: 5s)...")
+        while True:
+            try:
+                processed = run_worker_cycle()
+                if not processed:
+                    time.sleep(5)
+            except KeyboardInterrupt:
+                print("\n[Worker] Daemon stopped by user.")
+                break
+            except Exception as e:
+                print(f"[Worker] Error in worker cycle: {e}", file=sys.stderr)
+                time.sleep(5)
+    else:
+        run_worker_cycle()
