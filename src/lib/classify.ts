@@ -119,12 +119,20 @@ export function generateBuildSpec(
   const reqsFormatted = requirementsList.map((r) => `- ${r}`).join('\n');
   const criteriaFormatted = successCriteria ? successCriteria : 'None explicitly specified';
 
+  const isUiTask = taskType === 'code_project' || taskType === 'presentation' || /web|ui|dashboard|frontend|app|react|html|css|slides/i.test(title);
+  const designDirective = isUiTask ? `\n\nUI & Visual Design System (MANDATORY — from docx/DESIGN.md):
+- Follow the Cognitive Heritage design system:
+  • Colors: Surface (#fff8f4), Surface-Container (#fdebd9), Surface-Container-High (#f7e5d4), On-Surface (#231a0f), Primary (#705728), Primary-Container (#8b6f3e), Secondary (#645e4e), Outline (#7f7669).
+  • Typography: Headings ('Noto Serif' 600/700), Body & Controls ('Manrope' 400/600).
+  • Visual Standards: Clean card-based structure, smooth micro-interactions (0.2s cubic-bezier), modern border-radius (8px buttons, 12px cards, 9999px badges), and high legibility.` : '';
+
   return `Task: ${title}
 Source: ${course || 'Academic Course'} — ${taskType}
 Requirements:
 ${reqsFormatted}
 Success criteria: ${criteriaFormatted}
 Output format: ${outputFormat}
+${designDirective}
 
 Instructions:
 - Work to completion without stopping for approval — this project's

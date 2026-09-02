@@ -152,7 +152,7 @@ Extract the structured task details into strict JSON:
   "due_date": string in ISO 8601 with Asia/Kolkata timezone offset (+05:30) (e.g. "2026-09-10T18:00:00+05:30". If not specified, default to 3 days from now at 18:00:00+05:30),
   "requirements": string[] (list of key instructions),
   "success_criteria": string (verification criteria),
-  "build_spec": string (detailed prompt instructions for the build agent)
+  "build_spec": string (detailed prompt instructions for the build agent. If the task involves UI, web app, frontend, or presentation, MUST mandate using docx/DESIGN.md Cognitive Heritage design tokens: surface #fff8f4, primary #705728, on-surface #231a0f, typography Noto Serif + Manrope)
 }`;
 
   const openRouterKey = process.env.OPENROUTER_API_KEY;
