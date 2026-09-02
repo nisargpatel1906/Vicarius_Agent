@@ -32,7 +32,7 @@ async function callLlmWithFallback(prompt: string, systemPrompt: string): Promis
     try {
       const groq = new Groq({ apiKey: groqKey });
       const completion = await groq.chat.completions.create({
-        model: 'llama-3.3-70b-versatile',
+        model: 'qwen/qwen3.8-27b',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: prompt },
@@ -60,7 +60,7 @@ async function callLlmWithFallback(prompt: string, systemPrompt: string): Promis
           'X-Title': 'Vicarius Agent',
         },
         body: JSON.stringify({
-          model: 'meta-llama/llama-3.3-70b-instruct',
+          model: 'openai/gpt-4o-mini',
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: prompt },
@@ -90,7 +90,7 @@ async function extractAttachmentContent(attachmentName: string, mimeType?: strin
   if (geminiKey && base64Data && mimeType) {
     try {
       const genAI = new GoogleGenerativeAI(geminiKey);
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+      const model = genAI.getGenerativeModel({ model: 'gemini-3.6-flash' });
 
       const prompt = `Extract all academic requirements, task instructions, rubric guidelines, and explicit success criteria from this assignment document/image. Return clear, thorough text.`;
       const result = await model.generateContent([
