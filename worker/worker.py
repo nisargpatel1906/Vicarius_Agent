@@ -510,7 +510,20 @@ def perform_verification_check(task: Dict[str, Any], stdout_output: str, produce
         if ".xlsx" not in file_extensions and not any("excel" in fn or "sheet" in fn or "data" in fn for fn in file_names):
             return False, "Verification failed: Spreadsheet task did not produce a formatted .xlsx workbook.", verification_details
 
-    # 5. Format result summary
+    # 5. Tone & Quality Check (PROMPT_AND_OUTPUT_STANDARDS.md Section 2 & 4)
+    # Flag generic AI-sounding filler phrasing
+    ai_filler_patterns = [
+        r"in today's fast-paced world",
+        r"in today's digital era",
+        r"delve into the intricacies",
+        r"it is important to note that",
+        r"as an ai language model",
+    ]
+    for pattern in ai_filler_patterns:
+        if re.search(pattern, stdout_output, re.IGNORECASE):
+            return False, f"Verification failed: Output violates academic tone standards (detected generic AI filler phrase matching '{pattern}').", verification_details
+
+    # 6. Format result summary
     summary_parts = [
         f"Produced {len(produced_files)} deliverable file(s): {', '.join([f.name for f in produced_files])}."
     ]

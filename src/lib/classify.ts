@@ -154,7 +154,23 @@ Instructions:
 - For anything else ambiguous, make the most reasonable assumption and note
   it in your final report — do not stop and wait.
 - Report: files produced, the final metric vs. the target (if there is a
-  numeric success criterion), and any assumptions you made.`;
+  numeric success criterion), and any assumptions you made.
+
+Tone and format requirements:
+- Write in a clear, formal, academic register appropriate for submission to
+  a professor. No casual language, no slang, no filler.
+- Avoid generic AI-sounding phrases — things like "in today's fast-paced
+  world," "delve into," "it is important to note that," or "in conclusion"
+  used as a reflexive crutch rather than because a conclusion is actually
+  needed. Write plainly and directly instead.
+- Address every requirement from the source explicitly, in the same order
+  they were given, so nothing is missed and it's easy to check the output
+  against the original ask point by point.
+- Structure the output clearly: headers where sections are natural,
+  numbered or bulleted points where the content is genuinely a list, full
+  paragraphs otherwise. Don't produce an undifferentiated wall of text.
+- Match terminology and conventions to the specific course/subject where
+  that context is available.`;
 }
 
 /**
