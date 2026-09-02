@@ -5,8 +5,6 @@ import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { sendTelegramMessage } from "@/lib/telegram";
 
-export const runtime = "edge";
-
 function escapeHtml(str: string): string {
   return (str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
