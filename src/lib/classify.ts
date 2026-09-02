@@ -4,7 +4,7 @@
 import Groq from 'groq-sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { getSupabaseAdmin, logSystemEvent } from './supabase';
-import { Task, TaskType } from './types';
+import { Task, TaskType, ExtractedRequirements } from './types';
 import { sendTelegramAlert } from './telegram';
 
 export interface ClassificationOutput {
@@ -12,12 +12,7 @@ export interface ClassificationOutput {
   course: string;
   due_date: string | null;
   confidence: number;
-  extracted_requirements: {
-    summary: string;
-    items: string[];
-    raw_text?: string;
-    course_notes?: string[];
-  };
+  extracted_requirements: ExtractedRequirements;
   success_criteria: string | null;
   output_format: string;
   build_spec: string;
@@ -199,50 +194,111 @@ ${courseNotes.join('\n')}
   
   // Clean markdown JSON fences if present
   const cleanedJson = rawJson.replace(/```json/g, '').replace(/```/g, '').trim();
-  const parsed = JSON.parse(cleanedJson);
+  let parsed: any = {};
+  try {
+    parsed = JSON.parse(cleanedJson);
+  } catch (e) {
+    parsed = {
+      task_type: 'document',
+      requirements: [task.title],
+      course: task.course || 'Academic Course',
+      confidence: 0.6,
+    };
+  }
 
-  // Detect lab report structure
-  const isLabReport = /lab|experiment|apparatus|procedure|observation/i.test(rawBody) || /lab|practical/i.test(task.title);
-  if (isLabReport && taskType === 'document') {
+  let taskType: TaskType = (parsed.task_type as TaskType) || 'document';
+  
+  // Check handwritten detection
+  const isHandwritten = /handwritten|write by hand|copy-ready|written assignment/i.test(rawBody) || /handwritten|write by hand/i.test(task.title);
+  if (isHandwritten) {
+    taskType = 'handwritten';
+  }
+
+  const requirementsList: string[] = Array.isArray(parsed.requirements) ? parsed.requirements : [task.title];
+
+  // 1. Detect Lab Report Structure (TASK_TYPES.md Section: Document)
+  const isLabReport = /lab|experiment|apparatus|procedure|observation|titration|practical/i.test(rawBody) || /lab|practical/i.test(task.title);
+  if (isLabReport && (taskType === 'document' || taskType === 'handwritten')) {
     if (!requirementsList.some(r => /hypothesis|procedure|observation|results/i.test(r))) {
       requirementsList.push('Format as a structured Lab Report: 1. Objective/Hypothesis, 2. Apparatus & Methodology, 3. Observations & Results, 4. Discussion & Conclusion');
     }
   }
 
-  // Slide count extraction for presentation
+  // 2. Word Count / Page Count Extraction (TASK_TYPES.md Section: Document)
+  const wordCountMatch = rawBody.match(/(\d+)[\s-]*(?:words|word)/i) || task.title.match(/(\d+)[\s-]*(?:words|word)/i);
+  const pageCountMatch = rawBody.match(/(\d+)[\s-]*(?:pages|page)/i) || task.title.match(/(\d+)[\s-]*(?:pages|page)/i);
+  if (wordCountMatch) {
+    requirementsList.push(`Target word count: approximately ${wordCountMatch[1]} words.`);
+  } else if (pageCountMatch) {
+    requirementsList.push(`Target length: approximately ${pageCountMatch[1]} pages.`);
+  }
+
+  // 3. Presentation Slide Count Target & Speaker Notes (TASK_TYPES.md Section: Presentation)
   const slideCountMatch = rawBody.match(/(\d+)[\s-]*(?:slide|slides)/i) || task.title.match(/(\d+)[\s-]*(?:slide|slides)/i);
   const explicitSlideCount = slideCountMatch ? parseInt(slideCountMatch[1], 10) : null;
   if (explicitSlideCount && taskType === 'presentation') {
-    requirementsList.push(`Generate exactly ${explicitSlideCount} presentation slides with title slide, content slides, and speaker notes.`);
+    requirementsList.push(`Generate exactly ${explicitSlideCount} presentation slides with title slide, content slides matching all topics, and comprehensive speaker notes.`);
+  } else if (taskType === 'presentation') {
+    requirementsList.push('Generate a valid presentation deck (.pptx) covering all requested topics with informative speaker notes on each content slide.');
   }
 
-  // Screenshot / smoke test requirement for code projects
+  // 4. Code Project: Smoke test, README, UI Screenshot, Clean packaging (TASK_TYPES.md Section: Code Project)
+  const isWebOrGui = /web|ui|dashboard|frontend|app|gui|html|interface|react|next/i.test(rawBody) || /web|ui|dashboard|app|gui/i.test(task.title);
   if (taskType === 'code_project') {
-    requirementsList.push('Include a smoke test / run verification to ensure the code executes cleanly.');
-    requirementsList.push('Include a clear README.md with run instructions.');
-    if (/web|ui|dashboard|frontend|app|gui|html/i.test(rawBody) || /web|ui|dashboard|app/i.test(task.title)) {
-      requirementsList.push('Capture a screenshot of the rendered UI/app as a preview image (screenshot.png/webp).');
+    requirementsList.push('Include a smoke test / run verification to ensure the code boots and executes cleanly without crashing.');
+    requirementsList.push('Include a clear README.md with prerequisites, setup steps, and run instructions.');
+    if (isWebOrGui) {
+      requirementsList.push('Capture a real running UI/app screenshot as a preview image (screenshot.png/webp) after launching the application.');
     }
   }
 
-  // ML Training artifacts
+  // 5. ML Training: Model Weights, Numeric Criteria, Evaluation Report (TASK_TYPES.md Section: ML Training)
   if (taskType === 'ml_training') {
     requirementsList.push('Save the trained model weights/artifact file (.h5, .pt, .pth, .pkl, or .joblib).');
-    requirementsList.push('Generate a short evaluation report (report.md/docx) detailing model architecture, loss curves, and validation metrics.');
+    requirementsList.push('Include an evaluation report (evaluation_report.docx/md) detailing architecture, training logs, loss curves, and validation metrics.');
+    if (parsed.success_criteria) {
+      requirementsList.push(`Meet explicit numeric target criterion: ${parsed.success_criteria}`);
+    }
   }
 
-  // Research citation formatting
+  // 6. Research: Browser Tool Invocation, Real URLs, Citations (TASK_TYPES.md Section: Research)
   if (taskType === 'research') {
-    requirementsList.push('Gather real web sources using browser tools and cite exact reference URLs.');
-    requirementsList.push('Format references using standard academic citations (IEEE/APA format).');
+    requirementsList.push('Gather real web sources using browser/search tools and cite exact, verifiable reference URLs.');
+    requirementsList.push('Synthesize original content without direct plagiarism.');
+    const citationStyleMatch = rawBody.match(/(ieee|apa|mla|chicago|harvard)/i);
+    const citationStyle = citationStyleMatch ? citationStyleMatch[1].toUpperCase() : 'IEEE';
+    requirementsList.push(`Format citations and references consistently in ${citationStyle} style.`);
+  }
+
+  // 7. Group Projects Scope Extension (TASK_TYPES.md Resolved Scope Extension #1)
+  const isGroupProject = /group|team|members|individual contribution|partner/i.test(rawBody) || /group project|team assignment/i.test(task.title);
+  if (isGroupProject) {
+    requirementsList.push('Partition requirements across team members and include an Individual Contribution Summary section in the deliverable.');
+  }
+
+  // 8. Regional Language Coursework Scope Extension (TASK_TYPES.md Resolved Scope Extension #2)
+  const isHindi = /hindi|हिन्दी/i.test(rawBody) || /hindi|हिन्दी/i.test(task.title);
+  const isGujarati = /gujarati|ગુજરાતી/i.test(rawBody) || /gujarati|ગુજરાતી/i.test(task.title);
+  if (isHindi) {
+    requirementsList.push('Generate deliverable text in standard formal Hindi as requested by coursework rubric.');
+  } else if (isGujarati) {
+    requirementsList.push('Generate deliverable text in standard formal Gujarati as requested by coursework rubric.');
+  }
+
+  // 9. Spreadsheet & Data Analysis Tasks Scope Extension (TASK_TYPES.md Resolved Scope Extension #3)
+  const isSpreadsheet = /spreadsheet|excel|xlsx|workbook|sheets|data analysis|pivot table|dataset analysis/i.test(rawBody) || /spreadsheet|excel|workbook/i.test(task.title);
+  if (isSpreadsheet && (taskType === 'document' || taskType === 'code_project')) {
+    requirementsList.push('Generate a formatted .xlsx workbook with formulas, charts, and summary sheets using openpyxl/pandas.');
+    requirementsList.push('Accompany with an executive findings summary report (report.docx).');
   }
 
   const outputFormat = parsed.output_format || (
     taskType === 'presentation' ? `presentation.pptx${explicitSlideCount ? ` (${explicitSlideCount} slides)` : ''}` :
-    taskType === 'code_project' ? 'zipped code project + README.md + screenshot' :
-    taskType === 'ml_training' ? 'model weights artifact, dataset pipeline, evaluation metrics + report.docx' :
-    taskType === 'handwritten' ? 'clean text transcript (no binary formatting, copy-ready)' :
-    taskType === 'research' ? 'research_report.docx with citations' :
+    taskType === 'code_project' ? 'zipped code project + README.md' + (isWebOrGui ? ' + screenshot.png' : '') :
+    taskType === 'ml_training' ? 'model weights artifact (.pt/.h5), training logs, evaluation metrics + evaluation_report.docx' :
+    taskType === 'handwritten' ? 'clean copy-ready text transcript (.txt, no docx formatting)' :
+    taskType === 'research' ? 'research_report.docx with verified web citations' :
+    isSpreadsheet ? 'analysis_workbook.xlsx + executive_findings.docx' :
     'document.docx'
   );
 
@@ -265,8 +321,14 @@ ${courseNotes.join('\n')}
       items: requirementsList,
       raw_text: rawBody,
       course_notes: courseNotes,
+      output_style: isHandwritten ? 'handwritten' : 'typed',
+      slide_count: explicitSlideCount,
+      is_lab_report: isLabReport,
+      is_group_project: isGroupProject,
+      is_spreadsheet: isSpreadsheet,
+      requires_screenshot: isWebOrGui && taskType === 'code_project',
     },
-    success_criteria: parsed.success_criteria || null,
+    success_criteria: parsed.success_criteria || task.success_criteria || null,
     output_format: outputFormat,
     build_spec: buildSpec,
   };

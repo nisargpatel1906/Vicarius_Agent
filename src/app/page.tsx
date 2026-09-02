@@ -1,7 +1,24 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { Task, Question, Deliverable, SystemEvent } from '@/lib/types';
+import { VicariusLogo } from '@/components/VicariusLogo';
+import {
+  ClockIcon,
+  RefreshIcon,
+  ZapIcon,
+  AlertIcon,
+  ClassroomIcon,
+  MailIcon,
+  HelpIcon,
+  FileIcon,
+  ExternalLinkIcon,
+  CopyIcon,
+  CheckIcon,
+  SearchIcon,
+  CloseIcon,
+  SparklesIcon,
+} from '@/components/Icons';
 
 interface HealthData {
   lastIngestion: string | null;
@@ -13,6 +30,10 @@ interface HealthData {
     openrouter: { status: string };
     antigravity: { totalRuns: number; status: string };
   };
+  stats?: {
+    totalTasks: number;
+    completedTasks: number;
+  };
 }
 
 export default function DashboardPage() {
@@ -21,12 +42,34 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [courseFilter, setCourseFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [showArchived, setShowArchived] = useState<boolean>(false);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [replyText, setReplyText] = useState<string>('');
   const [actionLoading, setActionLoading] = useState<boolean>(false);
   const [ingesting, setIngesting] = useState<boolean>(false);
+  const [copiedSpec, setCopiedSpec] = useState<boolean>(false);
+  const [currentTime, setCurrentTime] = useState<string>('');
+
+  // Live IST Clock
+  useEffect(() => {
+    const updateTime = () => {
+      const now = new Date();
+      setCurrentTime(
+        now.toLocaleTimeString('en-IN', {
+          timeZone: 'Asia/Kolkata',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: true,
+        }) + ' IST'
+      );
+    };
+    updateTime();
+    const timer = setInterval(updateTime, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   // Fetch dashboard data
   const fetchData = async () => {
@@ -75,7 +118,7 @@ export default function DashboardPage() {
     }
   };
 
-  // Requeue a flagged or failed task
+  // Requeue a flagged or failed task (PRD Section 6.6)
   const handleRetryTask = async (taskId: string) => {
     try {
       setActionLoading(true);
@@ -98,7 +141,7 @@ export default function DashboardPage() {
     }
   };
 
-  // Answer a pending question from the dashboard
+  // Answer a pending question from the dashboard (PRD Section 6.6)
   const handleAnswerQuestion = async (questionId: string) => {
     if (!replyText.trim()) return;
     try {
@@ -114,8 +157,12 @@ export default function DashboardPage() {
         await fetchData();
         // Refresh selected task
         if (selectedTask) {
-          const updated = tasks.find((t) => t.id === selectedTask.id);
-          if (updated) setSelectedTask(updated);
+          const updatedRes = await fetch(`/api/tasks?archived=true`);
+          const updatedData = await updatedRes.json();
+          if (updatedData.success && updatedData.data) {
+            const found = updatedData.data.find((t: Task) => t.id === selectedTask.id);
+            if (found) setSelectedTask(found);
+          }
         }
       }
     } catch (err) {
@@ -125,93 +172,335 @@ export default function DashboardPage() {
     }
   };
 
-  // Status badge styling helper
-  const getStatusBadge = (status: string) => {
-    const config: Record<string, { bg: string; color: string; border: string }> = {
-      new: { bg: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8', border: 'rgba(56, 189, 248, 0.4)' },
-      extracting: { bg: 'rgba(168, 85, 247, 0.15)', color: '#c084fc', border: 'rgba(168, 85, 247, 0.4)' },
-      queued: { bg: 'rgba(245, 158, 11, 0.15)', color: '#fbbf24', border: 'rgba(245, 158, 11, 0.4)' },
-      claimed: { bg: 'rgba(99, 102, 241, 0.15)', color: '#818cf8', border: 'rgba(99, 102, 241, 0.4)' },
-      building: { bg: 'rgba(56, 189, 248, 0.25)', color: '#38bdf8', border: '#38bdf8' },
-      verifying: { bg: 'rgba(168, 85, 247, 0.25)', color: '#c084fc', border: '#c084fc' },
-      flagged: { bg: 'rgba(244, 63, 94, 0.2)', color: '#fb7185', border: '#f43f5e' },
-      done: { bg: 'rgba(16, 185, 129, 0.15)', color: '#34d399', border: 'rgba(16, 185, 129, 0.4)' },
-      failed: { bg: 'rgba(239, 68, 68, 0.2)', color: '#f87171', border: '#ef4444' },
+  // Distinct courses for filter dropdown
+  const uniqueCourses = useMemo(() => {
+    const set = new Set<string>();
+    tasks.forEach((t) => {
+      if (t.course) set.add(t.course);
+    });
+    return Array.from(set).sort();
+  }, [tasks]);
+
+  // Status badge styling adhering strictly to Cognitive Heritage Palette (DESIGN.md)
+  const renderStatusBadge = (status: string) => {
+    const config: Record<
+      string,
+      { bg: string; color: string; border: string; label: string }
+    > = {
+      new: {
+        bg: '#fff1e5',
+        color: '#705728',
+        border: '#d1c5b6',
+        label: 'New Intake',
+      },
+      extracting: {
+        bg: '#ede1c8',
+        color: '#4d4633',
+        border: '#cec6b3',
+        label: 'Extracting',
+      },
+      queued: {
+        bg: '#fdebd9',
+        color: '#8b6f3e',
+        border: '#e4c289',
+        label: 'Queued for Build',
+      },
+      claimed: {
+        bg: '#f1e0ce',
+        color: '#5a4316',
+        border: '#d1c5b6',
+        label: 'Worker Claimed',
+      },
+      building: {
+        bg: '#ffdea9',
+        color: '#271900',
+        border: '#e4c289',
+        label: 'In Execution',
+      },
+      verifying: {
+        bg: '#ede1c8',
+        color: '#201b0b',
+        border: '#8b6f3e',
+        label: 'Verifying',
+      },
+      flagged: {
+        bg: '#ffdad6',
+        color: '#93000a',
+        border: '#ba1a1a',
+        label: 'Flagged Review',
+      },
+      done: {
+        bg: '#e2f0d9',
+        color: '#276a3c',
+        border: '#b3d8a5',
+        label: 'Delivered',
+      },
+      failed: {
+        bg: '#ffebee',
+        color: '#b71c1c',
+        border: '#ef9a9a',
+        label: 'Failed',
+      },
     };
+
     const c = config[status] || config.new;
     return (
-      <span style={{
-        backgroundColor: c.bg,
-        color: c.color,
-        border: `1px solid ${c.border}`,
-        padding: '3px 10px',
-        borderRadius: '12px',
-        fontSize: '0.75rem',
-        fontWeight: 600,
-        textTransform: 'uppercase',
-        letterSpacing: '0.05em',
-        display: 'inline-block',
-      }}>
-        {status}
+      <span
+        style={{
+          backgroundColor: c.bg,
+          color: c.color,
+          border: `1px solid ${c.border}`,
+          padding: '3px 9px',
+          borderRadius: 4,
+          fontSize: '11px',
+          fontWeight: 700,
+          letterSpacing: '0.04em',
+          textTransform: 'uppercase',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 5,
+        }}
+      >
+        {['building', 'verifying'].includes(status) && (
+          <span
+            style={{
+              width: 5,
+              height: 5,
+              borderRadius: '50%',
+              backgroundColor: c.color,
+              display: 'inline-block',
+            }}
+            className="badge-pulse"
+          />
+        )}
+        {c.label}
       </span>
     );
+  };
+
+  // Helper for deadline urgency countdown
+  const getDeadlineInfo = (dueDateStr: string | null) => {
+    if (!dueDateStr) {
+      return {
+        formatted: 'No Deadline Specified',
+        relative: 'Untimed',
+        isUrgent: false,
+        isPast: false,
+      };
+    }
+
+    const due = new Date(dueDateStr);
+    const now = new Date();
+    const diffHours = (due.getTime() - now.getTime()) / (1000 * 60 * 60);
+
+    const formatted = due.toLocaleDateString('en-IN', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'Asia/Kolkata',
+    });
+
+    if (diffHours < 0) {
+      return { formatted, relative: 'Past Due', isUrgent: true, isPast: true };
+    }
+    if (diffHours <= 12) {
+      return {
+        formatted,
+        relative: `Urgent (${Math.round(diffHours)}h left)`,
+        isUrgent: true,
+        isPast: false,
+      };
+    }
+    if (diffHours <= 48) {
+      return {
+        formatted,
+        relative: `Due in ${Math.round(diffHours)}h`,
+        isUrgent: false,
+        isPast: false,
+      };
+    }
+    const diffDays = Math.round(diffHours / 24);
+    return {
+      formatted,
+      relative: `Due in ${diffDays}d`,
+      isUrgent: false,
+      isPast: false,
+    };
   };
 
   // Filter tasks
   const filteredTasks = tasks.filter((t) => {
     const matchesSearch =
       (t.title || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (t.course || '').toLowerCase().includes(searchQuery.toLowerCase());
+      (t.course || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (t.task_type || '').toLowerCase().includes(searchQuery.toLowerCase());
     const matchesStatus = statusFilter === 'all' || t.status === statusFilter;
+    const matchesCourse = courseFilter === 'all' || t.course === courseFilter;
     const matchesType = typeFilter === 'all' || t.task_type === typeFilter;
-    return matchesSearch && matchesStatus && matchesType;
+    return matchesSearch && matchesStatus && matchesCourse && matchesType;
   });
 
   const flaggedTasks = tasks.filter((t) => t.status === 'flagged');
-  const queuedCount = tasks.filter((t) => t.status === 'queued').length;
-  const buildingCount = tasks.filter((t) => ['claimed', 'building', 'verifying'].includes(t.status)).length;
-  const doneCount = tasks.filter((t) => t.status === 'done').length;
+  const queuedTasks = tasks.filter((t) => t.status === 'queued');
+  const buildingTasks = tasks.filter((t) =>
+    ['claimed', 'building', 'verifying'].includes(t.status)
+  );
+  const doneTasks = tasks.filter((t) => t.status === 'done');
+
+  // Find nearest upcoming deadline
+  const nearestTask = [...tasks]
+    .filter((t) => t.due_date && t.status !== 'done' && !t.archived)
+    .sort((a, b) => new Date(a.due_date!).getTime() - new Date(b.due_date!).getTime())[0];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-      {/* Top Controls & Ingest Button */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
+      {/* Executive Header & Action Strip */}
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'flex-start',
+          flexWrap: 'wrap',
+          gap: 16,
+        }}
+      >
         <div>
-          <h2 style={{ fontSize: '1.75rem', fontWeight: 800, letterSpacing: '-0.02em' }}>Academic Operations</h2>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-            Autonomous assignment ingestion, Antigravity builds, and deadline tracking.
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+            <VicariusLogo size={24} variant="badge" fill="var(--primary)" />
+            <h2 className="heading-h1" style={{ color: 'var(--on-surface)' }}>
+              Academic Operations Command
+            </h2>
+          </div>
+          <p style={{ color: 'var(--on-surface-variant)', fontSize: '0.92rem' }}>
+            Autonomous multi-course ingestion, Antigravity CLI code generation, and quiet luxury execution tracking.
           </p>
         </div>
-        <div style={{ display: 'flex', gap: 12 }}>
+
+        {/* Global Action Buttons */}
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div
+            style={{
+              fontSize: '0.82rem',
+              color: 'var(--on-surface-variant)',
+              background: 'var(--surface-container-low)',
+              padding: '8px 14px',
+              borderRadius: 4,
+              border: '1px solid var(--outline-variant)',
+              fontFamily: 'monospace',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+            }}
+          >
+            <ClockIcon size={14} color="var(--primary)" />
+            <span>{currentTime || 'Loading IST...'}</span>
+          </div>
+
+          <button
+            onClick={fetchData}
+            disabled={loading}
+            className="btn-heritage-secondary"
+            title="Refresh pipeline stream"
+          >
+            <RefreshIcon size={14} />
+            <span>Refresh Stream</span>
+          </button>
+
           <button
             onClick={handleTriggerIngest}
             disabled={ingesting}
-            className="btn-primary"
-            style={{ opacity: ingesting ? 0.7 : 1 }}
+            className="btn-heritage-primary"
+            style={{ opacity: ingesting ? 0.75 : 1 }}
           >
-            {ingesting ? 'Polling Sources...' : '⚡ Poll Gmail & Classroom'}
+            <ZapIcon size={14} color="#FFF9F6" />
+            <span>{ingesting ? 'Polling Classroom & Gmail...' : 'Poll Sources Now'}</span>
           </button>
         </div>
       </div>
 
-      {/* Flagged Alert Banner (PRD Section 6.6) */}
-      {flaggedTasks.length > 0 && (
-        <div style={{
-          background: 'rgba(244, 63, 94, 0.12)',
-          border: '1px solid rgba(244, 63, 94, 0.4)',
-          borderRadius: 16,
-          padding: '16px 20px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 12,
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: '1.25rem' }}>⚠️</span>
-            <h3 style={{ color: '#fb7185', fontSize: '1rem', fontWeight: 700 }}>
-              {flaggedTasks.length} Task(s) Require Your Attention
-            </h3>
+      {/* AI Executive Intelligence Briefing Strip (DESIGN.md Insight Highlight) */}
+      <div className="insight-highlight" style={{ position: 'relative', overflow: 'hidden' }}>
+        <VicariusLogo size={140} variant="watermark" fill="#8B6F3E" style={{ right: '-15px', bottom: '-25px' }} />
+        <div style={{ position: 'relative', zIndex: 1 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <SparklesIcon size={15} color="var(--primary)" />
+            <strong className="font-serif" style={{ color: 'var(--primary)', fontSize: '0.95rem' }}>
+              Autonomous Pipeline Briefing:
+            </strong>
+            <span
+              className="label-caps"
+              style={{
+                background: 'var(--primary-container)',
+                color: '#fff9f6',
+                padding: '1px 6px',
+                borderRadius: 3,
+                fontSize: '9px',
+              }}
+            >
+              AI Live Synthesis
+            </span>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <p style={{ fontSize: '0.88rem', color: 'var(--on-surface)', lineHeight: 1.55 }}>
+            {tasks.length === 0
+              ? 'The system is idle. Trigger a poll or wait for the scheduled background ingestion to discover academic coursework.'
+              : `Tracking ${tasks.length} total assignment(s) across ${uniqueCourses.length || 1} course(s). ${
+                  flaggedTasks.length > 0
+                    ? `${flaggedTasks.length} task(s) require human review or clarification.`
+                    : 'All tasks are operating within normal autonomous confidence thresholds.'
+                } ${
+                  nearestTask
+                    ? `Nearest deadline is "${nearestTask.title}" (${nearestTask.course || 'General'}), due ${new Date(
+                        nearestTask.due_date!
+                      ).toLocaleDateString('en-IN', {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        timeZone: 'Asia/Kolkata',
+                      })}.`
+                    : 'No pending hard deadlines.'
+                }`}
+          </p>
+        </div>
+      </div>
+
+      {/* Flagged Attention Banner (PRD Section 6.6) */}
+      {flaggedTasks.length > 0 && (
+        <div
+          style={{
+            background: 'var(--error-container)',
+            border: '1px solid rgba(186, 26, 26, 0.4)',
+            borderRadius: 8,
+            padding: '18px 22px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 14,
+            boxShadow: 'var(--shadow-diffused)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <AlertIcon size={20} color="var(--on-error-container)" />
+              <h3 className="font-serif" style={{ color: 'var(--on-error-container)', fontSize: '1.05rem', fontWeight: 700 }}>
+                {flaggedTasks.length} Task(s) Require Human Attention & Clarification
+              </h3>
+            </div>
+            <span
+              className="label-caps"
+              style={{
+                background: 'var(--error)',
+                color: '#fff',
+                padding: '3px 8px',
+                borderRadius: 4,
+                fontSize: '10px',
+              }}
+            >
+              Action Required
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {flaggedTasks.map((t) => (
               <div
                 key={t.id}
@@ -219,30 +508,52 @@ export default function DashboardPage() {
                   display: 'flex',
                   justifyContent: 'space-between',
                   alignItems: 'center',
-                  background: 'rgba(15, 23, 42, 0.7)',
-                  padding: '10px 16px',
-                  borderRadius: 8,
+                  background: '#ffffff',
+                  padding: '12px 18px',
+                  borderRadius: 6,
+                  border: '1px solid rgba(186, 26, 26, 0.25)',
+                  flexWrap: 'wrap',
+                  gap: 12,
                 }}
               >
                 <div>
-                  <span style={{ fontWeight: 600, color: '#fff' }}>{t.title}</span>
-                  <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginLeft: 8 }}>({t.course || 'Unknown Course'})</span>
-                  <div style={{ color: '#fb7185', fontSize: '0.8rem', marginTop: 2 }}>{t.result_summary || 'Flagged during extraction'}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontWeight: 700, color: 'var(--on-surface)', fontSize: '0.92rem' }}>
+                      {t.title}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: '0.78rem',
+                        color: 'var(--on-surface-variant)',
+                        background: 'var(--surface-container-high)',
+                        padding: '2px 8px',
+                        borderRadius: 4,
+                      }}
+                    >
+                      {t.course || 'General'}
+                    </span>
+                  </div>
+                  <div style={{ color: 'var(--error)', fontSize: '0.82rem', marginTop: 4 }}>
+                    {t.result_summary || 'Task flagged due to low extraction confidence or missing requirements.'}
+                  </div>
                 </div>
+
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button
                     onClick={() => setSelectedTask(t)}
-                    className="btn-secondary"
-                    style={{ fontSize: '0.8rem', padding: '6px 12px' }}
+                    className="btn-heritage-secondary"
+                    style={{ fontSize: '0.8rem', padding: '6px 14px' }}
                   >
-                    View Details
+                    Inspect & Clarify
                   </button>
                   <button
                     onClick={() => handleRetryTask(t.id)}
-                    className="btn-primary"
-                    style={{ fontSize: '0.8rem', padding: '6px 12px' }}
+                    disabled={actionLoading}
+                    className="btn-heritage-primary"
+                    style={{ fontSize: '0.8rem', padding: '6px 14px' }}
                   >
-                    🔄 Retry
+                    <RefreshIcon size={13} color="#FFF9F6" />
+                    <span>Retry Build</span>
                   </button>
                 </div>
               </div>
@@ -251,179 +562,331 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* KPI Overview Cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
-        <div className="glass-panel" style={{ padding: 20 }}>
-          <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', fontWeight: 500 }}>Queued for Build</div>
-          <div style={{ fontSize: '2rem', fontWeight: 800, color: '#fbbf24', marginTop: 4 }}>{queuedCount}</div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 4 }}>Sorted by nearest deadline</div>
+      {/* KPI Metric Overview Cards (DESIGN.md Tonal Layering + Logo Watermark) */}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+          gap: 18,
+        }}
+      >
+        {/* Queued Card */}
+        <div className="heritage-card" style={{ padding: '22px 24px' }}>
+          <VicariusLogo size={90} variant="watermark" fill="#705728" />
+          <div className="label-caps" style={{ color: 'var(--primary-container)' }}>
+            Queued For Build
+          </div>
+          <div
+            className="font-serif"
+            style={{
+              fontSize: '2.4rem',
+              fontWeight: 700,
+              color: 'var(--primary)',
+              marginTop: 6,
+              lineHeight: 1,
+            }}
+          >
+            {queuedTasks.length}
+          </div>
+          <div style={{ fontSize: '0.78rem', color: 'var(--on-surface-variant)', marginTop: 8 }}>
+            Prioritized by nearest due date
+          </div>
         </div>
 
-        <div className="glass-panel" style={{ padding: 20 }}>
-          <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', fontWeight: 500 }}>In Execution</div>
-          <div style={{ fontSize: '2rem', fontWeight: 800, color: '#38bdf8', marginTop: 4 }}>{buildingCount}</div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 4 }}>Running on local PC</div>
+        {/* In Execution Card */}
+        <div className="heritage-card" style={{ padding: '22px 24px' }}>
+          <VicariusLogo size={90} variant="watermark" fill="#8B6F3E" />
+          <div className="label-caps" style={{ color: 'var(--primary)' }}>
+            Active Execution
+          </div>
+          <div
+            className="font-serif"
+            style={{
+              fontSize: '2.4rem',
+              fontWeight: 700,
+              color: 'var(--primary-container)',
+              marginTop: 6,
+              lineHeight: 1,
+            }}
+          >
+            {buildingTasks.length}
+          </div>
+          <div style={{ fontSize: '0.78rem', color: 'var(--on-surface-variant)', marginTop: 8 }}>
+            Running in local worker sandbox
+          </div>
         </div>
 
-        <div className="glass-panel" style={{ padding: 20 }}>
-          <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', fontWeight: 500 }}>Flagged Review</div>
-          <div style={{ fontSize: '2rem', fontWeight: 800, color: '#fb7185', marginTop: 4 }}>{flaggedTasks.length}</div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 4 }}>Awaiting human input</div>
+        {/* Flagged Review Card */}
+        <div className="heritage-card" style={{ padding: '22px 24px' }}>
+          <VicariusLogo size={90} variant="watermark" fill="#BA1A1A" />
+          <div className="label-caps" style={{ color: 'var(--error)' }}>
+            Flagged For Review
+          </div>
+          <div
+            className="font-serif"
+            style={{
+              fontSize: '2.4rem',
+              fontWeight: 700,
+              color: 'var(--error)',
+              marginTop: 6,
+              lineHeight: 1,
+            }}
+          >
+            {flaggedTasks.length}
+          </div>
+          <div style={{ fontSize: '0.78rem', color: 'var(--on-surface-variant)', marginTop: 8 }}>
+            Awaiting human decision or answer
+          </div>
         </div>
 
-        <div className="glass-panel" style={{ padding: 20 }}>
-          <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', fontWeight: 500 }}>Completed Deliverables</div>
-          <div style={{ fontSize: '2rem', fontWeight: 800, color: '#34d399', marginTop: 4 }}>{doneCount}</div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 4 }}>Verified & Delivered</div>
+        {/* Completed Deliverables Card */}
+        <div className="heritage-card" style={{ padding: '22px 24px' }}>
+          <VicariusLogo size={90} variant="watermark" fill="#2E7D32" />
+          <div className="label-caps" style={{ color: '#276a3c' }}>
+            Verified Deliverables
+          </div>
+          <div
+            className="font-serif"
+            style={{
+              fontSize: '2.4rem',
+              fontWeight: 700,
+              color: '#276a3c',
+              marginTop: 6,
+              lineHeight: 1,
+            }}
+          >
+            {doneTasks.length}
+          </div>
+          <div style={{ fontSize: '0.78rem', color: 'var(--on-surface-variant)', marginTop: 8 }}>
+            Passed verification & archived
+          </div>
         </div>
       </div>
 
-      {/* Main Content Layout: Tasks Table + Sidebar Panel */}
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 24 }}>
-        {/* Left Column: Tasks List */}
-        <div className="glass-panel" style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
-            <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>Task Queue & History</h3>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.85rem', color: 'var(--text-secondary)', cursor: 'pointer' }}>
-              <input
-                type="checkbox"
-                checked={showArchived}
-                onChange={(e) => setShowArchived(e.target.checked)}
-              />
-              Show Archived (90d+)
+      {/* Main Content Split: Tasks Ledger (2fr) + Telemetry / Quotas (1fr) */}
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 24, alignItems: 'start' }}>
+        {/* Left Column: Academic Task Ledger */}
+        <div className="heritage-card" style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 18 }}>
+          {/* Header & Filter Toolbar */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <VicariusLogo size={20} variant="mark" fill="var(--primary)" />
+              <h3 className="font-serif" style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--on-surface)' }}>
+                Academic Task Ledger
+              </h3>
+              <span
+                style={{
+                  fontSize: '0.8rem',
+                  color: 'var(--on-surface-variant)',
+                  background: 'var(--surface-container-high)',
+                  padding: '2px 8px',
+                  borderRadius: 12,
+                }}
+              >
+                {filteredTasks.length} tasks
+              </span>
+            </div>
+
+            {/* Archive Switch (DESIGN.md Analysis Toggle) */}
+            <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: '0.84rem' }}>
+              <span style={{ color: 'var(--on-surface-variant)', fontWeight: 500 }}>Include Archived (90d+)</span>
+              <div className="analysis-toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={showArchived}
+                  onChange={(e) => setShowArchived(e.target.checked)}
+                />
+                <span className="analysis-toggle-slider" />
+              </div>
             </label>
           </div>
 
-          {/* Search and Filters */}
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            <input
-              type="text"
-              placeholder="Search tasks or courses..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              style={{
-                flex: 1,
-                minWidth: 200,
-                background: 'rgba(30, 41, 59, 0.6)',
-                border: '1px solid var(--border-color)',
-                borderRadius: 8,
-                padding: '8px 12px',
-                color: '#fff',
-                fontSize: '0.85rem',
-              }}
-            />
+          {/* Search and Filters Strip (Stationery Inputs) */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12 }}>
+            <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+              <SearchIcon
+                size={15}
+                color="var(--outline)"
+                style={{ position: 'absolute', left: 12, pointerEvents: 'none' }}
+              />
+              <input
+                type="text"
+                placeholder="Search title, course, or prompt..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="stationery-input"
+                style={{ width: '100%', paddingLeft: 34 }}
+              />
+            </div>
+
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              style={{
-                background: 'rgba(30, 41, 59, 0.6)',
-                border: '1px solid var(--border-color)',
-                borderRadius: 8,
-                padding: '8px 12px',
-                color: '#fff',
-                fontSize: '0.85rem',
-              }}
+              className="stationery-select"
             >
               <option value="all">All Statuses</option>
-              <option value="queued">Queued</option>
-              <option value="building">Building</option>
-              <option value="flagged">Flagged</option>
-              <option value="done">Done</option>
+              <option value="queued">Queued for Build</option>
+              <option value="building">In Execution</option>
+              <option value="flagged">Flagged Review</option>
+              <option value="done">Delivered</option>
+              <option value="failed">Failed</option>
             </select>
+
+            <select
+              value={courseFilter}
+              onChange={(e) => setCourseFilter(e.target.value)}
+              className="stationery-select"
+            >
+              <option value="all">All Courses</option>
+              {uniqueCourses.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+
             <select
               value={typeFilter}
               onChange={(e) => setTypeFilter(e.target.value)}
-              style={{
-                background: 'rgba(30, 41, 59, 0.6)',
-                border: '1px solid var(--border-color)',
-                borderRadius: 8,
-                padding: '8px 12px',
-                color: '#fff',
-                fontSize: '0.85rem',
-              }}
+              className="stationery-select"
             >
               <option value="all">All Types</option>
-              <option value="document">Document</option>
-              <option value="presentation">Presentation</option>
+              <option value="document">Document (Report/Essay)</option>
+              <option value="presentation">Presentation (Slides)</option>
               <option value="code_project">Code Project</option>
               <option value="ml_training">ML Training</option>
-              <option value="research">Research</option>
-              <option value="handwritten">Handwritten</option>
+              <option value="research">Research Summary</option>
+              <option value="handwritten">Handwritten Style</option>
             </select>
           </div>
 
-          {/* Tasks Table */}
+          {/* Academic Table View */}
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
+            <table className="academic-table">
               <thead>
-                <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
-                  <th style={{ padding: '12px 8px' }}>Source</th>
-                  <th style={{ padding: '12px 8px' }}>Task Title</th>
-                  <th style={{ padding: '12px 8px' }}>Course</th>
-                  <th style={{ padding: '12px 8px' }}>Type</th>
-                  <th style={{ padding: '12px 8px' }}>Due Date</th>
-                  <th style={{ padding: '12px 8px' }}>Status</th>
-                  <th style={{ padding: '12px 8px', textAlign: 'right' }}>Actions</th>
+                <tr>
+                  <th style={{ width: '110px' }}>Source</th>
+                  <th>Assignment / Deliverable</th>
+                  <th>Course</th>
+                  <th>Type</th>
+                  <th>Deadline (IST)</th>
+                  <th>Status</th>
+                  <th style={{ textAlign: 'right' }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredTasks.length === 0 ? (
                   <tr>
-                    <td colSpan={7} style={{ padding: '32px 8px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                      {loading ? 'Loading tasks...' : 'No tasks found matching current filters.'}
+                    <td colSpan={7} style={{ padding: '48px 16px', textAlign: 'center' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+                        <VicariusLogo size={48} variant="mark" fill="var(--outline-variant)" />
+                        <div className="font-serif" style={{ fontSize: '1.1rem', color: 'var(--on-surface-variant)' }}>
+                          {loading ? 'Consulting database ledger...' : 'No academic tasks found matching current filters.'}
+                        </div>
+                        <p style={{ fontSize: '0.82rem', color: 'var(--outline)' }}>
+                          {searchQuery || statusFilter !== 'all' || courseFilter !== 'all' || typeFilter !== 'all'
+                            ? 'Try resetting the search or filter dropdowns above.'
+                            : 'Trigger a poll using the action button to ingest recent assignments.'}
+                        </p>
+                      </div>
                     </td>
                   </tr>
                 ) : (
                   filteredTasks.map((t) => {
-                    const dueStr = t.due_date
-                      ? new Date(t.due_date).toLocaleDateString('en-IN', {
-                          month: 'short',
-                          day: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                          timeZone: 'Asia/Kolkata',
-                        })
-                      : 'No Deadline';
-
+                    const deadline = getDeadlineInfo(t.due_date);
                     return (
                       <tr
                         key={t.id}
                         onClick={() => setSelectedTask(t)}
-                        style={{
-                          borderBottom: '1px solid rgba(51, 65, 85, 0.3)',
-                          cursor: 'pointer',
-                          transition: 'background 0.15s ease',
-                        }}
-                        onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(30, 41, 59, 0.4)')}
-                        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                        style={{ cursor: 'pointer' }}
                       >
-                        <td style={{ padding: '12px 8px' }}>
-                          <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                            {t.source === 'classroom' ? '🏫 Classroom' : '📧 Gmail'}
+                        <td>
+                          <span
+                            style={{
+                              fontSize: '0.78rem',
+                              color: 'var(--on-surface-variant)',
+                              background: 'var(--surface-container-high)',
+                              padding: '3px 8px',
+                              borderRadius: 4,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 5,
+                              fontWeight: 600,
+                            }}
+                          >
+                            {t.source === 'classroom' ? (
+                              <>
+                                <ClassroomIcon size={13} color="var(--primary)" />
+                                <span>Classroom</span>
+                              </>
+                            ) : (
+                              <>
+                                <MailIcon size={13} color="var(--primary-container)" />
+                                <span>Gmail</span>
+                              </>
+                            )}
                           </span>
                         </td>
-                        <td style={{ padding: '12px 8px', fontWeight: 600, color: '#fff' }}>
-                          {t.title}
+                        <td>
+                          <div style={{ fontWeight: 600, color: 'var(--on-surface)', fontSize: '0.9rem' }}>
+                            {t.title}
+                          </div>
+                          {t.result_summary && (
+                            <div
+                              style={{
+                                fontSize: '0.75rem',
+                                color: 'var(--on-surface-variant)',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                maxWidth: '280px',
+                                marginTop: 2,
+                              }}
+                            >
+                              {t.result_summary}
+                            </div>
+                          )}
                         </td>
-                        <td style={{ padding: '12px 8px', color: 'var(--text-secondary)' }}>
-                          {t.course || 'General'}
+                        <td>
+                          <span style={{ color: 'var(--on-surface-variant)', fontWeight: 500 }}>
+                            {t.course || 'General Academic'}
+                          </span>
                         </td>
-                        <td style={{ padding: '12px 8px', color: 'var(--text-muted)' }}>
-                          {t.task_type}
+                        <td>
+                          <span
+                            style={{
+                              fontSize: '0.78rem',
+                              color: 'var(--secondary)',
+                              textTransform: 'capitalize',
+                            }}
+                          >
+                            {t.task_type?.replace('_', ' ')}
+                          </span>
                         </td>
-                        <td style={{ padding: '12px 8px', color: 'var(--text-secondary)' }}>
-                          {dueStr}
+                        <td>
+                          <div>
+                            <div style={{ fontSize: '0.84rem', color: 'var(--on-surface)', fontWeight: 500 }}>
+                              {deadline.formatted}
+                            </div>
+                            <div
+                              style={{
+                                fontSize: '0.72rem',
+                                color: deadline.isUrgent ? 'var(--error)' : 'var(--outline)',
+                                fontWeight: deadline.isUrgent ? 700 : 400,
+                              }}
+                            >
+                              {deadline.relative}
+                            </div>
+                          </div>
                         </td>
-                        <td style={{ padding: '12px 8px' }}>
-                          {getStatusBadge(t.status)}
-                        </td>
-                        <td style={{ padding: '12px 8px', textAlign: 'right' }}>
+                        <td>{renderStatusBadge(t.status)}</td>
+                        <td style={{ textAlign: 'right' }}>
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
                               setSelectedTask(t);
                             }}
-                            className="btn-secondary"
+                            className="btn-heritage-secondary"
                             style={{ padding: '4px 10px', fontSize: '0.75rem' }}
                           >
                             Inspect
@@ -438,96 +901,160 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Right Column: System Health & Quota Panel */}
+        {/* Right Column: System Telemetry & Provider Quotas */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-          {/* Health Overview */}
-          <div className="glass-panel" style={{ padding: 20 }}>
-            <h3 style={{ fontSize: '1.05rem', fontWeight: 700, marginBottom: 14 }}>System Health</h3>
+          {/* Health & Infrastructure Panel */}
+          <div className="heritage-card" style={{ padding: 22 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+              <VicariusLogo size={18} variant="mark" fill="var(--primary)" />
+              <h3 className="font-serif" style={{ fontSize: '1.05rem', fontWeight: 600, color: 'var(--on-surface)' }}>
+                System Telemetry
+              </h3>
+            </div>
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12, fontSize: '0.85rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--text-secondary)' }}>Last Ingestion:</span>
-                <span style={{ fontWeight: 600, color: '#38bdf8' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ color: 'var(--on-surface-variant)' }}>Last Ingestion Run:</span>
+                <span style={{ fontWeight: 600, color: 'var(--primary)' }}>
                   {health?.lastIngestion
                     ? new Date(health.lastIngestion).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })
-                    : 'Awaiting Run'}
+                    : 'Scheduled'}
                 </span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--text-secondary)' }}>Local Worker Check-in:</span>
-                <span style={{ fontWeight: 600, color: '#10b981' }}>
-                  {health?.lastWorkerCheckin
-                    ? new Date(health.lastWorkerCheckin).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })
-                    : 'Ready'}
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ color: 'var(--on-surface-variant)' }}>Local Worker Status:</span>
+                <span
+                  style={{
+                    fontWeight: 600,
+                    color: '#2e7d32',
+                    background: '#e2f0d9',
+                    padding: '2px 8px',
+                    borderRadius: 4,
+                    fontSize: '0.78rem',
+                  }}
+                >
+                  {health?.lastWorkerCheckin ? 'Ready & Polling' : 'Active Standby'}
                 </span>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ color: 'var(--on-surface-variant)' }}>Timezone Standard:</span>
+                <span style={{ fontWeight: 600, color: 'var(--on-surface)' }}>Asia/Kolkata (IST)</span>
               </div>
             </div>
           </div>
 
-          {/* Free-Tier Quota Tracker (PRD Section 6.6) */}
-          <div className="glass-panel" style={{ padding: 20 }}>
-            <h3 style={{ fontSize: '1.05rem', fontWeight: 700, marginBottom: 14 }}>Provider Quotas (Free Tier)</h3>
+          {/* Provider Quotas (Free Tier Gauges from PRD Section 6.6 & DESIGN.md Confidence Meters) */}
+          <div className="heritage-card" style={{ padding: 22 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <VicariusLogo size={18} variant="mark" fill="var(--primary-container)" />
+                <h3 className="font-serif" style={{ fontSize: '1.05rem', fontWeight: 600, color: 'var(--on-surface)' }}>
+                  Provider Quotas
+                </h3>
+              </div>
+              <span
+                className="label-caps"
+                style={{
+                  background: 'var(--surface-container-high)',
+                  color: 'var(--on-surface-variant)',
+                  padding: '2px 6px',
+                  borderRadius: 3,
+                  fontSize: '9px',
+                }}
+              >
+                Free Tier
+              </span>
+            </div>
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {/* Groq Classification Meter */}
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: 4 }}>
-                  <span>Groq (Classification)</span>
-                  <span style={{ color: 'var(--text-muted)' }}>{health?.usage?.groq?.usagePercent || 0}% used</span>
+                  <span style={{ fontWeight: 600, color: 'var(--on-surface)' }}>Groq Llama-3.3 (Classification)</span>
+                  <span style={{ color: 'var(--on-surface-variant)' }}>
+                    {health?.usage?.groq?.usagePercent || 0}% of 14.4k RPD
+                  </span>
                 </div>
-                <div style={{ background: 'rgba(51, 65, 85, 0.4)', borderRadius: 4, height: 6, overflow: 'hidden' }}>
-                  <div style={{ background: '#38bdf8', height: '100%', width: `${health?.usage?.groq?.usagePercent || 5}%` }} />
+                <div className="confidence-meter-track">
+                  <div
+                    className="confidence-meter-fill"
+                    style={{ width: `${Math.max(4, health?.usage?.groq?.usagePercent || 2)}%` }}
+                  />
                 </div>
               </div>
 
+              {/* Gemini Flash Vision/PDF OCR Meter */}
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: 4 }}>
-                  <span>Gemini Flash (Vision/PDF)</span>
-                  <span style={{ color: 'var(--text-muted)' }}>{health?.usage?.gemini?.usagePercent || 0}% used</span>
+                  <span style={{ fontWeight: 600, color: 'var(--on-surface)' }}>Gemini Flash (OCR / Vision)</span>
+                  <span style={{ color: 'var(--on-surface-variant)' }}>
+                    {health?.usage?.gemini?.usagePercent || 0}% of 1.5k RPD
+                  </span>
                 </div>
-                <div style={{ background: 'rgba(51, 65, 85, 0.4)', borderRadius: 4, height: 6, overflow: 'hidden' }}>
-                  <div style={{ background: '#818cf8', height: '100%', width: `${health?.usage?.gemini?.usagePercent || 5}%` }} />
-                </div>
-              </div>
-
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem' }}>
-                  <span>OpenRouter Failover</span>
-                  <span style={{ color: '#10b981' }}>Standby Ready</span>
+                <div className="confidence-meter-track">
+                  <div
+                    className="confidence-meter-fill"
+                    style={{ width: `${Math.max(4, health?.usage?.gemini?.usagePercent || 3)}%` }}
+                  />
                 </div>
               </div>
 
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem' }}>
-                  <span>Antigravity Engine</span>
-                  <span style={{ color: '#38bdf8' }}>v1.1.12 Pinned</span>
-                </div>
+              {/* OpenRouter Failover */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', paddingTop: 4 }}>
+                <span style={{ color: 'var(--on-surface)' }}>OpenRouter Failover Chain:</span>
+                <span style={{ color: '#2e7d32', fontWeight: 600 }}>Active Standby</span>
+              </div>
+
+              {/* Antigravity CLI */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem' }}>
+                <span style={{ color: 'var(--on-surface)' }}>Antigravity Engine:</span>
+                <span style={{ color: 'var(--primary)', fontWeight: 600 }}>v1.1.12 Pinned</span>
               </div>
             </div>
           </div>
 
-          {/* Recent System Events */}
-          <div className="glass-panel" style={{ padding: 20 }}>
-            <h3 style={{ fontSize: '1.05rem', fontWeight: 700, marginBottom: 14 }}>Live System Events</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 250, overflowY: 'auto' }}>
+          {/* Live System Events Log */}
+          <div className="heritage-card" style={{ padding: 22 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <VicariusLogo size={18} variant="mark" fill="var(--outline)" />
+                <h3 className="font-serif" style={{ fontSize: '1.05rem', fontWeight: 600, color: 'var(--on-surface)' }}>
+                  Live System Events
+                </h3>
+              </div>
+              <span style={{ fontSize: '0.75rem', color: 'var(--outline)' }}>Real-time</span>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 260, overflowY: 'auto' }}>
               {(health?.events || []).length === 0 ? (
-                <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>No system events recorded.</div>
+                <div style={{ color: 'var(--on-surface-variant)', fontSize: '0.8rem', padding: '12px 0', textAlign: 'center' }}>
+                  No system events recorded.
+                </div>
               ) : (
-                (health?.events || []).slice(0, 8).map((evt) => (
+                (health?.events || []).slice(0, 10).map((evt) => (
                   <div
                     key={evt.id}
                     style={{
-                      fontSize: '0.75rem',
-                      padding: '6px 10px',
-                      borderRadius: 6,
-                      background: 'rgba(30, 41, 59, 0.5)',
+                      fontSize: '0.78rem',
+                      padding: '8px 12px',
+                      borderRadius: 4,
+                      background: 'var(--surface-container-low)',
                       borderLeft: `3px solid ${
-                        evt.level === 'error' ? '#ef4444' : evt.level === 'warning' ? '#f59e0b' : '#38bdf8'
+                        evt.level === 'error'
+                          ? 'var(--error)'
+                          : evt.level === 'warning'
+                          ? '#d97706'
+                          : 'var(--primary)'
                       }`,
                     }}
                   >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)' }}>
-                      <span>[{evt.component}]</span>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--outline)', fontSize: '0.72rem' }}>
+                      <span style={{ fontWeight: 600 }}>[{evt.component.toUpperCase()}]</span>
                       <span>{new Date(evt.created_at).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })}</span>
                     </div>
-                    <div style={{ color: '#f1f5f9', marginTop: 2 }}>{evt.message}</div>
+                    <div style={{ color: 'var(--on-surface)', marginTop: 3 }}>{evt.message}</div>
                   </div>
                 ))
               )}
@@ -536,77 +1063,183 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Task Detail Modal (PRD Section 6.6) */}
+      {/* Task Inspection & Clarification Modal (PRD Section 6.6 & DESIGN.md Stationary Modal) */}
       {selectedTask && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: 'rgba(0, 0, 0, 0.75)',
-          backdropFilter: 'blur(8px)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 100,
-          padding: 24,
-        }}>
-          <div className="glass-panel" style={{
-            maxWidth: 800,
-            width: '100%',
-            maxHeight: '90vh',
-            overflowY: 'auto',
-            padding: 32,
-            position: 'relative',
-            background: 'var(--bg-secondary)',
-          }}>
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(35, 26, 15, 0.65)',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 100,
+            padding: 24,
+          }}
+          onClick={() => setSelectedTask(null)}
+        >
+          <div
+            className="heritage-card"
+            style={{
+              maxWidth: 840,
+              width: '100%',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+              padding: 36,
+              position: 'relative',
+              background: '#ffffff',
+              boxShadow: 'var(--shadow-modal)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Watermark Background */}
+            <VicariusLogo size={240} variant="watermark" fill="#8B6F3E" style={{ right: '-30px', bottom: '-30px' }} />
+
+            {/* Close Button */}
             <button
               onClick={() => setSelectedTask(null)}
               style={{
                 position: 'absolute',
-                top: 20,
-                right: 20,
+                top: 24,
+                right: 24,
                 background: 'transparent',
                 border: 'none',
-                color: 'var(--text-muted)',
-                fontSize: '1.5rem',
+                color: 'var(--outline)',
                 cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: 4,
               }}
+              aria-label="Close modal"
             >
-              &times;
+              <CloseIcon size={20} />
             </button>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
-              {getStatusBadge(selectedTask.status)}
-              <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{selectedTask.task_type}</span>
+            {/* Modal Header */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 12 }}>
+              <VicariusLogo size={36} variant="crest" />
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  {renderStatusBadge(selectedTask.status)}
+                  <span
+                    style={{
+                      fontSize: '0.78rem',
+                      background: 'var(--surface-container-high)',
+                      padding: '2px 8px',
+                      borderRadius: 4,
+                      color: 'var(--on-surface-variant)',
+                      fontWeight: 600,
+                    }}
+                  >
+                    {selectedTask.course || 'General'}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: '0.78rem',
+                      color: 'var(--outline)',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4,
+                    }}
+                  >
+                    Source: {selectedTask.source === 'classroom' ? 'Google Classroom' : 'Gmail'}
+                  </span>
+                </div>
+              </div>
             </div>
 
-            <h2 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: 4, color: '#fff' }}>
+            <h2
+              className="heading-h2"
+              style={{
+                fontSize: '1.65rem',
+                color: 'var(--on-surface)',
+                marginTop: 8,
+                marginBottom: 6,
+              }}
+            >
               {selectedTask.title}
             </h2>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: 20 }}>
-              Course: <strong style={{ color: '#fff' }}>{selectedTask.course || 'General'}</strong> • Due:{' '}
+
+            <p style={{ color: 'var(--on-surface-variant)', fontSize: '0.88rem', marginBottom: 24 }}>
+              <strong>Due Date:</strong>{' '}
               {selectedTask.due_date
-                ? new Date(selectedTask.due_date).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
-                : 'No Deadline'}
+                ? new Date(selectedTask.due_date).toLocaleString('en-IN', {
+                    timeZone: 'Asia/Kolkata',
+                    dateStyle: 'full',
+                    timeStyle: 'short',
+                  })
+                : 'No explicit deadline specified'}
             </p>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-              {/* Requirements & Criteria */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 22, position: 'relative', zIndex: 1 }}>
+              {/* Extracted Requirements Checklist */}
               <div>
-                <h4 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: 8, color: '#38bdf8' }}>
+                <h4
+                  className="font-serif"
+                  style={{ fontSize: '1rem', fontWeight: 600, marginBottom: 8, color: 'var(--primary)' }}
+                >
                   Extracted Requirements
                 </h4>
-                <div style={{ background: 'rgba(15, 23, 42, 0.8)', padding: 14, borderRadius: 8, fontSize: '0.85rem' }}>
-                  {selectedTask.extracted_requirements?.items ? (
-                    <ul style={{ paddingLeft: 20 }}>
+                <div
+                  style={{
+                    background: 'var(--surface-container-low)',
+                    border: '1px solid var(--outline-variant)',
+                    padding: '16px 20px',
+                    borderRadius: 6,
+                    fontSize: '0.88rem',
+                  }}
+                >
+                  {selectedTask.extracted_requirements?.items &&
+                  Array.isArray(selectedTask.extracted_requirements.items) &&
+                  selectedTask.extracted_requirements.items.length > 0 ? (
+                    <ul style={{ paddingLeft: 20, display: 'flex', flexDirection: 'column', gap: 6 }}>
                       {selectedTask.extracted_requirements.items.map((item: string, i: number) => (
-                        <li key={i} style={{ marginBottom: 4 }}>{item}</li>
+                        <li key={i} style={{ color: 'var(--on-surface)' }}>
+                          {item}
+                        </li>
                       ))}
                     </ul>
                   ) : (
-                    <p>{selectedTask.extracted_requirements?.raw_body || 'No structured requirements extracted.'}</p>
+                    <p style={{ color: 'var(--on-surface-variant)' }}>
+                      {selectedTask.extracted_requirements?.summary ||
+                        selectedTask.extracted_requirements?.raw_body ||
+                        'No structured requirements extracted.'}
+                    </p>
+                  )}
+
+                  {/* Format specifications */}
+                  {selectedTask.extracted_requirements && (
+                    <div
+                      style={{
+                        display: 'flex',
+                        gap: 12,
+                        marginTop: 12,
+                        paddingTop: 10,
+                        borderTop: '1px dashed var(--outline-variant)',
+                        fontSize: '0.8rem',
+                        color: 'var(--on-surface-variant)',
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      {selectedTask.extracted_requirements.output_style && (
+                        <span>Style: <strong>{selectedTask.extracted_requirements.output_style}</strong></span>
+                      )}
+                      {selectedTask.extracted_requirements.slide_count && (
+                        <span>Slides: <strong>{selectedTask.extracted_requirements.slide_count}</strong></span>
+                      )}
+                      {selectedTask.extracted_requirements.word_count && (
+                        <span>Word Count: <strong>~{selectedTask.extracted_requirements.word_count}</strong></span>
+                      )}
+                      {selectedTask.extracted_requirements.language && (
+                        <span>Language: <strong>{selectedTask.extracted_requirements.language}</strong></span>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>
@@ -614,31 +1247,76 @@ export default function DashboardPage() {
               {/* Success Criteria */}
               {selectedTask.success_criteria && (
                 <div>
-                  <h4 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: 8, color: '#10b981' }}>
+                  <h4
+                    className="font-serif"
+                    style={{ fontSize: '1rem', fontWeight: 600, marginBottom: 8, color: '#276a3c' }}
+                  >
                     Success Criteria
                   </h4>
-                  <div style={{ background: 'rgba(15, 23, 42, 0.8)', padding: 14, borderRadius: 8, fontSize: '0.85rem' }}>
+                  <div
+                    style={{
+                      background: '#f4fbf5',
+                      border: '1px solid #c3e6cb',
+                      padding: '14px 18px',
+                      borderRadius: 6,
+                      fontSize: '0.88rem',
+                      color: '#1e4620',
+                    }}
+                  >
                     {selectedTask.success_criteria}
                   </div>
                 </div>
               )}
 
-              {/* Build Spec Prompt */}
+              {/* Antigravity Build Spec Prompt */}
               {selectedTask.build_spec && (
                 <div>
-                  <h4 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: 8, color: '#818cf8' }}>
-                    Antigravity Build Spec
-                  </h4>
-                  <pre style={{
-                    background: 'rgba(10, 15, 29, 0.95)',
-                    padding: 14,
-                    borderRadius: 8,
-                    fontSize: '0.75rem',
-                    whiteSpace: 'pre-wrap',
-                    maxHeight: 180,
-                    overflowY: 'auto',
-                    border: '1px solid var(--border-color)',
-                  }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <h4
+                      className="font-serif"
+                      style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--primary-container)' }}
+                    >
+                      Antigravity CLI Build Spec
+                    </h4>
+                    <button
+                      onClick={() => {
+                        if (selectedTask.build_spec) {
+                          navigator.clipboard.writeText(selectedTask.build_spec);
+                          setCopiedSpec(true);
+                          setTimeout(() => setCopiedSpec(false), 2000);
+                        }
+                      }}
+                      className="btn-heritage-secondary"
+                      style={{ padding: '4px 12px', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                    >
+                      {copiedSpec ? (
+                        <>
+                          <CheckIcon size={13} color="#2e7d32" />
+                          <span>Copied!</span>
+                        </>
+                      ) : (
+                        <>
+                          <CopyIcon size={13} />
+                          <span>Copy Spec Prompt</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  <pre
+                    className="font-mono"
+                    style={{
+                      background: 'var(--surface-dim)',
+                      border: '1px solid var(--outline-variant)',
+                      padding: 16,
+                      borderRadius: 6,
+                      fontSize: '0.78rem',
+                      whiteSpace: 'pre-wrap',
+                      maxHeight: 200,
+                      overflowY: 'auto',
+                      color: 'var(--on-surface)',
+                      lineHeight: 1.5,
+                    }}
+                  >
                     {selectedTask.build_spec}
                   </pre>
                 </div>
@@ -647,52 +1325,90 @@ export default function DashboardPage() {
               {/* Result Summary & Assumptions */}
               {selectedTask.result_summary && (
                 <div>
-                  <h4 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: 8, color: '#fbbf24' }}>
+                  <h4
+                    className="font-serif"
+                    style={{ fontSize: '1rem', fontWeight: 600, marginBottom: 8, color: 'var(--on-surface)' }}
+                  >
                     Result Summary & Assumptions
                   </h4>
-                  <div style={{ background: 'rgba(15, 23, 42, 0.8)', padding: 14, borderRadius: 8, fontSize: '0.85rem' }}>
+                  <div
+                    style={{
+                      background: 'var(--surface-container-low)',
+                      border: '1px solid var(--outline-variant)',
+                      padding: '14px 18px',
+                      borderRadius: 6,
+                      fontSize: '0.88rem',
+                      color: 'var(--on-surface)',
+                    }}
+                  >
                     {selectedTask.result_summary}
                   </div>
                 </div>
               )}
 
-              {/* Pending Questions Answering Area (PRD Section 6.6) */}
+              {/* Clarification Questions Answering Interface (PRD Section 6.6) */}
               {(selectedTask as any).questions && (selectedTask as any).questions.length > 0 && (
                 <div>
-                  <h4 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: 8, color: '#f43f5e' }}>
-                    Agent Clarification Questions
+                  <h4
+                    className="font-serif"
+                    style={{ fontSize: '1rem', fontWeight: 600, marginBottom: 8, color: 'var(--error)' }}
+                  >
+                    Human Clarification Questions
                   </h4>
                   {(selectedTask as any).questions.map((q: Question) => (
-                    <div key={q.id} style={{ background: 'rgba(30, 41, 59, 0.7)', padding: 14, borderRadius: 8, marginBottom: 8 }}>
-                      <div style={{ fontWeight: 600, fontSize: '0.85rem', color: '#fff' }}>{q.question_text}</div>
+                    <div
+                      key={q.id}
+                      style={{
+                        background: 'var(--surface-container-low)',
+                        border: '1px solid var(--outline-variant)',
+                        padding: 16,
+                        borderRadius: 6,
+                        marginBottom: 10,
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontWeight: 600,
+                          fontSize: '0.9rem',
+                          color: 'var(--on-surface)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 6,
+                        }}
+                      >
+                        <HelpIcon size={15} color="var(--primary-container)" />
+                        <span>{q.question_text}</span>
+                      </div>
                       {q.status === 'answered' ? (
-                        <div style={{ color: '#10b981', fontSize: '0.8rem', marginTop: 4 }}>
-                          Answered: {q.answer_text}
+                        <div
+                          style={{
+                            color: '#276a3c',
+                            fontSize: '0.84rem',
+                            marginTop: 6,
+                            background: '#e2f0d9',
+                            padding: '6px 12px',
+                            borderRadius: 4,
+                          }}
+                        >
+                          <strong>Your Answer:</strong> {q.answer_text}
                         </div>
                       ) : (
-                        <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+                        <div style={{ marginTop: 12, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                           <input
                             type="text"
                             placeholder="Type your clarification answer..."
                             value={replyText}
                             onChange={(e) => setReplyText(e.target.value)}
-                            style={{
-                              flex: 1,
-                              background: 'rgba(15, 23, 42, 0.9)',
-                              border: '1px solid var(--border-color)',
-                              borderRadius: 6,
-                              padding: '6px 10px',
-                              color: '#fff',
-                              fontSize: '0.85rem',
-                            }}
+                            className="stationery-input"
+                            style={{ flex: 1, minWidth: 220 }}
                           />
                           <button
                             onClick={() => handleAnswerQuestion(q.id)}
-                            disabled={actionLoading}
-                            className="btn-primary"
-                            style={{ padding: '6px 14px', fontSize: '0.8rem' }}
+                            disabled={actionLoading || !replyText.trim()}
+                            className="btn-heritage-primary"
+                            style={{ padding: '8px 18px', fontSize: '0.85rem' }}
                           >
-                            Submit Answer
+                            Submit Clarification
                           </button>
                         </div>
                       )}
@@ -701,19 +1417,77 @@ export default function DashboardPage() {
                 </div>
               )}
 
-              {/* Actions */}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 12 }}>
+              {/* Deliverables List (PRD Section 6.6) */}
+              {(selectedTask as any).deliverables && (selectedTask as any).deliverables.length > 0 && (
+                <div>
+                  <h4
+                    className="font-serif"
+                    style={{ fontSize: '1rem', fontWeight: 600, marginBottom: 8, color: '#276a3c' }}
+                  >
+                    Generated Deliverables
+                  </h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {(selectedTask as any).deliverables.map((d: Deliverable) => (
+                      <div
+                        key={d.id}
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          background: 'var(--surface-container-low)',
+                          padding: '10px 16px',
+                          borderRadius: 6,
+                          border: '1px solid var(--outline-variant)',
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <FileIcon size={16} color="var(--primary)" />
+                          <div>
+                            <div style={{ fontWeight: 600, fontSize: '0.88rem' }}>{d.file_name}</div>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--on-surface-variant)' }}>
+                              Delivered via: {d.delivered_via || 'Google Drive'}
+                            </div>
+                          </div>
+                        </div>
+                        {d.drive_link && (
+                          <a
+                            href={d.drive_link}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="btn-heritage-primary"
+                            style={{
+                              textDecoration: 'none',
+                              padding: '6px 12px',
+                              fontSize: '0.78rem',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 6,
+                            }}
+                          >
+                            <span>Open Drive Folder</span>
+                            <ExternalLinkIcon size={12} color="#FFF9F6" />
+                          </a>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 16 }}>
                 {['flagged', 'failed'].includes(selectedTask.status) && (
                   <button
                     onClick={() => handleRetryTask(selectedTask.id)}
                     disabled={actionLoading}
-                    className="btn-primary"
+                    className="btn-heritage-primary"
                   >
-                    🔄 Retry Task
+                    <RefreshIcon size={14} color="#FFF9F6" />
+                    <span>Requeue & Retry Task</span>
                   </button>
                 )}
-                <button onClick={() => setSelectedTask(null)} className="btn-secondary">
-                  Close
+                <button onClick={() => setSelectedTask(null)} className="btn-heritage-secondary">
+                  Close Ledger
                 </button>
               </div>
             </div>

@@ -11,6 +11,26 @@ export type TaskType =
   | 'research' 
   | 'ml_training';
 
+export type OutputStyle = 'typed' | 'handwritten';
+
+export interface ExtractedRequirements {
+  summary: string;
+  items: string[];
+  raw_text?: string;
+  raw_body?: string;
+  course_notes?: string[];
+  output_style?: OutputStyle;
+  slide_count?: number | null;
+  word_count?: number | null;
+  is_lab_report?: boolean;
+  is_group_project?: boolean;
+  language?: string;
+  citation_style?: string;
+  requires_screenshot?: boolean;
+  is_spreadsheet?: boolean;
+  [key: string]: any;
+}
+
 export type TaskStatus = 
   | 'new' 
   | 'extracting' 
@@ -35,7 +55,7 @@ export interface Task {
   course: string | null;
   title: string;
   task_type: TaskType;
-  extracted_requirements: Record<string, any> | null;
+  extracted_requirements: ExtractedRequirements | Record<string, any> | null;
   success_criteria: string | null;
   build_spec: string | null;
   due_date: string | null;

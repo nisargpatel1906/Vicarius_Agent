@@ -15,6 +15,18 @@ export interface TelegramUpdate {
     chat: { id: number; type: string };
     date: number;
     text?: string;
+    caption?: string;
+    document?: {
+      file_id: string;
+      file_name?: string;
+      mime_type?: string;
+      file_size?: number;
+    };
+    photo?: Array<{
+      file_id: string;
+      width: number;
+      height: number;
+    }>;
     reply_to_message?: {
       message_id: number;
       text?: string;
@@ -28,10 +40,17 @@ export interface TelegramUpdate {
   };
 }
 
+function escapeHtml(str: string): string {
+  return (str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 /**
- * Sends a message via Telegram Bot API
+ * Sends a message via Telegram Bot API with automatic plain text fallback
  */
-export async function sendTelegramMessage(text: string, parseMode: 'Markdown' | 'HTML' = 'Markdown'): Promise<boolean> {
+export async function sendTelegramMessage(text: string, parseMode: 'Markdown' | 'HTML' = 'HTML'): Promise<boolean> {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_ALLOWED_CHAT_ID;
 
@@ -48,14 +67,27 @@ export async function sendTelegramMessage(text: string, parseMode: 'Markdown' | 
         chat_id: chatId,
         text,
         parse_mode: parseMode,
+        disable_web_page_preview: true,
       }),
     });
 
-    if (!res.ok) {
-      console.error(`Telegram sendMessage failed: HTTP ${res.status}`);
-      return false;
+    if (res.ok) {
+      return true;
     }
-    return true;
+
+    console.warn(`Telegram sendMessage parse_mode=${parseMode} failed: HTTP ${res.status}. Retrying with plain text...`);
+    const cleanText = text.replace(/<[^>]+>/g, '').replace(/[*_`]/g, '');
+    const fallbackRes = await fetch(`${TELEGRAM_API_BASE}${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: cleanText,
+        disable_web_page_preview: true,
+      }),
+    });
+
+    return fallbackRes.ok;
   } catch (err: any) {
     console.error('Error sending Telegram message:', err?.message || err);
     return false;
@@ -97,6 +129,145 @@ export async function sendTelegramAlert(text: string, isUrgent: boolean = false)
 }
 
 /**
+ * Creates and queues a new academic task directly from a Telegram prompt
+ */
+export async function createTaskFromTelegram(promptText: string): Promise<string> {
+  const supabase = getSupabaseAdmin();
+  const rawBody = promptText.trim();
+
+  let parsed: any = {};
+  const groqKey = process.env.GROQ_API_KEY;
+  const systemPrompt = `You are the Vicarius Academic Task Parser for a Computer Engineering / AI-ML student.
+Extract the structured task details into strict JSON:
+{
+  "title": string (concise, descriptive academic title),
+  "course": string (e.g. "CE-401 Machine Learning", "CE-502 Cloud Computing", "CE-403 Web Technologies", "CE-505 Information Security", or "General"),
+  "task_type": "document" | "presentation" | "code_project" | "ml_training" | "research" | "handwritten",
+  "due_date": string in ISO 8601 with Asia/Kolkata timezone offset (+05:30) (e.g. "2026-09-10T18:00:00+05:30". If not specified, default to 3 days from now at 18:00:00+05:30),
+  "requirements": string[] (list of key instructions),
+  "success_criteria": string (verification criteria),
+  "build_spec": string (detailed prompt instructions for the build agent)
+}`;
+
+  if (groqKey) {
+    try {
+      const groq = new Groq({ apiKey: groqKey });
+      const res = await groq.chat.completions.create({
+        model: 'llama-3.3-70b-versatile',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: rawBody },
+        ],
+        temperature: 0.1,
+      });
+      const content = res.choices[0]?.message?.content || '{}';
+      parsed = JSON.parse(content.replace(/```json/g, '').replace(/```/g, '').trim());
+    } catch (err) {
+      console.warn('Groq parsing error:', err);
+    }
+  }
+
+  const title = parsed.title || rawBody.slice(0, 50) || 'Academic Assignment';
+  const course = parsed.course || 'General';
+  const taskType = parsed.task_type || 'document';
+  
+  // Default due date: 3 days ahead at 18:00 IST
+  const defaultDue = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+  const dueDate = parsed.due_date || defaultDue.toISOString();
+
+  const taskId = crypto.randomUUID();
+  const nowIso = new Date().toISOString();
+
+  const { error } = await supabase.from('tasks').insert({
+    id: taskId,
+    source: 'classroom',
+    external_id: `tg-${Date.now()}`,
+    course: course,
+    title: title,
+    task_type: taskType,
+    extracted_requirements: {
+      summary: title,
+      items: parsed.requirements || [rawBody],
+      raw_text: rawBody,
+    },
+    success_criteria: parsed.success_criteria || 'Produce complete academic deliverables matching requirements.',
+    build_spec: parsed.build_spec || rawBody,
+    due_date: dueDate,
+    status: 'queued',
+    archived: false,
+    created_at: nowIso,
+    updated_at: nowIso,
+  });
+
+  if (error) {
+    throw new Error(`Database error: ${error.message}`);
+  }
+
+  await logSystemEvent('info', 'telegram', `New task created from Telegram: '${title}' (ID: ${taskId})`);
+
+  return (
+    `✅ <b>Task Created & Queued!</b>\n\n` +
+    `📌 <b>Title:</b> ${escapeHtml(title)}\n` +
+    `📚 <b>Course:</b> ${escapeHtml(course)}\n` +
+    `🏷️ <b>Type:</b> <code>${taskType}</code>\n` +
+    `⏰ <b>Due Date:</b> ${new Date(dueDate).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n` +
+    `🆔 <b>Task ID:</b> <code>${taskId}</code>\n\n` +
+    `<i>The local worker will claim and build your deliverables automatically.</i>`
+  );
+}
+
+/**
+ * Intelligent Academic AI Assistant Chat on Telegram
+ */
+export async function askAiAssistant(userPrompt: string): Promise<string> {
+  const supabase = getSupabaseAdmin();
+  
+  // Fetch active tasks and deliverables for real-time context
+  const { data: tasks } = await supabase
+    .from('tasks')
+    .select('id, title, course, task_type, status, due_date, result_summary')
+    .eq('archived', false)
+    .order('due_date', { ascending: true })
+    .limit(8);
+
+  const taskContext = (tasks || []).map(t => 
+    `- [${t.status.toUpperCase()}] ${t.title} (${t.course || 'General'}, Due: ${t.due_date || 'N/A'}, ID: ${t.id})`
+  ).join('\n');
+
+  const systemPrompt = `You are Vicarius, an autonomous AI academic assistant for Nisarg Patel (Computer Engineering / AI-ML student at Academic Institution).
+You manage coursework, research papers, presentations, lab reports, ML models, and programming assignments.
+
+Current Active Tasks in System:
+${taskContext || 'No active tasks.'}
+
+Instructions:
+1. Respond helpfully, concisely, and accurately.
+2. If the student asks you questions about their coursework, concepts, code, or schedule, answer directly with rich technical depth.
+3. If the student asks you to do/create a task, guide them that you can create it with /task <details> or summarize what you can build.
+4. Output in clean, valid HTML (<b>bold</b>, <i>italic</i>, <code>code</code>, bullet points •). Do NOT use markdown asterisks.`;
+
+  const groqKey = process.env.GROQ_API_KEY;
+  if (groqKey) {
+    try {
+      const groq = new Groq({ apiKey: groqKey });
+      const res = await groq.chat.completions.create({
+        model: 'llama-3.3-70b-versatile',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        temperature: 0.3,
+      });
+      return res.choices[0]?.message?.content || 'I processed your request.';
+    } catch (e: any) {
+      console.warn('Groq chat assistant error:', e);
+    }
+  }
+
+  return "I am your Vicarius Academic Agent. Use <code>/task &lt;prompt&gt;</code> to queue a task, <code>/status</code> to check progress, or <code>/help</code> for all commands.";
+}
+
+/**
  * Handles incoming webhook updates from Telegram
  */
 export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ handled: boolean; responseText?: string }> {
@@ -109,14 +280,28 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
   }
 
   const supabase = getSupabaseAdmin();
-  const text = update.message?.text?.trim() || '';
+  const text = update.message?.text?.trim() || update.message?.caption?.trim() || '';
 
-  // 1. Check if user is replying to a pending question
+  // 1. Check if user attached a document/file
+  if (update.message?.document) {
+    const doc = update.message.document;
+    const caption = text || doc.file_name || 'Academic Assignment Document';
+    const prompt = `Attached file: ${doc.file_name || 'document'}\nInstructions: ${caption}`;
+    try {
+      const confirmation = await createTaskFromTelegram(prompt);
+      await sendTelegramMessage(confirmation);
+      return { handled: true, responseText: 'Task created from document' };
+    } catch (err: any) {
+      await sendTelegramMessage(`❌ Failed to create task: ${escapeHtml(err.message)}`);
+      return { handled: true };
+    }
+  }
+
+  // 2. Check if user is replying to a pending question
   const replyTo = update.message?.reply_to_message;
   let pendingQuestion = null;
 
   if (replyTo) {
-    // Attempt match by reply text
     const { data: q } = await supabase
       .from('questions')
       .select('*')
@@ -125,8 +310,7 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
       .limit(1)
       .maybeSingle();
     pendingQuestion = q;
-  } else {
-    // If no explicit reply, check if there's any pending question awaiting answer
+  } else if (text && !text.startsWith('/')) {
     const { data: q } = await supabase
       .from('questions')
       .select('*')
@@ -134,15 +318,10 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
       .order('asked_at', { ascending: false })
       .limit(1)
       .maybeSingle();
-    
-    // If text is not a command and there's a recent pending question (< 30 mins)
-    if (q && !text.startsWith('/')) {
-      pendingQuestion = q;
-    }
+    pendingQuestion = q;
   }
 
   if (pendingQuestion && text) {
-    // Interpreting answer via Groq classification pass (PRD Section 8)
     let finalAnswer = text;
     const groqKey = process.env.GROQ_API_KEY;
     if (groqKey) {
@@ -172,26 +351,148 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
       }
     }
 
-    // Update question row in Supabase
     await supabase.from('questions').update({
       answer_text: finalAnswer,
       status: 'answered',
       answered_at: new Date().toISOString(),
     }).eq('id', pendingQuestion.id);
 
-    await sendTelegramMessage(`✅ Recorded your answer: "${finalAnswer}". The agent will proceed.`);
+    await sendTelegramMessage(`✅ <b>Recorded answer:</b> "${escapeHtml(finalAnswer)}"\n\n<i>The build worker will proceed with your instructions.</i>`);
     return { handled: true, responseText: 'Question answered' };
   }
 
-  // 2. Status queries (Natural language & commands)
   const lower = text.toLowerCase();
+
+  // 3. Create Task Command: /task, /new, /add, /create
+  if (
+    lower.startsWith('/task') ||
+    lower.startsWith('/new') ||
+    lower.startsWith('/add') ||
+    lower.startsWith('/create')
+  ) {
+    const prompt = text.replace(/^\/(task|new|add|create)\s*/i, '').trim();
+    if (!prompt) {
+      await sendTelegramMessage(
+        `📝 <b>How to create a task:</b>\n\n` +
+        `Type: <code>/task &lt;your assignment details&gt;</code>\n\n` +
+        `<b>Examples:</b>\n` +
+        `• <code>/task CE-401 Machine Learning: 5-page lab report on Adam vs SGD with loss curves due Friday</code>\n` +
+        `• <code>/task CE-502 Cloud: 10-slide presentation deck on Kubernetes Pod lifecycle</code>\n` +
+        `• <code>/task CE-403 Web Tech: Full-stack Next.js task dashboard with README and UI screenshot</code>`
+      );
+      return { handled: true };
+    }
+
+    try {
+      await sendTelegramMessage('⏳ <i>Analyzing requirements and creating task...</i>');
+      const confirmation = await createTaskFromTelegram(prompt);
+      await sendTelegramMessage(confirmation);
+    } catch (e: any) {
+      await sendTelegramMessage(`❌ Failed to create task: ${escapeHtml(e.message)}`);
+    }
+    return { handled: true };
+  }
+
+  // 4. List Tasks Command: /tasks, /list
+  if (lower === '/tasks' || lower === '/list') {
+    const { data: tasks } = await supabase
+      .from('tasks')
+      .select('id, title, course, task_type, status, due_date')
+      .eq('archived', false)
+      .order('due_date', { ascending: true })
+      .limit(15);
+
+    if (!tasks || tasks.length === 0) {
+      await sendTelegramMessage('📋 <b>No active tasks in queue.</b>\n\nUse <code>/task &lt;details&gt;</code> to create one!');
+      return { handled: true };
+    }
+
+    let msg = `📋 <b>Active Academic Tasks (${tasks.length})</b>\n\n`;
+    tasks.forEach((t, idx) => {
+      const dueStr = t.due_date ? new Date(t.due_date).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'No deadline';
+      const badge = t.status === 'done' ? '✅ DONE' : t.status === 'building' ? '🔨 BUILDING' : t.status === 'queued' ? '⏳ QUEUED' : `⚠️ ${t.status.toUpperCase()}`;
+      msg += `${idx + 1}. <b>${escapeHtml(t.title)}</b>\n`;
+      msg += `   📚 ${escapeHtml(t.course || 'General')} | 🏷️ <code>${t.task_type}</code> | [${badge}]\n`;
+      msg += `   ⏰ Due: ${dueStr} | 🆔 <code>${t.id}</code>\n\n`;
+    });
+    msg += `<i>Tip: Type <code>/details &lt;task_id&gt;</code> to view download links.</i>`;
+    await sendTelegramMessage(msg);
+    return { handled: true };
+  }
+
+  // 5. Details Command: /details <task_id>, /info <task_id>
+  if (lower.startsWith('/details') || lower.startsWith('/info')) {
+    const parts = text.split(/\s+/);
+    if (parts.length < 2) {
+      await sendTelegramMessage('Usage: <code>/details &lt;task_id&gt;</code>');
+      return { handled: true };
+    }
+    const taskId = parts[1].trim();
+    const { data: task } = await supabase
+      .from('tasks')
+      .select('*')
+      .eq('id', taskId)
+      .maybeSingle();
+
+    if (!task) {
+      await sendTelegramMessage(`❌ Task not found: <code>${escapeHtml(taskId)}</code>`);
+      return { handled: true };
+    }
+
+    const { data: delivs } = await supabase
+      .from('deliverables')
+      .select('*')
+      .eq('task_id', taskId);
+
+    let dMsg = `📌 <b>Task Details:</b> ${escapeHtml(task.title)}\n\n` +
+      `📚 <b>Course:</b> ${escapeHtml(task.course || 'General')}\n` +
+      `🏷️ <b>Type:</b> <code>${task.task_type}</code>\n` +
+      `📊 <b>Status:</b> <code>${task.status.toUpperCase()}</code>\n` +
+      `⏰ <b>Due:</b> ${task.due_date ? new Date(task.due_date).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'N/A'}\n\n`;
+
+    if (task.result_summary) {
+      dMsg += `📝 <b>Summary:</b> ${escapeHtml(task.result_summary)}\n\n`;
+    }
+
+    if (delivs && delivs.length > 0) {
+      dMsg += `📁 <b>Deliverables:</b>\n`;
+      delivs.forEach(d => {
+        if (d.drive_link) {
+          dMsg += `• <a href="${d.drive_link}">${escapeHtml(d.file_name)}</a>\n`;
+        } else {
+          dMsg += `• <code>${escapeHtml(d.file_name)}</code>\n`;
+        }
+      });
+    }
+
+    await sendTelegramMessage(dMsg);
+    return { handled: true };
+  }
+
+  // 6. Delete / Cancel Command: /delete <task_id>, /cancel <task_id>
+  if (lower.startsWith('/delete') || lower.startsWith('/cancel')) {
+    const parts = text.split(/\s+/);
+    if (parts.length > 1) {
+      const taskId = parts[1].trim();
+      const { error } = await supabase
+        .from('tasks')
+        .update({ archived: true, updated_at: new Date().toISOString() })
+        .eq('id', taskId);
+
+      if (!error) {
+        await sendTelegramMessage(`🗑️ Task <code>${escapeHtml(taskId)}</code> has been archived.`);
+      } else {
+        await sendTelegramMessage(`❌ Could not delete task: ${escapeHtml(error.message)}`);
+      }
+      return { handled: true };
+    }
+  }
+
+  // 7. Status Command
   if (
     lower === '/status' ||
     lower.includes('status') ||
-    lower.includes('pending') ||
-    lower.includes("what's happening") ||
-    lower.includes('what is happening') ||
-    lower.includes('check')
+    lower.includes('what is happening')
   ) {
     const { data: tasks } = await supabase
       .from('tasks')
@@ -201,7 +502,7 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
       .limit(10);
 
     if (!tasks || tasks.length === 0) {
-      await sendTelegramMessage('📋 No active tasks currently in queue.');
+      await sendTelegramMessage('📋 <b>No active tasks currently in queue.</b>');
       return { handled: true };
     }
 
@@ -210,52 +511,69 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
       counts[t.status] = (counts[t.status] || 0) + 1;
     });
 
-    let statusMsg = `📊 *Vicarius System Status*\n\n`;
-    statusMsg += `• Queued: ${counts['queued'] || 0}\n`;
-    statusMsg += `• In Progress: ${(counts['claimed'] || 0) + (counts['building'] || 0) + (counts['verifying'] || 0)}\n`;
-    statusMsg += `• Flagged: ${counts['flagged'] || 0}\n`;
-    statusMsg += `• Done: ${counts['done'] || 0}\n\n`;
-    statusMsg += `*Upcoming Tasks:*\n`;
+    let statusMsg = `📊 <b>Vicarius System Status</b>\n\n` +
+      `• ⏳ Queued: <b>${counts['queued'] || 0}</b>\n` +
+      `• 🔨 In Progress: <b>${(counts['claimed'] || 0) + (counts['building'] || 0) + (counts['verifying'] || 0)}</b>\n` +
+      `• ⚠️ Flagged: <b>${counts['flagged'] || 0}</b>\n` +
+      `• ✅ Done: <b>${counts['done'] || 0}</b>\n\n` +
+      `<b>Upcoming Deadlines:</b>\n`;
 
     tasks.slice(0, 5).forEach((t) => {
       const dueStr = t.due_date ? new Date(t.due_date).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'No deadline';
-      statusMsg += `• [${t.status.toUpperCase()}] *${t.title}* (${t.course || 'General'}) — Due: ${dueStr}\n`;
+      statusMsg += `• [${t.status.toUpperCase()}] <b>${escapeHtml(t.title)}</b> (${escapeHtml(t.course || 'General')}) — Due: ${dueStr}\n`;
     });
 
     await sendTelegramMessage(statusMsg);
     return { handled: true };
   }
 
-  // 3. Control commands
+  // 8. Retry Command
   if (lower.startsWith('/retry')) {
-    const parts = text.split(' ');
+    const parts = text.split(/\s+/);
     if (parts.length > 1) {
-      const taskId = parts[1];
+      const taskId = parts[1].trim();
       const { error } = await supabase
         .from('tasks')
         .update({ status: 'queued', updated_at: new Date().toISOString() })
         .eq('id', taskId);
 
       if (!error) {
-        await sendTelegramMessage(`🔄 Task \`${taskId}\` requeued for build.`);
+        await sendTelegramMessage(`🔄 Task <code>${escapeHtml(taskId)}</code> requeued for build.`);
       } else {
-        await sendTelegramMessage(`❌ Could not retry task: ${error.message}`);
+        await sendTelegramMessage(`❌ Could not retry task: ${escapeHtml(error.message)}`);
       }
       return { handled: true };
     }
   }
 
+  // 9. Help / Start Command
   if (lower === '/help' || lower === '/start') {
-    const helpMsg = `🤖 *Vicarius Academic Agent*\n\n` +
-      `Commands:\n` +
-      `• \`/status\` — View active tasks & queue state\n` +
-      `• \`/retry <task_id>\` — Requeue a flagged or failed task\n` +
-      `• Reply directly to any question message to clarify instructions for the build agent.`;
+    const helpMsg =
+      `🤖 <b>Vicarius Academic Assistant Commands</b>\n\n` +
+      `<b>Task Management:</b>\n` +
+      `• <code>/task &lt;details&gt;</code> — Create & queue a new academic task\n` +
+      `• <code>/tasks</code> or <code>/list</code> — View all active tasks\n` +
+      `• <code>/details &lt;task_id&gt;</code> — View requirements & download links\n` +
+      `• <code>/retry &lt;task_id&gt;</code> — Requeue a flagged or failed task\n` +
+      `• <code>/cancel &lt;task_id&gt;</code> — Archive / cancel a task\n\n` +
+      `<b>System:</b>\n` +
+      `• <code>/status</code> — System telemetry & queue state\n` +
+      `• <code>/help</code> — Show this command menu\n\n` +
+      `<b>Interactive AI Chat & Ingestion:</b>\n` +
+      `• <b>Direct Chat:</b> Ask any questions about your courses, concepts, or schedule.\n` +
+      `• <b>Document Upload:</b> Send any <code>.pdf</code> or <code>.docx</code> assignment brief to auto-create a task!\n` +
+      `• <b>Clarifications:</b> Reply to any question alert from the bot to guide the build worker.`;
     await sendTelegramMessage(helpMsg);
     return { handled: true };
   }
 
-  // 4. Unrecognized
-  await sendTelegramMessage("I didn't recognize that command. Type `/status` to view active tasks or `/help` for options.");
+  // 10. Direct AI Chat & Academic Q&A (fallback for any natural language input)
+  try {
+    const aiResponse = await askAiAssistant(text);
+    await sendTelegramMessage(aiResponse);
+  } catch (err: any) {
+    await sendTelegramMessage("I'm your Vicarius academic assistant. Use <code>/task &lt;prompt&gt;</code> to queue a task or <code>/status</code> to check progress.");
+  }
+
   return { handled: true };
 }

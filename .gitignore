@@ -43,7 +43,9 @@ Thumbs.db
 # Task working directories (ephemeral build outputs)
 work_dirs/
 tasks_temp/
-docx/
+*.docx
+*.pptx
+*.xlsx
 
 .vercel
 .env*

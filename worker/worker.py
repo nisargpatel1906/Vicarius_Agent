@@ -60,8 +60,8 @@ def log_system_event(level: str, component: str, message: str) -> None:
         print(f"[SystemEvent-Error] Could not log event: {e}", file=sys.stderr)
 
 
-def send_telegram_notification(message: str) -> bool:
-    """Send alert to authorized Telegram chat ID."""
+def send_telegram_notification(message: str, parse_mode: str = "HTML") -> bool:
+    """Send alert to authorized Telegram chat ID with automatic plain text fallback."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_ALLOWED_CHAT_ID:
         return False
     try:
@@ -70,11 +70,50 @@ def send_telegram_notification(message: str) -> bool:
         resp = requests.post(url, json={
             "chat_id": TELEGRAM_ALLOWED_CHAT_ID,
             "text": message,
-            "parse_mode": "Markdown",
+            "parse_mode": parse_mode,
+            "disable_web_page_preview": True
         }, timeout=10)
-        return resp.status_code == 200
+        
+        if resp.status_code == 200:
+            return True
+            
+        # If HTML/Markdown parse failed, retry with plain text (stripping tags)
+        print(f"[Telegram-Warning] Parse mode {parse_mode} failed ({resp.status_code}: {resp.text}). Retrying with plain text...", file=sys.stderr)
+        clean_text = re.sub(r"<[^>]+>", "", message).replace("*", "").replace("_", "")
+        fallback_resp = requests.post(url, json={
+            "chat_id": TELEGRAM_ALLOWED_CHAT_ID,
+            "text": clean_text,
+            "disable_web_page_preview": True
+        }, timeout=10)
+        return fallback_resp.status_code == 200
     except Exception as e:
         print(f"[Telegram-Error] Failed to send message: {e}", file=sys.stderr)
+        return False
+
+
+def send_telegram_photo(photo_path: Path, caption: Optional[str] = None) -> bool:
+    """Send photo/screenshot alert to authorized Telegram chat ID (PRD 8 / TASK_TYPES.md)."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_ALLOWED_CHAT_ID or not photo_path.exists():
+        return False
+    try:
+        import requests
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+        with open(photo_path, "rb") as f:
+            data = {"chat_id": TELEGRAM_ALLOWED_CHAT_ID}
+            if caption:
+                data["caption"] = caption
+                data["parse_mode"] = "HTML"
+            resp = requests.post(url, data=data, files={"photo": f}, timeout=15)
+            if resp.status_code == 200:
+                return True
+            
+            # Fallback without parse_mode
+            f.seek(0)
+            data["parse_mode"] = ""
+            resp2 = requests.post(url, data=data, files={"photo": f}, timeout=15)
+            return resp2.status_code == 200
+    except Exception as e:
+        print(f"[Telegram-Error] Failed to send photo: {e}", file=sys.stderr)
         return False
 
 
@@ -167,45 +206,54 @@ def claim_next_task() -> Optional[Dict[str, Any]]:
     Query tasks where status = 'queued' ordered by due_date ASC.
     Atomically claims the top task with conditional update (PRD Section 6.3).
     """
-    sb = get_supabase()
-    
-    # Query tasks: status = 'queued', non-archived, ordered by due_date ASC (nulls last)
-    resp = (
-        sb.table("tasks")
-        .select("*")
-        .eq("status", "queued")
-        .eq("archived", False)
-        .order("due_date", desc=False, nullsfirst=False)
-        .limit(1)
-        .execute()
-    )
-    
-    tasks = resp.data
-    if not tasks or len(tasks) == 0:
-        return None
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            sb = get_supabase()
+            
+            # Query tasks: status = 'queued', non-archived, ordered by due_date ASC (nulls last)
+            resp = (
+                sb.table("tasks")
+                .select("*")
+                .eq("status", "queued")
+                .eq("archived", False)
+                .order("due_date", desc=False, nullsfirst=False)
+                .limit(1)
+                .execute()
+            )
+            
+            tasks = resp.data
+            if not tasks or len(tasks) == 0:
+                return None
 
-    candidate = tasks[0]
-    task_id = candidate["id"]
+            candidate = tasks[0]
+            task_id = candidate["id"]
 
-    # Atomic conditional update (only succeeds if still 'queued')
-    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    claim_resp = (
-        sb.table("tasks")
-        .update({
-            "status": "claimed",
-            "worker_id": WORKER_ID,
-            "claimed_at": now_iso,
-            "updated_at": now_iso,
-        })
-        .eq("id", task_id)
-        .eq("status", "queued")
-        .execute()
-    )
+            # Atomic conditional update (only succeeds if still 'queued')
+            now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            claim_resp = (
+                sb.table("tasks")
+                .update({
+                    "status": "claimed",
+                    "worker_id": WORKER_ID,
+                    "claimed_at": now_iso,
+                    "updated_at": now_iso,
+                })
+                .eq("id", task_id)
+                .eq("status", "queued")
+                .execute()
+            )
 
-    if claim_resp.data and len(claim_resp.data) > 0:
-        return claim_resp.data[0]
-    
-    return None
+            if claim_resp.data and len(claim_resp.data) > 0:
+                return claim_resp.data[0]
+            
+            return None
+        except Exception as e:
+            if attempt < max_retries - 1:
+                time.sleep(2 * (attempt + 1))
+                continue
+            print(f"[Worker] Network error claiming task: {e}", file=sys.stderr)
+            return None
 
 
 def execute_build(task: Dict[str, Any], retry_count: int = 0) -> Tuple[bool, str, List[Path]]:
@@ -229,6 +277,15 @@ def execute_build(task: Dict[str, Any], retry_count: int = 0) -> Tuple[bool, str
         "status": "building",
         "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
     }).eq("id", task_id).execute()
+
+    import html
+    start_msg = (
+        f"🚀 <b>Task Started:</b> {html.escape(task['title'])}\n"
+        f"<b>Course:</b> {html.escape(task.get('course') or 'General')}\n"
+        f"<b>Task Type:</b> <code>{task.get('task_type', 'document')}</code>\n\n"
+        f"<i>The build agent is now generating your academic deliverables.</i>"
+    )
+    send_telegram_notification(start_msg)
 
     timeout_seconds = JOB_TIMEOUT_MINUTES * 60
     cmd = [
@@ -282,13 +339,46 @@ def execute_build(task: Dict[str, Any], retry_count: int = 0) -> Tuple[bool, str
         return False, str(e), []
 
 
+def package_code_project(task_work_dir: Path) -> Optional[Path]:
+    """
+    Zips code project deliverables while strictly excluding junk (TASK_TYPES.md):
+    node_modules, .venv, venv, __pycache__, .git, .next, dist, build, *.pyc, *.log, etc.
+    """
+    import zipfile
+    junk_dir_patterns = {
+        "node_modules", ".venv", "venv", "__pycache__", ".git", ".next",
+        "dist", "build", ".turbo", ".cache", ".idea", ".vscode"
+    }
+    
+    zip_path = task_work_dir / "project.zip"
+    files_to_zip = []
+    
+    for root, dirs, files in os.walk(task_work_dir):
+        dirs[:] = [d for d in dirs if d not in junk_dir_patterns and not d.startswith(".")]
+        for f in files:
+            p = Path(root) / f
+            if p.name.startswith(".") or p.name.endswith(".log") or p.name.endswith(".pyc") or p.name == "project.zip":
+                continue
+            files_to_zip.append(p)
+            
+    if not files_to_zip:
+        return None
+        
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+        for f in files_to_zip:
+            rel_path = f.relative_to(task_work_dir)
+            zipf.write(f, arcname=str(rel_path))
+            
+    return zip_path
+
+
 def perform_verification_check(task: Dict[str, Any], stdout_output: str, produced_files: List[Path]) -> Tuple[bool, str, Dict[str, Any]]:
     """
-    Pure Verification Logic (PRD Section 6.4):
+    Pure Verification Logic (PRD Section 6.4 & docx/TASK_TYPES.md):
     1. Confirm expected output files exist
     2. Mechanically verify numeric success criteria (e.g., accuracy bounds)
-    3. Verify non-numeric requirements checklist
-    4. Extract assumptions and summary
+    3. Verify task-type specific requirements across all 5 types & scope extensions
+    4. Extract assumptions and format result summary
     """
     verification_details = {
         "files_count": len(produced_files),
@@ -332,25 +422,93 @@ def perform_verification_check(task: Dict[str, Any], stdout_output: str, produce
     file_extensions = [f.suffix.lower() for f in produced_files]
     file_names = [f.name.lower() for f in produced_files]
 
-    # Presentation: Verify .pptx file produced
+    # Presentation: Verify .pptx file produced & exact slide count check
     if task_type == "presentation":
-        if ".pptx" not in file_extensions and ".pdf" not in file_extensions:
+        pptx_files = [f for f in produced_files if f.suffix.lower() == ".pptx"]
+        if not pptx_files and ".pdf" not in file_extensions:
             return False, "Verification failed: Presentation task did not produce a valid .pptx slide deck.", verification_details
+        
+        # Check explicit slide count target if specified
+        slide_count_req = None
+        reqs = task.get("extracted_requirements")
+        if isinstance(reqs, dict):
+            slide_count_req = reqs.get("slide_count")
+        if not slide_count_req and success_criteria:
+            m = re.search(r"(\d+)[\s-]*(?:slide|slides)", success_criteria, re.IGNORECASE)
+            if m:
+                slide_count_req = int(m.group(1))
+        if not slide_count_req and task.get("title"):
+            m = re.search(r"(\d+)[\s-]*(?:slide|slides)", task["title"], re.IGNORECASE)
+            if m:
+                slide_count_req = int(m.group(1))
+                
+        if slide_count_req and pptx_files:
+            actual_slide_count = None
+            try:
+                from pptx import Presentation
+                prs = Presentation(str(pptx_files[0]))
+                actual_slide_count = len(prs.slides)
+            except Exception:
+                m_out = re.search(r"(\d+)\s+slides", stdout_output, re.IGNORECASE)
+                if m_out:
+                    actual_slide_count = int(m_out.group(1))
+            
+            if actual_slide_count is not None and actual_slide_count != slide_count_req:
+                return False, f"Verification failed: Generated slide count ({actual_slide_count}) does not match required slide count ({slide_count_req}).", verification_details
 
-    # ML Training: Verify model weights artifact (.h5, .pt, .pth, .pkl, .joblib, .onnx)
+    # Handwritten vs Typed Document verification
+    is_handwritten = (
+        task_type == "handwritten" or 
+        (isinstance(task.get("extracted_requirements"), dict) and task["extracted_requirements"].get("output_style") == "handwritten") or
+        bool(re.search(r"handwritten|by hand|copy-ready", task.get("title", ""), re.IGNORECASE))
+    )
+    if is_handwritten:
+        has_docx_or_pdf = any(ext in {".docx", ".pdf"} for ext in file_extensions)
+        has_text_file = any(ext in {".txt", ".md"} for ext in file_extensions)
+        if has_docx_or_pdf and not has_text_file:
+            return False, "Verification failed: Handwritten-style request must produce clean copy-ready text (.txt/.md), not formatted binary files (.docx/.pdf).", verification_details
+
+    # ML Training: Verify model weights artifact (.h5, .pt, .pth, .pkl, .joblib, .onnx, .keras)
     if task_type == "ml_training":
         weights_exts = {".h5", ".pt", ".pth", ".pkl", ".joblib", ".onnx", ".keras"}
         has_weights = any(ext in weights_exts for ext in file_extensions)
         if not has_weights:
-            # If no binary weights, check if script generated a saved model file in output
-            if not any("model" in fn for fn in file_names):
+            if not any("model" in fn or "weight" in fn for fn in file_names):
                 return False, "Verification failed: ML Training task missing model weights/artifact file (.h5, .pt, .pkl, etc.).", verification_details
 
-    # Code Project: Verify README.md exists
+    # Code Project: Verify README.md exists and UI screenshot if GUI/web app
     if task_type == "code_project":
         has_readme = any("readme" in fn for fn in file_names)
         if not has_readme and len(produced_files) > 1:
             verification_details["assumptions"].append("Auto-documented project entry points in absence of separate README.")
+        
+        reqs = task.get("extracted_requirements")
+        requires_ss = False
+        if isinstance(reqs, dict):
+            requires_ss = reqs.get("requires_screenshot", False)
+        if not requires_ss:
+            title_and_crit = f"{task.get('title', '')} {success_criteria or ''} {stdout_output}"
+            requires_ss = bool(re.search(r"web app|gui|dashboard|frontend|preview|screenshot", title_and_crit, re.IGNORECASE))
+        
+        if requires_ss and success_criteria and re.search(r"screenshot|preview", success_criteria, re.IGNORECASE):
+            has_screenshot = any(ext in {".png", ".jpg", ".jpeg", ".webp"} for ext in file_extensions)
+            if not has_screenshot:
+                return False, "Verification failed: Code project is missing required UI preview screenshot (.png/.webp).", verification_details
+
+    # Research: Verify citations or sources
+    if task_type == "research":
+        has_citations = bool(re.search(r"citation|cited|references|ieee|apa|mla|http|xplore|nist|arxiv|doi", stdout_output, re.IGNORECASE))
+        if not has_citations and not any(ext in {".docx", ".pdf", ".md"} for ext in file_extensions):
+            return False, "Verification failed: Research task did not include citations or verified reference sources.", verification_details
+
+    # Spreadsheet / Data Analysis: Verify .xlsx workbook
+    is_spreadsheet = (
+        (isinstance(task.get("extracted_requirements"), dict) and task["extracted_requirements"].get("is_spreadsheet", False)) or
+        bool(re.search(r"spreadsheet|excel|\.xlsx|workbook", task.get("title", ""), re.IGNORECASE))
+    )
+    if is_spreadsheet and task_type in {"document", "code_project"}:
+        if ".xlsx" not in file_extensions and not any("excel" in fn or "sheet" in fn or "data" in fn for fn in file_names):
+            return False, "Verification failed: Spreadsheet task did not produce a formatted .xlsx workbook.", verification_details
 
     # 5. Format result summary
     summary_parts = [
@@ -403,7 +561,7 @@ def get_google_credentials():
 
 
 def upload_to_drive(creds, course: str, task_id: str, file_path: Path) -> Optional[str]:
-    """Upload deliverable to Google Drive folder structure: Agent Outputs/<course>/<task_id>/"""
+    """Upload deliverable to Google Drive folder structure: Agent Outputs/<course>/ and set public reader permission."""
     try:
         from googleapiclient.discovery import build
         from googleapiclient.http import MediaFileUpload
@@ -426,7 +584,19 @@ def upload_to_drive(creds, course: str, task_id: str, file_path: Path) -> Option
         media = MediaFileUpload(str(file_path), resumable=True)
         file_meta = {'name': file_path.name, 'parents': [course_folder_id]}
         uploaded = drive_service.files().create(body=file_meta, media_body=media, fields='id, webViewLink').execute()
-        return uploaded.get('webViewLink') or f"https://drive.google.com/file/d/{uploaded.get('id')}/view"
+        file_id = uploaded.get('id')
+
+        # 3. Grant 'anyone with link can view' permission so links open without access denied errors
+        try:
+            drive_service.permissions().create(
+                fileId=file_id,
+                body={'type': 'anyone', 'role': 'reader'},
+                fields='id'
+            ).execute()
+        except Exception as perm_err:
+            print(f"[DriveUpload-PermWarning] Could not set public permission: {perm_err}")
+
+        return f"https://drive.google.com/file/d/{file_id}/view?usp=sharing"
     except Exception as e:
         print(f"[DriveUpload-Warning] Could not upload to Drive: {e}")
         return None
@@ -466,27 +636,48 @@ def create_calendar_deadline_event(creds, task: Dict[str, Any]) -> None:
 
 def deliver_and_track(task: Dict[str, Any], produced_files: List[Path], result_summary: str) -> None:
     """
-    Deliver & Track Phase (PRD Section 6.5):
-    1. Upload to Google Drive
+    Deliver & Track Phase (PRD Section 6.5 & TASK_TYPES.md):
+    1. Upload to Google Drive (with clean zipped project for code tasks)
     2. Write deliverables row
-    3. Send via Telegram & Gmail
+    3. Send via Telegram (including inline screenshots for UI code projects) & Gmail
     4. Create Google Task & Google Calendar event with 24h reminder
     5. Set status = 'done'
     """
+    import html
     task_id = task["id"]
     course = task.get("course") or "General"
+    task_type = task.get("task_type", "document")
     sb = get_supabase()
     creds = get_google_credentials()
+    task_work_dir = BASE_WORK_DIR / task_id
 
-    drive_links = []
+    # If code project, ensure clean project.zip exists
+    final_files = list(produced_files)
+    if task_type == "code_project":
+        has_zip = any(f.suffix.lower() == ".zip" for f in final_files)
+        if not has_zip and task_work_dir.exists():
+            clean_zip = package_code_project(task_work_dir)
+            if clean_zip and clean_zip.exists():
+                final_files.append(clean_zip)
+
+    html_links = []
+    screenshot_file: Optional[Path] = None
+
     # 1. Upload to Google Drive and record deliverables
-    for f in produced_files:
+    for f in final_files:
         file_ext = f.suffix.lstrip(".").lower()
+        if file_ext in {"png", "jpg", "jpeg", "webp"} and not screenshot_file:
+            screenshot_file = f
+
         drive_link = None
         if creds and DRIVE_OUTPUT_FOLDER_ID:
             drive_link = upload_to_drive(creds, course, task_id, f)
             if drive_link:
-                drive_links.append(f"[{f.name}]({drive_link})")
+                html_links.append(f"• <a href=\"{drive_link}\">{html.escape(f.name)}</a>")
+            else:
+                html_links.append(f"• <code>{html.escape(f.name)}</code>")
+        else:
+            html_links.append(f"• <code>{html.escape(f.name)}</code>")
 
         sb.table("deliverables").insert({
             "task_id": task_id,
@@ -501,16 +692,20 @@ def deliver_and_track(task: Dict[str, Any], produced_files: List[Path], result_s
         create_calendar_deadline_event(creds, task)
 
     # 3. Send completion alert via Telegram
-    links_text = "\n".join(drive_links) if drive_links else "Saved locally in working directory."
+    links_text = "\n".join(html_links) if html_links else "Saved locally in working directory."
     summary_msg = (
-        f"🎉 *Task Completed:* {task['title']}\n"
-        f"*Course:* {course}\n"
-        f"*Output Files:* {', '.join([f.name for f in produced_files])}\n"
-        f"*Drive Links:* {links_text}\n"
-        f"*Summary:* {result_summary}\n\n"
-        f"✅ Deliverables are ready for your manual submission."
+        f"🎉 <b>Task Completed:</b> {html.escape(task['title'])}\n"
+        f"<b>Course:</b> {html.escape(course)}\n"
+        f"<b>Output Files:</b> {html.escape(', '.join([f.name for f in final_files]))}\n\n"
+        f"<b>Drive Links:</b>\n{links_text}\n\n"
+        f"<b>Summary:</b> {html.escape(result_summary)}\n\n"
+        f"✅ <i>Deliverables are ready for your manual submission.</i>"
     )
     send_telegram_notification(summary_msg)
+
+    # If a screenshot was generated (e.g. for web/UI apps), dispatch photo to Telegram
+    if screenshot_file and screenshot_file.exists():
+        send_telegram_photo(screenshot_file, caption=f"📸 <b>UI Preview:</b> {html.escape(task['title'])}")
 
     # 4. Mark task done in Supabase
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -525,6 +720,7 @@ def deliver_and_track(task: Dict[str, Any], produced_files: List[Path], result_s
 
 def handle_task_failure(task: Dict[str, Any], error_message: str) -> None:
     """Flags task on persistent failure and alerts the user (PRD Section 6.3 / 6.4)."""
+    import html
     task_id = task["id"]
     sb = get_supabase()
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -536,13 +732,13 @@ def handle_task_failure(task: Dict[str, Any], error_message: str) -> None:
     }).eq("id", task_id).execute()
 
     alert_msg = (
-        f"🚨 *Task Build Failed & Flagged*\n\n"
-        f"*Task:* {task['title']}\n"
-        f"*Course:* {task.get('course', 'Unknown')}\n"
-        f"*Error:* {error_message}\n"
-        f"Please check the dashboard to retry or inspect logs."
+        f"⚠️ <b>Task Flagged / Stopped:</b> {html.escape(task['title'])}\n"
+        f"<b>Course:</b> {html.escape(task.get('course') or 'Unknown')}\n"
+        f"<b>Error:</b> {html.escape(error_message)}\n\n"
+        f"<i>Please check the dashboard to retry or inspect logs.</i>"
     )
     send_telegram_notification(alert_msg)
+    log_system_event("error", "worker", f"Task '{task['title']}' flagged after retry failure: {error_message}")
     log_system_event("error", "worker", f"Task '{task['title']}' flagged after retry failure: {error_message}")
 
 
