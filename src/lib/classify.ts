@@ -201,28 +201,50 @@ ${courseNotes.join('\n')}
   const cleanedJson = rawJson.replace(/```json/g, '').replace(/```/g, '').trim();
   const parsed = JSON.parse(cleanedJson);
 
-  const taskType: TaskType = [
-    'document',
-    'presentation',
-    'handwritten',
-    'code_project',
-    'research',
-    'ml_training',
-  ].includes(parsed.task_type)
-    ? parsed.task_type
-    : 'document';
+  // Detect lab report structure
+  const isLabReport = /lab|experiment|apparatus|procedure|observation/i.test(rawBody) || /lab|practical/i.test(task.title);
+  if (isLabReport && taskType === 'document') {
+    if (!requirementsList.some(r => /hypothesis|procedure|observation|results/i.test(r))) {
+      requirementsList.push('Format as a structured Lab Report: 1. Objective/Hypothesis, 2. Apparatus & Methodology, 3. Observations & Results, 4. Discussion & Conclusion');
+    }
+  }
+
+  // Slide count extraction for presentation
+  const slideCountMatch = rawBody.match(/(\d+)[\s-]*(?:slide|slides)/i) || task.title.match(/(\d+)[\s-]*(?:slide|slides)/i);
+  const explicitSlideCount = slideCountMatch ? parseInt(slideCountMatch[1], 10) : null;
+  if (explicitSlideCount && taskType === 'presentation') {
+    requirementsList.push(`Generate exactly ${explicitSlideCount} presentation slides with title slide, content slides, and speaker notes.`);
+  }
+
+  // Screenshot / smoke test requirement for code projects
+  if (taskType === 'code_project') {
+    requirementsList.push('Include a smoke test / run verification to ensure the code executes cleanly.');
+    requirementsList.push('Include a clear README.md with run instructions.');
+    if (/web|ui|dashboard|frontend|app|gui|html/i.test(rawBody) || /web|ui|dashboard|app/i.test(task.title)) {
+      requirementsList.push('Capture a screenshot of the rendered UI/app as a preview image (screenshot.png/webp).');
+    }
+  }
+
+  // ML Training artifacts
+  if (taskType === 'ml_training') {
+    requirementsList.push('Save the trained model weights/artifact file (.h5, .pt, .pth, .pkl, or .joblib).');
+    requirementsList.push('Generate a short evaluation report (report.md/docx) detailing model architecture, loss curves, and validation metrics.');
+  }
+
+  // Research citation formatting
+  if (taskType === 'research') {
+    requirementsList.push('Gather real web sources using browser tools and cite exact reference URLs.');
+    requirementsList.push('Format references using standard academic citations (IEEE/APA format).');
+  }
 
   const outputFormat = parsed.output_format || (
-    taskType === 'presentation' ? 'slides.pptx' :
-    taskType === 'code_project' ? 'zipped code project + README.md' :
-    taskType === 'ml_training' ? 'model training scripts, dataset pipeline, evaluation metrics + report.md' :
-    taskType === 'handwritten' ? 'structured text transcript for transcription' :
+    taskType === 'presentation' ? `presentation.pptx${explicitSlideCount ? ` (${explicitSlideCount} slides)` : ''}` :
+    taskType === 'code_project' ? 'zipped code project + README.md + screenshot' :
+    taskType === 'ml_training' ? 'model weights artifact, dataset pipeline, evaluation metrics + report.docx' :
+    taskType === 'handwritten' ? 'clean text transcript (no binary formatting, copy-ready)' :
+    taskType === 'research' ? 'research_report.docx with citations' :
     'document.docx'
   );
-
-  const requirementsList = Array.isArray(parsed.requirements) && parsed.requirements.length > 0
-    ? parsed.requirements
-    : [task.title, rawBody.slice(0, 200)];
 
   const buildSpec = generateBuildSpec(
     task.title,

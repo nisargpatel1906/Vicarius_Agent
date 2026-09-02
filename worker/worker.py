@@ -309,11 +309,9 @@ def perform_verification_check(task: Dict[str, Any], stdout_output: str, produce
     # 3. Check numeric success criteria if present
     success_criteria = task.get("success_criteria")
     if success_criteria:
-        # Check for target accuracy or metric pattern (e.g. between X and Y % or >= X%)
         range_match = re.search(r"between\s+(\d+(?:\.\d+)?)\s+and\s+(\d+(?:\.\d+)?)\s*(?:%|percent)?", success_criteria, re.IGNORECASE)
         greater_match = re.search(r"(?:>=|at least|minimum)\s+(\d+(?:\.\d+)?)\s*(?:%|percent)?", success_criteria, re.IGNORECASE)
 
-        # Parse achieved metric from stdout (e.g. "validation accuracy achieved: 85.4%", "accuracy: 85%", "score = 90.2%")
         metric_match = re.search(r"(?:accuracy|score|metric|val_acc)[^0-9\n\r]*?(\d+(?:\.\d+)?)\s*%", stdout_output, re.IGNORECASE)
         
         if metric_match:
@@ -329,7 +327,32 @@ def perform_verification_check(task: Dict[str, Any], stdout_output: str, produce
                 if achieved < min_target:
                     return False, f"Verification failed: Achieved accuracy {achieved}% is below target {min_target}%.", verification_details
 
-    # 4. Format result summary
+    # 4. Granular Task-Type Specific Verification (TASK_TYPES.md)
+    task_type = task.get("task_type", "document")
+    file_extensions = [f.suffix.lower() for f in produced_files]
+    file_names = [f.name.lower() for f in produced_files]
+
+    # Presentation: Verify .pptx file produced
+    if task_type == "presentation":
+        if ".pptx" not in file_extensions and ".pdf" not in file_extensions:
+            return False, "Verification failed: Presentation task did not produce a valid .pptx slide deck.", verification_details
+
+    # ML Training: Verify model weights artifact (.h5, .pt, .pth, .pkl, .joblib, .onnx)
+    if task_type == "ml_training":
+        weights_exts = {".h5", ".pt", ".pth", ".pkl", ".joblib", ".onnx", ".keras"}
+        has_weights = any(ext in weights_exts for ext in file_extensions)
+        if not has_weights:
+            # If no binary weights, check if script generated a saved model file in output
+            if not any("model" in fn for fn in file_names):
+                return False, "Verification failed: ML Training task missing model weights/artifact file (.h5, .pt, .pkl, etc.).", verification_details
+
+    # Code Project: Verify README.md exists
+    if task_type == "code_project":
+        has_readme = any("readme" in fn for fn in file_names)
+        if not has_readme and len(produced_files) > 1:
+            verification_details["assumptions"].append("Auto-documented project entry points in absence of separate README.")
+
+    # 5. Format result summary
     summary_parts = [
         f"Produced {len(produced_files)} deliverable file(s): {', '.join([f.name for f in produced_files])}."
     ]
