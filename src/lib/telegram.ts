@@ -293,17 +293,18 @@ export async function askAiAssistant(userPrompt: string, chatId: string): Promis
     content: msg.content
   }));
 
-  const systemPrompt = `You are Vicarius, an autonomous AI academic assistant for Nisarg Patel (Computer Engineering / AI-ML student at Academic Institution).
+  const systemPrompt = `You are Vicarius, an autonomous AI academic assistant and agent for Nisarg Patel (Computer Engineering / AI-ML student at Academic Institution).
 You manage coursework, research papers, presentations, lab reports, ML models, and programming assignments.
 
 Current Active Tasks in System:
 ${taskContext || 'No active tasks.'}
 
 Instructions:
-1. Respond helpfully, concisely, and accurately.
-2. If the student asks you questions about their coursework, concepts, code, or schedule, answer directly with rich technical depth.
-3. If the student asks you to do/create a task, guide them that you can create it with /task <details> or summarize what you can build.
-4. Output in clean, valid HTML (<b>bold</b>, <i>italic</i>, <code>code</code>, bullet points •). Do NOT use markdown asterisks.`;
+1. You have direct tool access to create academic tasks, check system status, list tasks, and look up details.
+2. If the student asks you to do, create, build, generate, write, or train an assignment or project, ALWAYS call the 'create_academic_task' tool!
+3. If the student asks for status or what tasks exist, call 'get_system_status' or 'list_active_tasks'.
+4. If the student asks academic questions or converses naturally, respond directly with rich technical depth and clarity.
+5. Format your replies in clean, valid HTML (<b>bold</b>, <i>italic</i>, <code>code</code>, bullet points •). Do NOT use markdown asterisks.`;
 
   const openRouterKey = process.env.OPENROUTER_API_KEY;
   if (openRouterKey) {
@@ -320,7 +321,53 @@ Instructions:
             { role: 'system', content: systemPrompt },
             ...historyMessages,
           ],
-          temperature: 0.3,
+          tools: [
+            {
+              type: 'function',
+              function: {
+                name: 'create_academic_task',
+                description: 'Creates and queues a new academic task/assignment for the student in Supabase database.',
+                parameters: {
+                  type: 'object',
+                  properties: {
+                    title: { type: 'string', description: 'Academic title of the task' },
+                    course: { type: 'string', description: 'Course name e.g. CE-502 Cloud Computing, CE-401 Machine Learning, CE-403 Web Technologies, CE-505 Information Security, CE-402 Database Systems' },
+                    task_type: { 
+                      type: 'string', 
+                      enum: ['presentation', 'code_project', 'ml_training', 'research', 'document', 'handwritten'],
+                      description: 'Task deliverable category'
+                    },
+                    requirements: { type: 'array', items: { type: 'string' }, description: 'List of specific requirements' },
+                    slide_count: { type: 'number', description: 'Exact slide count if presentation' },
+                    success_criteria: { type: 'string', description: 'Verification criteria' }
+                  },
+                  required: ['title', 'course', 'task_type', 'requirements']
+                }
+              }
+            },
+            {
+              type: 'function',
+              function: {
+                name: 'get_system_status',
+                description: 'Returns the current telemetry, queue counts, and upcoming deadlines.',
+                parameters: { type: 'object', properties: {} }
+              }
+            },
+            {
+              type: 'function',
+              function: {
+                name: 'list_active_tasks',
+                description: 'Lists active pending or completed tasks for the student.',
+                parameters: {
+                  type: 'object',
+                  properties: {
+                    course: { type: 'string', description: 'Optional course filter' }
+                  }
+                }
+              }
+            }
+          ],
+          temperature: 0.2,
         })
       });
       
@@ -329,7 +376,156 @@ Instructions:
       }
       
       const data = await res.json();
-      const aiText = data.choices?.[0]?.message?.content || 'I could not generate a response right now. Please try again.';
+      const choice = data.choices?.[0];
+      const message = choice?.message;
+
+      // Handle Function / Tool Calls directly
+      if (message?.tool_calls && message.tool_calls.length > 0) {
+        const toolCall = message.tool_calls[0];
+        const funcName = toolCall.function?.name;
+        let args: any = {};
+        try {
+          args = JSON.parse(toolCall.function?.arguments || '{}');
+        } catch (e) {
+          args = {};
+        }
+
+        if (funcName === 'create_academic_task') {
+          const taskId = crypto.randomUUID();
+          const nowIso = new Date().toISOString();
+          const defaultDue = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+          const isUiTask = args.task_type === 'code_project' || args.task_type === 'presentation' || /web|ui|dashboard|frontend|app|react|slides/i.test(args.title);
+          
+          const designDirective = isUiTask ? `\n\nUI & Visual Design System (MANDATORY — from docx/DESIGN.md):
+- Follow the Cognitive Heritage design system:
+  • Colors: Surface (#fff8f4), Surface-Container (#fdebd9), On-Surface (#231a0f), Primary (#705728), Primary-Container (#8b6f3e), Secondary (#645e4e), Outline (#7f7669).
+  • Typography: Headings ('Noto Serif' 600/700), Body & Controls ('Manrope' 400/600).
+  • Visual Standards: Modern card structure, 0.2s cubic-bezier transitions, modern radii (8px buttons, 12px cards, 9999px badges).` : '';
+
+          const reqsList = Array.isArray(args.requirements) ? args.requirements : [args.title];
+          const reqsFormatted = reqsList.map((r: string) => `- ${r}`).join('\n');
+
+          const buildSpec = `Task: ${args.title}
+Source: ${args.course || 'Academic Course'} — ${args.task_type}
+Requirements:
+${reqsFormatted}
+Success criteria: ${args.success_criteria || (args.slide_count ? `Produce a verified ${args.slide_count}-slide presentation deck (.pptx).` : 'Produce complete academic deliverables matching requirements.')}
+Output format: ${args.task_type === 'presentation' ? `presentation.pptx (${args.slide_count || 10} slides)` : (args.task_type === 'code_project' ? 'zipped project + README.md + screenshot.png' : 'document.docx')}
+${designDirective}
+
+Instructions:
+- Work to completion without stopping for approval.
+- Report: files produced and any assumptions made.`;
+
+          const { error } = await supabase.from('tasks').insert({
+            id: taskId,
+            source: 'classroom',
+            external_id: `tg-ai-${Date.now()}`,
+            course: args.course || 'General',
+            title: args.title,
+            task_type: args.task_type || 'document',
+            extracted_requirements: {
+              summary: args.title,
+              items: reqsList,
+              slide_count: args.slide_count || null,
+            },
+            success_criteria: args.success_criteria || (args.slide_count ? `Produce a verified ${args.slide_count}-slide presentation deck (.pptx).` : 'Produce complete academic deliverables matching requirements.'),
+            build_spec: buildSpec,
+            due_date: defaultDue,
+            status: 'queued',
+            archived: false,
+            created_at: nowIso,
+            updated_at: nowIso,
+          });
+
+          if (error) {
+            throw new Error(`Database insert error: ${error.message}`);
+          }
+
+          await logSystemEvent('info', 'telegram', `AI Agent created task from Telegram: '${args.title}' (ID: ${taskId})`);
+
+          const confirmation = 
+            `✨ <b>AI Agent Created & Queued Task!</b>\n\n` +
+            `📌 <b>Title:</b> ${escapeHtml(args.title)}\n` +
+            `📚 <b>Course:</b> ${escapeHtml(args.course || 'General')}\n` +
+            `🏷️ <b>Type:</b> <code>${args.task_type}</code>\n` +
+            `⏰ <b>Due Date:</b> ${new Date(defaultDue).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n` +
+            `🆔 <b>Task ID:</b> <code>${taskId}</code>\n\n` +
+            `<i>The background build worker is claiming and building your deliverables now.</i>`;
+
+          await supabase.from('chat_messages').insert({
+            chat_id: chatId,
+            role: 'assistant',
+            content: confirmation
+          });
+
+          return confirmation;
+        }
+
+        if (funcName === 'get_system_status') {
+          const { data: allTasks } = await supabase
+            .from('tasks')
+            .select('id, title, status, course, due_date')
+            .eq('archived', false)
+            .order('due_date', { ascending: true });
+
+          const queued = allTasks?.filter((t) => t.status === 'queued' || t.status === 'new').length || 0;
+          const building = allTasks?.filter((t) => t.status === 'building' || t.status === 'claimed' || t.status === 'verifying').length || 0;
+          const flagged = allTasks?.filter((t) => t.status === 'flagged').length || 0;
+          const done = allTasks?.filter((t) => t.status === 'done').length || 0;
+
+          let statusMsg =
+            `📊 <b>Vicarius Academic System Status</b>\n\n` +
+            `• ⏳ <b>Queued:</b> ${queued}\n` +
+            `• 🔨 <b>In Progress:</b> ${building}\n` +
+            `• ⚠️ <b>Flagged:</b> ${flagged}\n` +
+            `• ✅ <b>Done:</b> ${done}\n\n`;
+
+          if (allTasks && allTasks.length > 0) {
+            statusMsg += `<b>Upcoming Coursework:</b>\n`;
+            allTasks.slice(0, 5).forEach((t) => {
+              const dueStr = t.due_date ? new Date(t.due_date).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'No deadline';
+              statusMsg += `• [${t.status.toUpperCase()}] <b>${escapeHtml(t.title)}</b> (${escapeHtml(t.course || 'General')}) — Due: ${dueStr}\n`;
+            });
+          }
+
+          await supabase.from('chat_messages').insert({
+            chat_id: chatId,
+            role: 'assistant',
+            content: statusMsg
+          });
+
+          return statusMsg;
+        }
+
+        if (funcName === 'list_active_tasks') {
+          let q = supabase.from('tasks').select('id, title, status, course, due_date').eq('archived', false);
+          if (args.course) {
+            q = q.ilike('course', `%${args.course}%`);
+          }
+          const { data: listTasks } = await q.order('due_date', { ascending: true });
+
+          let listMsg = `📋 <b>Active Academic Tasks:</b>\n\n`;
+          if (listTasks && listTasks.length > 0) {
+            listTasks.forEach((t) => {
+              const dueStr = t.due_date ? new Date(t.due_date).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'No deadline';
+              listMsg += `• [${t.status.toUpperCase()}] <b>${escapeHtml(t.title)}</b> (${escapeHtml(t.course || 'General')}) — Due: ${dueStr}\n`;
+            });
+          } else {
+            listMsg += `<i>No active tasks found matching criteria.</i>`;
+          }
+
+          await supabase.from('chat_messages').insert({
+            chat_id: chatId,
+            role: 'assistant',
+            content: listMsg
+          });
+
+          return listMsg;
+        }
+      }
+
+      const aiText = message?.content || 'I processed your message.';
       
       // Save assistant response to history
       await supabase.from('chat_messages').insert({
@@ -345,7 +541,7 @@ Instructions:
     }
   }
 
-  return 'I am currently unable to answer (AI key not configured). Use /task <details> to create tasks.';
+  return 'I am currently unable to answer (AI key not configured).';
 }
 
 /**
@@ -667,64 +863,12 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
     return { handled: true };
   }
 
-  // 10. Natural Language Intent Processing (Agentic Human-Like Interaction)
-  const isExplicitTaskCreation =
-    /\b(create|make|generate|build|write|train|code|prepare|produce|develop|draft)\b/i.test(text) &&
-    /\b(task|presentation|slides|deck|report|essay|paper|project|code|web app|app|model|resnet|cifar|dataset|review|document|assignment|homework|sharding)\b/i.test(text);
-
-  const isStatusInquiry =
-    /\b(what is the status|show my tasks|list tasks|active tasks|current tasks|task status|how many tasks|what tasks|any pending)\b/i.test(text);
-
-  if (isExplicitTaskCreation) {
-    try {
-      const confirmation = await createTaskFromTelegram(text);
-      await reply(confirmation);
-      return { handled: true, responseText: 'Task created from natural language' };
-    } catch (err: any) {
-      await reply(`❌ Failed to create task: ${escapeHtml(err.message)}`);
-      return { handled: true };
-    }
-  }
-
-  if (isStatusInquiry) {
-    const { data: allTasks } = await supabase
-      .from('tasks')
-      .select('id, title, status, course, due_date')
-      .eq('archived', false)
-      .order('due_date', { ascending: true });
-
-    const queued = allTasks?.filter((t) => t.status === 'queued' || t.status === 'new').length || 0;
-    const building = allTasks?.filter((t) => t.status === 'building' || t.status === 'claimed' || t.status === 'verifying').length || 0;
-    const flagged = allTasks?.filter((t) => t.status === 'flagged').length || 0;
-    const done = allTasks?.filter((t) => t.status === 'done').length || 0;
-
-    let statusMsg =
-      `📊 <b>Vicarius Academic System Status</b>\n\n` +
-      `• ⏳ <b>Queued:</b> ${queued}\n` +
-      `• 🔨 <b>In Progress:</b> ${building}\n` +
-      `• ⚠️ <b>Flagged:</b> ${flagged}\n` +
-      `• ✅ <b>Done:</b> ${done}\n\n`;
-
-    if (allTasks && allTasks.length > 0) {
-      statusMsg += `<b>Upcoming Coursework:</b>\n`;
-      allTasks.slice(0, 5).forEach((t) => {
-        const dueStr = t.due_date ? new Date(t.due_date).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'No deadline';
-        statusMsg += `• [${t.status.toUpperCase()}] <b>${escapeHtml(t.title)}</b> (${escapeHtml(t.course || 'General')}) — Due: ${dueStr}\n`;
-      });
-    } else {
-      statusMsg += `<i>No active tasks currently in queue.</i>\n`;
-    }
-
-    await reply(statusMsg);
-    return { handled: true };
-  }
-
-  // 11. Direct AI Chat & Academic Q&A (fallback for conversational queries)
+  // 10. Direct AI Model Brain (OpenRouter MiniMax with Native Tool Calling)
   try {
     const aiResponse = await askAiAssistant(text, incomingChatId);
     await reply(aiResponse);
   } catch (err: any) {
-    await reply("I'm your Vicarius academic assistant. Ask me anything about your coursework or tell me what academic tasks to build!");
+    await reply("I'm your Vicarius academic assistant. Ask me anything or tell me what assignment to create!");
   }
 
   return { handled: true };
