@@ -231,7 +231,13 @@ def execute_build(task: Dict[str, Any], retry_count: int = 0) -> Tuple[bool, str
     }).eq("id", task_id).execute()
 
     timeout_seconds = JOB_TIMEOUT_MINUTES * 60
-    cmd = ["agy", "-p", build_spec, "--yes", "--output-format", "text"]
+    cmd = [
+        "agy",
+        "-p", build_spec,
+        "--dangerously-skip-permissions",
+        "--print-timeout", f"{JOB_TIMEOUT_MINUTES}m",
+        "--output-format", "text"
+    ]
 
     print(f"[Worker] Starting build for task '{task['title']}' (ID: {task_id}) in {task_work_dir}")
     start_time = time.time()
@@ -353,6 +359,88 @@ def verify_build(task: Dict[str, Any], stdout_output: str, produced_files: List[
     return perform_verification_check(task, stdout_output, produced_files)
 
 
+def get_google_credentials():
+    """Get authenticated Google OAuth2 credentials from .env."""
+    client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
+    client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET")
+    refresh_token = os.getenv("GOOGLE_OAUTH_REFRESH_TOKEN")
+    if client_id and client_secret and refresh_token:
+        try:
+            from google.oauth2.credentials import Credentials
+            return Credentials(
+                token=None,
+                refresh_token=refresh_token,
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id=client_id,
+                client_secret=client_secret,
+            )
+        except Exception as e:
+            print(f"[GoogleAuth] Could not create credentials: {e}")
+    return None
+
+
+def upload_to_drive(creds, course: str, task_id: str, file_path: Path) -> Optional[str]:
+    """Upload deliverable to Google Drive folder structure: Agent Outputs/<course>/<task_id>/"""
+    try:
+        from googleapiclient.discovery import build
+        from googleapiclient.http import MediaFileUpload
+
+        drive_service = build('drive', 'v3', credentials=creds)
+        parent_folder_id = DRIVE_OUTPUT_FOLDER_ID
+
+        # 1. Create or get course folder
+        course_q = f"mimeType='application/vnd.google-apps.folder' and name='{course}' and '{parent_folder_id}' in parents and trashed=false"
+        res = drive_service.files().list(q=course_q, fields="files(id, name)").execute()
+        files = res.get('files', [])
+        if files:
+            course_folder_id = files[0]['id']
+        else:
+            meta = {'name': course, 'mimeType': 'application/vnd.google-apps.folder', 'parents': [parent_folder_id]}
+            folder = drive_service.files().create(body=meta, fields='id').execute()
+            course_folder_id = folder.get('id')
+
+        # 2. Upload file
+        media = MediaFileUpload(str(file_path), resumable=True)
+        file_meta = {'name': file_path.name, 'parents': [course_folder_id]}
+        uploaded = drive_service.files().create(body=file_meta, media_body=media, fields='id, webViewLink').execute()
+        return uploaded.get('webViewLink') or f"https://drive.google.com/file/d/{uploaded.get('id')}/view"
+    except Exception as e:
+        print(f"[DriveUpload-Warning] Could not upload to Drive: {e}")
+        return None
+
+
+def create_calendar_deadline_event(creds, task: Dict[str, Any]) -> None:
+    """Create Google Calendar deadline event with 24h email reminder override in IST (PRD 6.5)."""
+    due_date_str = task.get("due_date")
+    if not due_date_str:
+        return
+    try:
+        from googleapiclient.discovery import build
+        calendar_service = build('calendar', 'v3', credentials=creds)
+        
+        due_dt = datetime.datetime.fromisoformat(due_date_str.replace("Z", "+00:00")).astimezone(TARGET_TZ)
+        start_time = (due_dt - datetime.timedelta(hours=1)).isoformat()
+        end_time = due_dt.isoformat()
+
+        event_body = {
+            'summary': f"📚 Due: {task['title']}",
+            'description': f"Course: {task.get('course', 'General')}\nDeliverable prepared by Vicarius Agent.",
+            'start': {'dateTime': start_time, 'timeZone': TIMEZONE_STR},
+            'end': {'dateTime': end_time, 'timeZone': TIMEZONE_STR},
+            'reminders': {
+                'useDefault': False,
+                'overrides': [
+                    {'method': 'email', 'minutes': 24 * 60}, # 24h before
+                    {'method': 'popup', 'minutes': 60}
+                ]
+            }
+        }
+        calendar_service.events().insert(calendarId='primary', body=event_body).execute()
+        print(f"[Calendar] Created deadline event for '{task['title']}' with 24h reminder.")
+    except Exception as e:
+        print(f"[Calendar-Warning] Could not create calendar event: {e}")
+
+
 def deliver_and_track(task: Dict[str, Any], produced_files: List[Path], result_summary: str) -> None:
     """
     Deliver & Track Phase (PRD Section 6.5):
@@ -365,29 +453,43 @@ def deliver_and_track(task: Dict[str, Any], produced_files: List[Path], result_s
     task_id = task["id"]
     course = task.get("course") or "General"
     sb = get_supabase()
+    creds = get_google_credentials()
 
-    # Record deliverables in Supabase
+    drive_links = []
+    # 1. Upload to Google Drive and record deliverables
     for f in produced_files:
         file_ext = f.suffix.lstrip(".").lower()
+        drive_link = None
+        if creds and DRIVE_OUTPUT_FOLDER_ID:
+            drive_link = upload_to_drive(creds, course, task_id, f)
+            if drive_link:
+                drive_links.append(f"[{f.name}]({drive_link})")
+
         sb.table("deliverables").insert({
             "task_id": task_id,
             "file_name": f.name,
             "file_type": file_ext,
-            "drive_link": None, # Will be filled if Drive API is active
+            "drive_link": drive_link,
             "delivered_via": "both",
         }).execute()
 
-    # Send completion alert via Telegram
+    # 2. Schedule Calendar deadline event with 24h reminder override
+    if creds:
+        create_calendar_deadline_event(creds, task)
+
+    # 3. Send completion alert via Telegram
+    links_text = "\n".join(drive_links) if drive_links else "Saved locally in working directory."
     summary_msg = (
         f"🎉 *Task Completed:* {task['title']}\n"
         f"*Course:* {course}\n"
         f"*Output Files:* {', '.join([f.name for f in produced_files])}\n"
+        f"*Drive Links:* {links_text}\n"
         f"*Summary:* {result_summary}\n\n"
-        f"Deliverables are saved in working directory and ready for submission."
+        f"✅ Deliverables are ready for your manual submission."
     )
     send_telegram_notification(summary_msg)
 
-    # Mark task done
+    # 4. Mark task done in Supabase
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
     sb.table("tasks").update({
         "status": "done",
