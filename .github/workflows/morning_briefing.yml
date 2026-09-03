@@ -12,6 +12,15 @@ jobs:
     steps:
       - name: Trigger Morning Briefing
         run: |
-          curl -X GET "${{ secrets.NEXT_PUBLIC_SITE_URL }}/api/briefing" \
-               -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+          echo "Triggering Vicarius Morning Briefing..."
+          TARGET_URL="${{ secrets.NEXT_PUBLIC_SITE_URL }}"
+          if [ -z "$TARGET_URL" ]; then
+            TARGET_URL="https://your-domain.vercel.app"
+          fi
+          TOKEN="${{ secrets.CRON_SECRET }}"
+          if [ -z "$TOKEN" ]; then
+            TOKEN="vicarius_cron_REDACTED"
+          fi
+          curl -X GET "${TARGET_URL}/api/briefing" \
+               -H "Authorization: Bearer ${TOKEN}" \
                -f -s

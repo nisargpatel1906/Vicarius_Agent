@@ -19,9 +19,31 @@ export async function GET(request: Request) {
   try {
     const supabase = getSupabaseAdmin();
     const now = new Date();
+    const in12h = new Date(now.getTime() + 12 * 60 * 60 * 1000);
     const in48h = new Date(now.getTime() + 48 * 60 * 60 * 1000);
     const in7d = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
+    // 1. Stuck tasks in queued/claimed for > 24 hours (PRD / IMPLEMENT.md A8)
+    const { data: stuckTasks } = await supabase
+      .from("tasks")
+      .select("id, title, course, status, created_at")
+      .eq("archived", false)
+      .in("status", ["queued", "claimed"])
+      .lte("created_at", dayAgo.toISOString())
+      .order("created_at", { ascending: true });
+
+    // 2. Imminent deadlines (<12 hours) requiring urgent action
+    const { data: imminentTasks } = await supabase
+      .from("tasks")
+      .select("id, title, course, status, due_date")
+      .eq("archived", false)
+      .neq("status", "done")
+      .lte("due_date", in12h.toISOString())
+      .gte("due_date", now.toISOString())
+      .order("due_date", { ascending: true });
+
+    // 3. Upcoming within 48h
     const { data: upcoming } = await supabase
       .from("tasks")
       .select("id, title, course, task_type, status, due_date")
@@ -46,6 +68,27 @@ export async function GET(request: Request) {
     });
 
     let msg = `\u{1F305} <b>Good Morning, Nisarg!</b>\n\u{1F4C5} <b>${todayStr}</b>\n\n`;
+
+    // Escalation section for stuck queue items
+    if (stuckTasks && stuckTasks.length > 0) {
+      msg += `🚨 <b>ESCALATION: Tasks Stuck in Queue &gt;24 Hours (${stuckTasks.length}):</b>\n`;
+      stuckTasks.forEach((st) => {
+        msg += `• <b>${escapeHtml(st.title)}</b> (${escapeHtml(st.course || "General")}) [${st.status.toUpperCase()}]\n`;
+      });
+      msg += `<i>Check PC build worker or task logs.</i>\n\n`;
+    }
+
+    // Imminent (<12h) section
+    if (imminentTasks && imminentTasks.length > 0) {
+      msg += `🔴 <b>CRITICAL: Due in Less Than 12 Hours (${imminentTasks.length}):</b>\n`;
+      imminentTasks.forEach((it) => {
+        const dueStr = it.due_date
+          ? new Date(it.due_date).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })
+          : "Soon";
+        msg += `• <b>${escapeHtml(it.title)}</b> (${escapeHtml(it.course || "General")}) — Due: ${dueStr}\n`;
+      });
+      msg += `\n`;
+    }
 
     if (!upcoming || upcoming.length === 0) {
       msg += `\u2705 <b>No urgent deadlines in the next 48 hours.</b>\n`;

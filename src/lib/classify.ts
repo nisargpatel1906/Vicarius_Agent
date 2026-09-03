@@ -19,10 +19,16 @@ export interface ClassificationOutput {
 }
 
 /**
- * Call OpenRouter with MiniMax model
+ * Call LLM with multi-provider fallback:
+ * Primary: OpenRouter (MiniMax or configured model)
+ * Fallback 1: Groq (llama-3.3-70b-versatile)
+ * Fallback 2: Secondary OpenRouter model (meta-llama/llama-3.3-70b-instruct:free)
  */
 async function callLlmWithFallback(prompt: string, systemPrompt: string): Promise<string> {
   const openRouterKey = process.env.OPENROUTER_API_KEY;
+  const groqKey = process.env.GROQ_API_KEY;
+
+  // 1. Primary: OpenRouter
   if (openRouterKey) {
     try {
       const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -34,7 +40,7 @@ async function callLlmWithFallback(prompt: string, systemPrompt: string): Promis
           'X-Title': 'Vicarius Agent',
         },
         body: JSON.stringify({
-          model: 'minimax/minimax-m3:free',
+          model: process.env.OPENROUTER_MODEL || 'minimax/minimax-m3:free',
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: prompt },
@@ -49,30 +55,110 @@ async function callLlmWithFallback(prompt: string, systemPrompt: string): Promis
         if (content) return content;
       } else {
         const errBody = await res.text();
-        throw new Error(`OpenRouter API error: ${res.statusText} - ${errBody}`);
+        console.warn(`OpenRouter primary failed (${res.status}): ${errBody}. Falling back to Groq...`);
+        await logSystemEvent('warning', 'classify', `OpenRouter primary failed: ${res.statusText}. Triggering Groq fallback.`);
       }
     } catch (orErr: any) {
-      console.error('OpenRouter classification failed:', orErr);
-      await logSystemEvent('error', 'classify', `OpenRouter error: ${orErr?.message || orErr}`);
+      console.warn('OpenRouter primary network error. Falling back to Groq:', orErr?.message || orErr);
+      await logSystemEvent('warning', 'classify', `OpenRouter primary error: ${orErr?.message || orErr}. Triggering Groq fallback.`);
     }
   }
 
-  throw new Error('LLM classification provider (OpenRouter) failed or missing API keys.');
+  // 2. Fallback 1: Groq (llama-3.3-70b-versatile)
+  if (groqKey) {
+    try {
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${groqKey}`,
+        },
+        body: JSON.stringify({
+          model: 'llama-3.3-70b-versatile',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: prompt },
+          ],
+          temperature: 0.1,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const content = data.choices?.[0]?.message?.content;
+        if (content) {
+          console.log('[Classify] Successfully recovered using Groq llama-3.3-70b-versatile');
+          await logSystemEvent('info', 'classify', 'Successfully completed classification using Groq fallback.');
+          return content;
+        }
+      } else {
+        const errBody = await res.text();
+        console.warn(`Groq fallback failed (${res.status}): ${errBody}. Trying secondary OpenRouter...`);
+        await logSystemEvent('warning', 'classify', `Groq fallback failed: ${res.statusText}`);
+      }
+    } catch (groqErr: any) {
+      console.warn('Groq fallback error:', groqErr?.message || groqErr);
+      await logSystemEvent('warning', 'classify', `Groq fallback error: ${groqErr?.message || groqErr}`);
+    }
+  }
+
+  // 3. Fallback 2: Secondary OpenRouter model
+  if (openRouterKey) {
+    try {
+      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${openRouterKey}`,
+        },
+        body: JSON.stringify({
+          model: 'meta-llama/llama-3.3-70b-instruct:free',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: prompt },
+          ],
+          temperature: 0.1,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const content = data.choices?.[0]?.message?.content;
+        if (content) return content;
+      }
+    } catch (e: any) {
+      console.error('Secondary OpenRouter fallback error:', e?.message || e);
+    }
+  }
+
+  throw new Error('All LLM classification providers (OpenRouter primary, Groq fallback, OpenRouter secondary) failed.');
 }
 
 /**
- * Call Gemini Flash for vision/PDF extraction with OpenRouter fallback
+ * Call Gemini Flash for vision/PDF extraction with OpenRouter Vision fallback (C5 prompt)
  */
 async function extractAttachmentContent(attachmentName: string, mimeType?: string, base64Data?: string): Promise<string> {
   const geminiKey = process.env.GEMINI_API_KEY;
+  const geminiModelId = process.env.GEMINI_VISION_MODEL || 'gemini-1.5-flash';
+  const openRouterKey = process.env.OPENROUTER_API_KEY;
+
+  const c5Prompt = `You are reading an assignment instruction sheet (PDF page or photo). Extract, as plain structured text, everything needed to complete it — do not solve it:
+- Deliverable type and required output format, if stated.
+- Every numbered/lettered task or question, transcribed VERBATIM and in order.
+- Explicit success criteria (accuracy target, word/slide/page count, required sections, rubric points, mark allocations).
+- Constraints (citation style, language, tools/libraries required or banned).
+- Any deadline visible on the sheet.
+If the image is unreadable or has no extractable text, say exactly:
+"NO_EXTRACTABLE_CONTENT" and nothing else.`;
+
+  // 1. Primary: Gemini Flash
   if (geminiKey && base64Data && mimeType) {
     try {
       const genAI = new GoogleGenerativeAI(geminiKey);
-      const model = genAI.getGenerativeModel({ model: 'gemini-3.6-flash' });
+      const model = genAI.getGenerativeModel({ model: geminiModelId });
 
-      const prompt = `Extract all academic requirements, task instructions, rubric guidelines, and explicit success criteria from this assignment document/image. Return clear, thorough text.`;
       const result = await model.generateContent([
-        prompt,
+        c5Prompt,
         {
           inlineData: {
             data: base64Data,
@@ -81,30 +167,57 @@ async function extractAttachmentContent(attachmentName: string, mimeType?: strin
         },
       ]);
       const text = result.response.text();
-      if (text) return text;
+      if (text && text.trim() && !text.includes('NO_EXTRACTABLE_CONTENT')) return text.trim();
     } catch (geminiErr: any) {
-      console.warn('Gemini Flash vision failed. Falling back to OpenRouter vision:', geminiErr?.message || geminiErr);
+      console.warn(`Gemini (${geminiModelId}) vision failed. Falling back to OpenRouter vision:`, geminiErr?.message || geminiErr);
+      await logSystemEvent('warning', 'classify', `Gemini vision failed (${geminiErr?.message || geminiErr}). Triggering OpenRouter vision fallback.`);
     }
   }
 
+  // 2. Fallback: OpenRouter Vision
+  if (openRouterKey && base64Data && mimeType) {
+    try {
+      const imageUrl = `data:${mimeType};base64,${base64Data}`;
+      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${openRouterKey}`,
+        },
+        body: JSON.stringify({
+          model: 'meta-llama/llama-3.2-11b-vision-instruct:free',
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: c5Prompt },
+                { type: 'image_url', image_url: { url: imageUrl } },
+              ],
+            },
+          ],
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const text = data.choices?.[0]?.message?.content;
+        if (text && text.trim() && !text.includes('NO_EXTRACTABLE_CONTENT')) {
+          console.log('[Classify] Extracted vision content using OpenRouter vision fallback');
+          await logSystemEvent('info', 'classify', 'Extracted attachment via OpenRouter vision fallback.');
+          return text.trim();
+        }
+      }
+    } catch (orVisionErr: any) {
+      console.warn('OpenRouter vision fallback error:', orVisionErr?.message || orVisionErr);
+      await logSystemEvent('warning', 'classify', `OpenRouter vision fallback error: ${orVisionErr?.message || orVisionErr}`);
+    }
+  }
+
+  await logSystemEvent('warning', 'classify', `Attachment text extraction failed for '${attachmentName}' — using filename reference only.`);
   return `Attachment: ${attachmentName} (${mimeType || 'unknown'})`;
 }
 
-/**
- * Check Aethos Memory for per-course / professor standing notes
- */
-async function queryAethosCourseNotes(courseName: string): Promise<string[]> {
-  try {
-    // Check if Aethos memory tool / endpoint is accessible
-    // Fallback standing student profile context
-    return [
-      `User is Nisarg Patel (B.Tech CE/AIML at Academic Institution).`,
-      `Prefers clean, production-grade output with clear README/documentation.`,
-    ];
-  } catch (err) {
-    return [];
-  }
-}
+import { queryAethosCourseNotes } from './aethos';
 
 /**
  * Fetch student profile row from Supabase (PRD Section 5 & 6.2)
@@ -133,7 +246,7 @@ export async function getUserProfile(): Promise<UserProfile> {
 }
 
 /**
- * Generates the standardized Build Spec template (PRD Section 6.3 & PROMPT_AND_OUTPUT_STANDARDS.md)
+ * Generates the standardized Build Spec template (C2 & C3 per IMPLEMENT.md)
  */
 export function generateBuildSpec(
   title: string,
@@ -142,10 +255,18 @@ export function generateBuildSpec(
   requirementsList: string[],
   successCriteria: string | null,
   outputFormat: string,
-  profile?: UserProfile
+  profile?: UserProfile,
+  courseNotes?: string[],
+  weight: TaskWeight = 'light',
+  dueDate?: string | null
 ): string {
-  const reqsFormatted = requirementsList.map((r) => `- ${r}`).join('\n');
-  const criteriaFormatted = successCriteria ? successCriteria : 'None explicitly specified';
+  // Format requirements with R1..Rn
+  const reqsFormatted = requirementsList.map((r, idx) => {
+    const cleaned = r.replace(/^R\d+[:.]\s*/i, '').replace(/^-\s*/, '');
+    return `R${idx + 1}. ${cleaned}`;
+  }).join('\n');
+
+  const criteriaFormatted = successCriteria ? successCriteria : 'none stated';
 
   const isUiTask = taskType === 'code_project' || taskType === 'presentation' || /web|ui|dashboard|frontend|app|react|html|css|slides/i.test(title);
   const designDirective = isUiTask ? `\n\nUI & Visual Design System (MANDATORY — from docx/DESIGN.md):
@@ -154,51 +275,82 @@ export function generateBuildSpec(
   • Typography: Headings ('Noto Serif' 600/700), Body & Controls ('Manrope' 400/600).
   • Visual Standards: Clean card-based structure, smooth micro-interactions (0.2s cubic-bezier), modern border-radius (8px buttons, 12px cards, 9999px badges), and high legibility.` : '';
 
-  const studentContext = profile ? `\n\nStudent Profile:
-- Student: ${profile.full_name} (${profile.program} - ${profile.current_semester} at ${profile.university})
-- Academic Register: ${profile.academic_level_note || 'Formal undergraduate technical standard'}
-- Default Citation Style: ${profile.default_citation_style || 'IEEE'}
-- Writing Voice Guidance: Let the student's voice sample inform natural phrasing and cadence without copying verbatim: "${profile.writing_voice_sample || ''}"` : '';
+  const studentContext = profile ? `\n\nStudent context (write to THIS level and register, not a generic AI default):
+- ${profile.full_name}, ${profile.program}, ${profile.current_semester}, ${profile.university}
+- Academic register: ${profile.academic_level_note || 'Formal undergraduate technical standard'}
+- Citation style: ${profile.default_citation_style || 'IEEE'}
+- Voice reference (inform phrasing/rhythm; do NOT copy): "${profile.writing_voice_sample || ''}"` : '';
+
+  const aethosContext = courseNotes && courseNotes.length > 0
+    ? `\n\nStanding course notes (past corrections — honor these):\n${courseNotes.map(n => `- ${n}`).join('\n')}`
+    : `\n\nStanding course notes (past corrections — honor these):\n- none`;
+
+  // C3 Task-Type Inserts
+  let taskTypeInsert = '';
+  if (taskType === 'document') {
+    taskTypeInsert = `\n\nTask-Specific Guidance (Document):
+- Default to introduction → body → conclusion unless the source implies another structure (lab report: Objective/Hypothesis, Apparatus & Method, Observations & Results, Discussion & Conclusion; formal letter: follow letter conventions).
+- If a word/page target exists, hit it within ±10% and report the actual count.`;
+  } else if (taskType === 'presentation') {
+    taskTypeInsert = `\n\nTask-Specific Guidance (Presentation):
+- Slides are visual-first: a title + 3–6 concise bullets each, never pasted paragraphs. Depth goes in speaker notes on every content slide.
+- Produce EXACTLY the requested slide count (incl. a title slide). Report the count.`;
+  } else if (taskType === 'code_project') {
+    taskTypeInsert = `\n\nTask-Specific Guidance (Code Project):
+- Idiomatic style for the language; meaningful names; comments only where they aid understanding. No leftover TODO/placeholder in delivered code.
+- Include a README (prereqs, setup, run) and a smoke test proving it boots.
+- If it's a UI/web app, launch it and capture a real screenshot (screenshot.png).
+- Zip excludes node_modules, .venv, __pycache__, .git, .next, dist, build.`;
+  } else if (taskType === 'ml_training') {
+    taskTypeInsert = `\n\nTask-Specific Guidance (ML Training):
+- The numeric target is a hard pass/fail: iterate (epochs/arch/hyperparameters) until you meet it or exhaust a reasonable attempt budget; report the ACTUAL final number either way — never claim a number you didn't measure.
+- Checkpoint every few epochs to ./checkpoints/ and resume from the latest if present (an interrupted run must not restart from zero).
+- Check GPU availability first; if CPU-only and the run would be very long, reduce scope (smaller sample/fewer epochs) and say so in assumptions, or ask_human.
+- Deliver: model weights artifact, training logs/loss curve, and an evaluation_report.docx written in the same formal register as a document task.`;
+  } else if (taskType === 'research') {
+    taskTypeInsert = `\n\nTask-Specific Guidance (Research):
+- Use real web search; cite exact, reachable URLs in ${profile?.default_citation_style || 'IEEE'} style. No invented or approximate sources.
+- Original synthesis in your own framing — never lightly reworded copying.`;
+  } else if (taskType === 'handwritten') {
+    taskTypeInsert = `\n\nTask-Specific Guidance (Handwritten):
+- Output clean, copy-ready plain text (.txt) the student will transcribe by hand. No .docx styling, no markdown artifacts, no page furniture — just the text.`;
+  }
 
   return `Task: ${title}
-Source: ${course || 'Academic Course'} — ${taskType}
-Requirements:
+Course / type: ${course || 'Academic Course'} — ${taskType}   (weight: ${weight})
+Due (IST): ${dueDate || 'Not specified'}
+
+Requirements — address every one, in this exact order, and reference its ID in your final report:
 ${reqsFormatted}
-Success criteria: ${criteriaFormatted}
-Output format: ${outputFormat}${studentContext}
-${designDirective}
 
-Instructions:
-- Work to completion without stopping for approval — this project's
-  permissions already cover everything you need here.
-- If something is genuinely blocking (not just a minor judgment call),
-  ask the user directly via the ask_human tool. Wait up to the configured
-  timeout for a reply; if none arrives in time, make the most reasonable
-  assumption instead, and clearly state what you assumed in your final report.
-- For anything else ambiguous, make the most reasonable assumption and note
-  it in your final report — do not stop and wait.
-- Report: files produced, the final metric vs. the target (if there is a
-  numeric success criterion), and any assumptions you made.
+Success criteria (mechanical pass/fail): ${criteriaFormatted}
+Output format: ${outputFormat}${studentContext}${designDirective}${aethosContext}${taskTypeInsert}
 
-Tone and format requirements:
-- Write in a clear, formal, academic register appropriate for submission to
-  a professor. No casual language, no slang, no filler.
-- Avoid generic AI-sounding phrases — things like "in today's fast-paced
-  world," "delve into," "it is important to note that," or "in conclusion"
-  used as a reflexive crutch rather than because a conclusion is actually
-  needed. Write plainly and directly instead.
-- Address every requirement from the source explicitly, in the same order
-  they were given, so nothing is missed and it's easy to check the output
-  against the original ask point by point.
-- Structure the output clearly: headers where sections are natural,
-  numbered or bulleted points where the content is genuinely a list, full
-  paragraphs otherwise. Don't produce an undifferentiated wall of text.
-- Match terminology and conventions to the specific course/subject where
-  that context is available.
-- Match the academic level and general writing register described in the
-  user's profile — not more polished or more advanced than that level, and
-  not generic. If a writing voice sample is available, let it inform
-  natural phrasing and sentence rhythm without copying it directly.`;
+How to work:
+- Work to completion without stopping for approval; your permissions cover everything needed here.
+- If — and only if — you hit a genuine blocker (a real choice that changes the deliverable and isn't a minor judgment call), call the ask_human tool with a single specific question. Wait up to the configured timeout; if no answer comes, pick the most reasonable option and record it under "assumptions".
+- For ordinary ambiguity, choose the most reasonable interpretation and note it — do not stop.
+
+Before you finish (self-check — do this, don't assume):
+- Re-read R1..Rn and confirm each is actually addressed in the artifact, in order.
+- Open/run the file you produced and confirm it's valid: a .docx opens and hits the word/section target; a .pptx has exactly the required slide count; code actually runs a smoke test; a model file exists and the reported metric is real.
+- Remove any placeholder, TODO, or lorem text.
+
+Tone & format (mandatory):
+- Formal academic register fit for submission to a professor. Plain and direct.
+- BANNED phrasings (do not use): "in today's fast-paced world", "in today's digital era", "delve into", "it is important to note that", "as an AI language model", "in conclusion" used reflexively, "unlock the power of", "navigate the complexities of". Vary sentence structure; avoid the uniform three-sentence paragraph rhythm that reads as machine-written.
+- Structure clearly: headings for real sections, lists only for genuine lists, full paragraphs otherwise. Match subject terminology to the course.
+
+End your run with EXACTLY this JSON block, fenced, as the last thing you output:
+\`\`\`json
+{
+  "files": [{ "name": "report.docx", "path": "./report.docx" }],
+  "metrics": { "value": null, "target": null, "unit": null },
+  "requirement_coverage": [{ "id": "R1", "addressed": true, "where": "Section 2" }],
+  "assumptions": ["..."],
+  "notes": "anything the user should double-check"
+}
+\`\`\``;
 }
 
 /**
@@ -209,20 +361,32 @@ export async function classifyAndExtractTask(task: Task): Promise<Classification
   const rawBody = rawData.raw_body || task.title;
   const courseNotes = await queryAethosCourseNotes(task.course || 'General');
 
-  const systemPrompt = `You are an expert academic assistant analyzer.
-Your job is to classify university coursework and extract actionable requirements into strict JSON format.
+  // C1 System Prompt from IMPLEMENT.md
+  const systemPrompt = `You are the classification and extraction stage of an academic task agent for a single university student. Your only job: read one piece of coursework (an email or Classroom item, plus any extracted attachment text) and output a strict JSON object describing what must be produced. You do not write the deliverable here.
 
-Output JSON with keys:
+Think step by step internally, then output ONLY the JSON — no prose, no code fence.
+
+Rules:
+- REQUIREMENTS must be atomic and preserved in the SAME ORDER as the source. If the source has 5 numbered questions, output 5 requirements, R1..R5, in that order, each self-contained. Never merge, reorder, or summarize away a requirement.
+- DUE DATE: resolve relative dates ("by next Friday", "in 2 weeks") against the item's posted date, expressed in Asia/Kolkata (IST), ISO 8601. If several dates appear, choose the submission deadline. If none is findable, use null.
+- CONFIDENCE rubric: 0.9–1.0 = task type and every requirement are unambiguous; 0.7–0.9 = minor ambiguity; 0.5–0.7 = a specific thing is unclear (say what in flag_reason); <0.5 = you are largely guessing. Do not inflate.
+- WEIGHT: ml_training => heavy. code_project => heavy only if large/complex (full-stack, distributed, large dataset), else medium. research => medium. document/presentation/handwritten => light. Override if the text clearly implies a longer runtime.
+- SUCCESS CRITERIA: capture any explicit, checkable target verbatim (accuracy range, word count, slide count, required sections). null if none stated.
+
+Output JSON exactly:
 {
-  "task_type": "document" | "presentation" | "handwritten" | "code_project" | "research" | "ml_training",
+  "task_type": "document|presentation|handwritten|code_project|research|ml_training",
   "course": string,
-  "due_date": string (ISO 8601 format e.g. "2026-09-10T18:30:00Z", or null if not found),
-  "confidence": number between 0.0 and 1.0 (confidence in task type and requirements),
-  "requirements": [string array of atomic requirements],
-  "success_criteria": string or null (e.g. "validation accuracy between 80 and 90 percent" or "minimum 1000 words"),
-  "output_format": string (e.g. "report.docx", "slides.pptx", "python project with README", "structured markdown")
-}
-Return ONLY valid JSON.`;
+  "due_date": string|null,
+  "confidence": number,
+  "flag_reason": string|null,
+  "weight": "light|medium|heavy",
+  "requirements": [
+    { "id": "R1", "text": string, "verbatim": boolean }
+  ],
+  "success_criteria": string|null,
+  "output_format": string
+}`;
 
   const prompt = `Analyze this task:
 Title: ${task.title}
@@ -258,7 +422,14 @@ ${courseNotes.join('\n')}
     taskType = 'handwritten';
   }
 
-  const requirementsList: string[] = Array.isArray(parsed.requirements) ? parsed.requirements : [task.title];
+  const rawRequirements = Array.isArray(parsed.requirements) ? parsed.requirements : [task.title];
+  const requirementsList: string[] = rawRequirements.map((r: any, idx: number) => {
+    if (typeof r === 'string') return r;
+    if (r && typeof r === 'object' && r.text) {
+      return `${r.id || `R${idx + 1}`}: ${r.text}`;
+    }
+    return JSON.stringify(r);
+  });
 
   // 1. Detect Lab Report Structure (TASK_TYPES.md Section: Document)
   const isLabReport = /lab|experiment|apparatus|procedure|observation|titration|practical/i.test(rawBody) || /lab|practical/i.test(task.title);
@@ -368,7 +539,10 @@ ${courseNotes.join('\n')}
     requirementsList,
     parsed.success_criteria || task.success_criteria || null,
     outputFormat,
-    profile
+    profile,
+    courseNotes,
+    weight,
+    parsed.due_date || task.due_date || null
   );
 
   return {

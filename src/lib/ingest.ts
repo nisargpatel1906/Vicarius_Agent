@@ -227,12 +227,97 @@ export async function runIngestion(): Promise<IngestionResult> {
     return result;
   }
 
+function normalizeString(str: string): string {
+  return str
+    .toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Calculates token Jaccard similarity between two strings
+ */
+function calculateSimilarity(str1: string, str2: string): number {
+  const norm1 = normalizeString(str1);
+  const norm2 = normalizeString(str2);
+  if (norm1 === norm2) return 1.0;
+  if (!norm1 || !norm2) return 0.0;
+
+  const set1 = new Set(norm1.split(' ').filter(Boolean));
+  const set2 = new Set(norm2.split(' ').filter(Boolean));
+
+  if (set1.size === 0 || set2.size === 0) return 0.0;
+
+  let intersection = 0;
+  for (const token of set1) {
+    if (set2.has(token)) {
+      intersection++;
+    }
+  }
+
+  const union = new Set([...set1, ...set2]).size;
+  return union === 0 ? 0 : intersection / union;
+}
+
+/**
+ * Checks whether an incoming item is a cross-source duplicate of an existing task
+ */
+async function findFuzzyDuplicate(
+  supabase: any,
+  item: NormalizedRawItem
+): Promise<{ id: string; title: string; attachments: any[]; extracted_requirements: any } | null> {
+  const { data: candidates } = await supabase
+    .from('tasks')
+    .select('id, title, course, due_date, extracted_requirements, created_at')
+    .eq('archived', false)
+    .order('created_at', { ascending: false })
+    .limit(50);
+
+  if (!candidates || candidates.length === 0) return null;
+
+  for (const candidate of candidates) {
+    // 1. Check title similarity
+    const sim = calculateSimilarity(item.title, candidate.title);
+    if (sim < 0.70) continue;
+
+    // 2. Check course match if both have courses
+    if (item.course && candidate.course) {
+      const courseSim = calculateSimilarity(item.course, candidate.course);
+      if (courseSim < 0.3 && !candidate.course.includes(item.course) && !item.course.includes(candidate.course)) {
+        continue;
+      }
+    }
+
+    // 3. Check due date window (within 24 hours if both specified)
+    if (item.due_date && candidate.due_date) {
+      const t1 = new Date(item.due_date).getTime();
+      const t2 = new Date(candidate.due_date).getTime();
+      const diffHours = Math.abs(t1 - t2) / (1000 * 60 * 60);
+      if (diffHours > 24) {
+        continue;
+      }
+    }
+
+    // Found fuzzy duplicate
+    const existingAttachments = candidate.extracted_requirements?.attachments || [];
+    return {
+      id: candidate.id,
+      title: candidate.title,
+      attachments: existingAttachments,
+      extracted_requirements: candidate.extracted_requirements || {},
+    };
+  }
+
+  return null;
+}
+
   const supabase = getSupabaseAdmin();
 
-  // Upsert items into tasks table using (source, external_id) dedupe key
+  // Upsert items into tasks table using (source, external_id) and fuzzy cross-source dedup
   for (const item of rawItems) {
     try {
-      // Check if task already exists
+      // 1. Exact dedup by (source, external_id)
       const { data: existing } = await supabase
         .from('tasks')
         .select('id, status')
@@ -240,28 +325,57 @@ export async function runIngestion(): Promise<IngestionResult> {
         .eq('external_id', item.external_id)
         .maybeSingle();
 
-      if (!existing) {
-        // Insert new task in 'new' status
-        const { error: insertErr } = await supabase.from('tasks').insert({
-          source: item.source,
-          external_id: item.external_id,
-          course: item.course,
-          title: item.title,
-          task_type: 'document', // Default initially before Groq classification
-          status: 'new',
-          due_date: item.due_date || null,
-          extracted_requirements: {
-            raw_body: item.raw_body,
-            attachments: item.attachments || [],
-            posted_date: item.posted_date,
-          },
-        });
+      if (existing) {
+        continue;
+      }
 
-        if (insertErr) {
-          console.error(`Failed to insert task ${item.external_id}:`, insertErr.message);
-        } else {
-          result.upsertedCount++;
+      // 2. Cross-source fuzzy dedup (G2/A4: title similarity >= 0.70 + course + 24h due date)
+      const fuzzyMatch = await findFuzzyDuplicate(supabase, item);
+      if (fuzzyMatch) {
+        // Merge attachments into existing task
+        const newAttachments = (item.attachments || []).filter(
+          (na) => !fuzzyMatch.attachments.some((ea: any) => ea.name === na.name)
+        );
+
+        if (newAttachments.length > 0) {
+          const mergedRequirements = {
+            ...fuzzyMatch.extracted_requirements,
+            attachments: [...fuzzyMatch.attachments, ...newAttachments],
+          };
+          await supabase.from('tasks').update({
+            extracted_requirements: mergedRequirements,
+            updated_at: new Date().toISOString(),
+          }).eq('id', fuzzyMatch.id);
         }
+
+        await logSystemEvent(
+          'info',
+          'ingestion',
+          `Cross-source duplicate suppressed: '${item.title}' (${item.source}) merged into task '${fuzzyMatch.title}' (${fuzzyMatch.id})`
+        );
+        continue;
+      }
+
+      // Insert new task in 'new' status
+      const { error: insertErr } = await supabase.from('tasks').insert({
+        source: item.source,
+        external_id: item.external_id,
+        course: item.course,
+        title: item.title,
+        task_type: 'document', // Default initially before classification
+        status: 'new',
+        due_date: item.due_date || null,
+        extracted_requirements: {
+          raw_body: item.raw_body,
+          attachments: item.attachments || [],
+          posted_date: item.posted_date,
+        },
+      });
+
+      if (insertErr) {
+        console.error(`Failed to insert task ${item.external_id}:`, insertErr.message);
+      } else {
+        result.upsertedCount++;
       }
     } catch (upsertErr: any) {
       console.error(`Upsert error for item ${item.external_id}:`, upsertErr?.message || upsertErr);

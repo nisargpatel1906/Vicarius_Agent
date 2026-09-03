@@ -4,6 +4,7 @@
 import { getSupabaseAdmin, logSystemEvent } from './supabase';
 import { getGmailClient, getClassroomClient } from './google-auth';
 import { TaskType } from './types';
+import { rememberCourseCorrection } from './aethos';
 
 const TELEGRAM_API_BASE = 'https://api.telegram.org/bot';
 
@@ -487,7 +488,8 @@ CRITICAL RULES:
 4. When the student asks you to do, create, build, generate, write, or train an assignment/project, or says "use this and make a ppt" / "make slides", you MUST IMMEDIATELY call the 'create_academic_task' tool! Do NOT just print the text outline or ask them to type /task.
 5. If the student asks for status or lists of tasks, call 'get_system_status' or 'list_active_tasks'.
 6. If the student asks conceptual questions or converses, respond directly with rich technical depth and clarity.
-7. Format all text replies in clean, valid HTML (<b>bold</b>, <i>italic</i>, <code>code</code>, bullet points •). Do NOT use markdown asterisks.`;
+7. Format all text replies in clean, valid HTML (<b>bold</b>, <i>italic</i>, <code>code</code>, bullet points •). Do NOT use markdown asterisks.
+8. If the student gives a correction, feedback, rule, or grade for a specific course (e.g. "for CE-401 always use IEEE format", or "my teacher said to include loss curves"), YOU MUST CALL 'save_course_feedback' to remember it!`;
 
   const openRouterKey = process.env.OPENROUTER_API_KEY;
   if (openRouterKey) {
@@ -580,6 +582,21 @@ CRITICAL RULES:
                   properties: {
                     course: { type: 'string', description: 'Optional course filter' }
                   }
+                }
+              }
+            },
+            {
+              type: 'function',
+              function: {
+                name: 'save_course_feedback',
+                description: 'Saves feedback, corrections, or grades for a specific course to Aethos Memory so the AI remembers it for future tasks in that course.',
+                parameters: {
+                  type: 'object',
+                  properties: {
+                    course: { type: 'string', description: 'Course name to tag this feedback with.' },
+                    feedback: { type: 'string', description: 'The exact feedback, correction, or rule to remember.' }
+                  },
+                  required: ['course', 'feedback']
                 }
               }
             }
@@ -769,6 +786,20 @@ Instructions:
           });
 
           return listMsg;
+        }
+
+        if (funcName === 'save_course_feedback') {
+          const course = args.course || 'General';
+          const feedback = args.feedback || '';
+          const resultMsg = await rememberCourseCorrection(course, feedback);
+          
+          await supabase.from('chat_messages').insert({
+            chat_id: chatId,
+            role: 'assistant',
+            content: resultMsg
+          });
+          
+          return resultMsg;
         }
       }
 
