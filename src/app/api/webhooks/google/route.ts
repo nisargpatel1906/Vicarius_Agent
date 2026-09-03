@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { processSingleItem } from '@/lib/ingest';
-import { getGmailClient } from '@/lib/google-auth';
+import { getGmailClient, getClassroomClient } from '@/lib/google-auth';
 
 // POST /api/webhooks/google
 export async function POST(req: NextRequest) {
@@ -72,9 +72,74 @@ export async function POST(req: NextRequest) {
       }
 
     } else if (parsedData.collection === 'courses.courseWork' || parsedData.collection === 'courses.announcements') {
-      // Classroom Webhook Push (Simulated logic based on Google Classroom Pub/Sub API)
-      // Implementation depends heavily on what Classroom actually pushes
-      console.log('Classroom Webhook received:', parsedData);
+      const classroom = getClassroomClient();
+      const courseId = parsedData.resourceId?.courseId;
+      const itemId = parsedData.resourceId?.id;
+      const eventType = parsedData.eventType;
+      
+      if (courseId && itemId && eventType !== 'DELETED') {
+        const courseRes = await classroom.courses.get({ id: courseId });
+        const courseName = courseRes.data.name || `Course ${courseId}`;
+        
+        if (parsedData.collection === 'courses.courseWork') {
+          const cwRes = await classroom.courses.courseWork.get({ courseId, id: itemId });
+          const cw = cwRes.data;
+          
+          let dueDateIso: string | null = null;
+          if (cw.dueDate) {
+            const year = cw.dueDate.year || new Date().getFullYear();
+            const month = (cw.dueDate.month || 1).toString().padStart(2, '0');
+            const day = (cw.dueDate.day || 1).toString().padStart(2, '0');
+            const hour = (cw.dueTime?.hours || 23).toString().padStart(2, '0');
+            const minute = (cw.dueTime?.minutes || 59).toString().padStart(2, '0');
+            dueDateIso = new Date(`${year}-${month}-${day}T${hour}:${minute}:00Z`).toISOString();
+          }
+
+          const attachments: any[] = [];
+          if (cw.materials) {
+            for (const mat of cw.materials) {
+              if (mat.driveFile?.driveFile) {
+                attachments.push({
+                  name: mat.driveFile.driveFile.title || 'Classroom Attachment',
+                  driveFileId: mat.driveFile.driveFile.id || undefined,
+                  mimeType: mat.driveFile.driveFile.alternateLink ? 'application/drive' : undefined,
+                });
+              } else if (mat.link) {
+                attachments.push({
+                  name: mat.link.title || mat.link.url || 'Link',
+                  mimeType: 'text/url',
+                });
+              }
+            }
+          }
+
+          const item = {
+            source: 'classroom' as const,
+            external_id: `cw_${cw.id}`,
+            course: courseName,
+            title: cw.title || 'Untitled Classroom Assignment',
+            raw_body: cw.description || cw.title || '',
+            attachments,
+            posted_date: cw.creationTime || new Date().toISOString(),
+            due_date: dueDateIso,
+          };
+          await processSingleItem(item);
+          
+        } else if (parsedData.collection === 'courses.announcements') {
+          const annRes = await classroom.courses.announcements.get({ courseId, id: itemId });
+          const ann = annRes.data;
+          
+          const item = {
+            source: 'classroom' as const,
+            external_id: `ann_${ann.id}`,
+            course: courseName,
+            title: `Announcement: ${(ann.text || 'Notice').slice(0, 60)}...`,
+            raw_body: ann.text || '',
+            posted_date: ann.creationTime || new Date().toISOString(),
+          };
+          await processSingleItem(item);
+        }
+      }
     } else {
       console.log('Unrecognized Pub/Sub event:', parsedData);
     }

@@ -449,7 +449,40 @@ def generate_content_with_ai(task: Dict[str, Any]) -> Dict[str, Any]:
         print(f"[AI-Content] Using {len(requirements['slides'])} structured slides from task requirements.")
         return {"slides": requirements["slides"]}
 
+    # --- ADVANCED HYBRID RAG FETCHING ---
+    rag_context = ""
+    course_id = task.get("course_id") or course
+    try:
+        import requests
+        gemini_key = os.getenv("GEMINI_API_KEY")
+        if gemini_key:
+            print(f"[RAG] Fetching semantic context for course {course_id}...")
+            # 1. Generate embedding for the title
+            emb_url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={gemini_key}"
+            emb_resp = requests.post(emb_url, json={"model": "models/text-embedding-004", "content": {"parts": [{"text": title}]}})
+            if emb_resp.ok:
+                query_embedding = emb_resp.json().get("embedding", {}).get("values", [])
+                
+                # 2. Query Supabase RPC
+                sb = create_client(SUPABASE_URL, SUPABASE_KEY)
+                rpc_resp = sb.rpc("match_classroom_hybrid", {
+                    "query_text": title,
+                    "query_embedding": query_embedding,
+                    "filter_course_id": course_id,
+                    "match_count": 5
+                }).execute()
+                
+                if rpc_resp.data:
+                    rag_context = "\n\n--- CLASSROOM CONTEXT (SYLLABUS & RULES) ---\n"
+                    for row in rpc_resp.data:
+                        rag_context += f"[{row['posted_date'][:10]}] {row['title']}: {row['content'][:500]}\n"
+                    print(f"[RAG] Found {len(rpc_resp.data)} relevant classroom chunks.")
+    except Exception as e:
+        print(f"[RAG-Error] Could not fetch classroom context: {e}")
+
     req_text = "\n".join(f"- {r}" for r in req_items) if req_items else build_spec[:500]
+    if rag_context:
+        req_text += rag_context
 
     send_telegram_notification("🧠 <b>AI Content Generation Started</b>\n<i>Analyzing requirements and generating academic content...</i>")
 

@@ -3,7 +3,7 @@
 // Sourced from PRD_academic_task_agent.md (Section 6.1, Section 11)
 
 import { NextRequest, NextResponse } from 'next/server';
-import { runIngestion } from '@/lib/ingest';
+import { runIngestion, renewClassroomWatch } from '@/lib/ingest';
 import { processNewTasks } from '@/lib/classify';
 import { logSystemEvent } from '@/lib/supabase';
 import { ApiResponse } from '@/lib/types';
@@ -46,6 +46,9 @@ export async function POST(req: NextRequest) {
       console.error('Failed to renew Gmail watch:', watchErr);
       await logSystemEvent('warning', 'ingestion', `Failed to renew Gmail watch: ${watchErr?.message || watchErr}`);
     }
+
+    // Renew Classroom Watch Subscriptions
+    await renewClassroomWatch();
 
     // Run ingestion (fallback batch sync)
     const ingestionResult = await runIngestion();

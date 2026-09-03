@@ -43,6 +43,11 @@ export function getDriveClient() {
   return google.drive({ version: 'v3', auth });
 }
 
+export function getDocsClient() {
+  const auth = getGoogleOAuth2Client();
+  return google.docs({ version: 'v1', auth });
+}
+
 export function getTasksClient() {
   const auth = getGoogleOAuth2Client();
   return google.tasks({ version: 'v1', auth });

@@ -188,6 +188,53 @@ export async function pollGoogleClassroom(): Promise<NormalizedRawItem[]> {
 }
 
 /**
+ * Registers Google Classroom Pub/Sub watch requests for active courses.
+ * Registrations need to be renewed before they expire.
+ */
+export async function renewClassroomWatch() {
+  try {
+    const classroom = getClassroomClient();
+    const topicName = process.env.GOOGLE_PUBSUB_TOPIC || 'projects/YOUR_PROJECT_ID/topics/vicarius-ingest';
+    
+    // Fetch active courses
+    const coursesRes = await classroom.courses.list({ courseStates: ['ACTIVE'] });
+    const courses = coursesRes.data.courses || [];
+    
+    let successCount = 0;
+    for (const course of courses) {
+      if (!course.id) continue;
+      
+      try {
+        // Register for courseWork changes
+        await classroom.registrations.create({
+          requestBody: {
+            cloudPubsubTopic: { topicName },
+            feed: {
+              feedType: 'COURSE_WORK_CHANGES',
+              courseWorkChangesInfo: { courseId: course.id }
+            }
+          }
+        });
+        
+        // Register for roster changes to catch announcements or other events if needed,
+        // but Google Classroom API doesn't support an explicit 'ANNOUNCEMENT_CHANGES' feed yet.
+        // COURSE_WORK_CHANGES covers assignments.
+        
+        successCount++;
+      } catch (regErr: any) {
+        console.warn(`Failed to register watch for course ${course.id}:`, regErr?.message || regErr);
+      }
+    }
+    
+    await logSystemEvent('info', 'ingestion', `Successfully renewed Classroom watch subscriptions for ${successCount} courses.`);
+  } catch (err: any) {
+    console.error('Failed to renew Classroom watch:', err);
+    await logSystemEvent('warning', 'ingestion', `Failed to renew Classroom watch: ${err?.message || err}`);
+  }
+}
+
+
+/**
  * Runs full ingestion pass with independent fault isolation
  */
 export async function runIngestion(): Promise<IngestionResult> {
