@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
             }
 
             const item = {
-              source: 'gmail',
+              source: 'gmail' as const,
               external_id: `gmail_${added.message.id}`,
               course: from ? from.split('<')[0].trim() : null,
               title: subject,

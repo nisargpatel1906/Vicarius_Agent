@@ -227,6 +227,23 @@ export async function runIngestion(): Promise<IngestionResult> {
     return result;
   }
 
+  const supabase = getSupabaseAdmin();
+
+  // Upsert items into tasks table using (source, external_id) and fuzzy cross-source dedup
+  for (const item of rawItems) {
+    const success = await processSingleItem(item, supabase);
+    if (success) result.upsertedCount++;
+  }
+
+  await logSystemEvent(
+    'info',
+    'ingestion',
+    `Ingestion pass finished. Gmail: ${result.gmailCount}, Classroom: ${result.classroomCount}, Upserted new: ${result.upsertedCount}`
+  );
+
+  return result;
+}
+
 function normalizeString(str: string): string {
   return str
     .toLowerCase()
@@ -310,23 +327,6 @@ async function findFuzzyDuplicate(
   }
 
   return null;
-}
-
-  const supabase = getSupabaseAdmin();
-
-  // Upsert items into tasks table using (source, external_id) and fuzzy cross-source dedup
-  for (const item of rawItems) {
-    const success = await processSingleItem(item, supabase);
-    if (success) result.upsertedCount++;
-  }
-
-  await logSystemEvent(
-    'info',
-    'ingestion',
-    `Ingestion pass finished. Gmail: ${result.gmailCount}, Classroom: ${result.classroomCount}, Upserted new: ${result.upsertedCount}`
-  );
-
-  return result;
 }
 
 /**

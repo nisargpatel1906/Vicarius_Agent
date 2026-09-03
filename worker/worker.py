@@ -865,7 +865,7 @@ def build_ml_training_from_ai_content(task: Dict[str, Any], ml_data: Dict, task_
     return produced
 
 
-def execute_build(task: Dict[str, Any], retry_count: int = 0) -> Tuple[bool, str, List[Path]]:
+def execute_build(task: Dict[str, Any], retry_count: int = 0, retry_note: str = "") -> Tuple[bool, str, List[Path]]:
     """
     Phase 1C: Generates academic deliverables using AI content generation.
     Falls back to Antigravity CLI (agy) for complex code projects.
@@ -887,13 +887,27 @@ def execute_build(task: Dict[str, Any], retry_count: int = 0) -> Tuple[bool, str
     )
 
     build_spec = task.get("build_spec") or f"Complete academic task: {task.get('title')}"
+    spec_additions: List[str] = []
     if task_type == "ml_training":
         (task_work_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
         if retry_count > 0:
-            build_spec += f"\n\n[RESUME CHECKPOINT]: Checkpoints directory exists at ./checkpoints/. Resume training from the latest checkpoint file if present."
+            spec_additions.append(
+                "[RESUME CHECKPOINT]: Checkpoints directory exists at ./checkpoints/. "
+                "Resume training from the latest checkpoint file if present."
+            )
 
     if retry_count > 0:
-        build_spec += f"\n\n[RETRY #{retry_count}]: Previous attempt failed verification. Ensure all expected output files exist."
+        note = retry_note.strip() if (retry_note and retry_note.strip()) else (
+            "Previous attempt failed. Make sure every expected output file is actually written "
+            "to the working directory before finishing."
+        )
+        spec_additions.append(f"[RETRY #{retry_count} — DIAGNOSED FIX]: {note}")
+
+    # Inject the retry additions into the task dict (shallow copy so the caller's task is untouched)
+    # so that generate_content_with_ai(), which reads task['build_spec'], actually receives the fix.
+    if spec_additions:
+        build_spec = build_spec + "\n\n" + "\n\n".join(spec_additions)
+        task = {**task, "build_spec": build_spec}
 
     # Update status to building
     sb = get_supabase()
@@ -1580,8 +1594,165 @@ def deliver_and_track(task: Dict[str, Any], produced_files: List[Path], result_s
     log_system_event("info", "worker", f"Task '{task['title']}' (ID: {task_id}) successfully built, verified, and delivered.")
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# PHASE 3A: AI Self-Diagnosis, Secret-Safe Reporting & Informed Recovery
+# Reflexion pattern — the agent verbalizes WHY it failed and feeds that reasoning
+# into a single informed retry, instead of blindly re-running the same thing.
+# CLAUDE.md hard rule preserved: exactly ONE automatic retry, then flag.
+# ──────────────────────────────────────────────────────────────────────────────
+
+_SECRET_ENV_VARS = (
+    "OPENROUTER_API_KEY", "GROQ_API_KEY", "GEMINI_API_KEY",
+    "SUPABASE_SERVICE_KEY", "SUPABASE_WORKER_KEY", "SUPABASE_KEY",
+    "TELEGRAM_BOT_TOKEN", "INGEST_SECRET_TOKEN",
+    "GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "GOOGLE_OAUTH_REFRESH_TOKEN",
+)
+
+_SECRET_PATTERNS = [
+    re.compile(r"sk-or-[A-Za-z0-9._-]{8,}"),                 # OpenRouter
+    re.compile(r"gsk_[A-Za-z0-9]{8,}"),                       # Groq
+    re.compile(r"AIza[A-Za-z0-9_-]{10,}"),                    # Google API keys
+    re.compile(r"\bBearer\s+[A-Za-z0-9._-]{8,}", re.IGNORECASE),
+    re.compile(r"\b\d{6,}:[A-Za-z0-9_-]{30,}\b"),             # Telegram bot token
+    re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{6,}"),  # JWT / service keys
+]
+
+
+def _sanitize_for_report(text: str) -> str:
+    """Redacts any secret value or key-shaped token before it can reach an LLM prompt,
+    a log line, Telegram message, or email. (CLAUDE.md: never let secrets appear in any
+    of those.) Redacts by exact known env-var value first, then by common key shapes."""
+    if not text:
+        return text or ""
+    safe = str(text)
+    for var in _SECRET_ENV_VARS:
+        val = os.getenv(var)
+        if val and len(val) >= 6 and val in safe:
+            safe = safe.replace(val, f"[REDACTED:{var}]")
+    for pat in _SECRET_PATTERNS:
+        safe = pat.sub("[REDACTED]", safe)
+    return safe
+
+
+def diagnose_failure(
+    task: Dict[str, Any],
+    phase: str,
+    error_message: str,
+    stdout_output: str = "",
+    produced_files: Optional[List[Path]] = None,
+    verify_details: Optional[Dict[str, Any]] = None,
+    post_retry: bool = False,
+) -> Dict[str, Any]:
+    """
+    Reflexion-style root-cause analysis of a build/verification failure.
+
+    Uses the worker LLM (OpenRouter -> Groq fallback, both timeout-bounded) to reason about
+    WHY the task failed rather than blindly retrying. The result (a) drives the single
+    informed retry via `retry_instructions`, and (b) becomes a clear, plain-language Telegram
+    flag a non-technical person can act on.
+
+    All error/stdout text is secret-sanitized before it reaches the LLM or any output, and the
+    LLM's own text is sanitized again on the way out. Falls back to the rule-based
+    `_classify_error_message` when the LLM is unavailable (graceful offline degradation).
+
+    Returns dict with keys: root_cause, plain_explanation, category
+    (provider|spec|capability|environment|transient|unknown), agent_fixable, retry_instructions,
+    user_action, confidence, source ("ai"|"fallback"), _phase.
+    """
+    produced_files = produced_files or []
+    safe_error = _sanitize_for_report(error_message)[:1500]
+    safe_stdout = _sanitize_for_report(stdout_output)[-1500:] if stdout_output else ""
+    file_names = [p.name for p in produced_files]
+
+    fallback = {
+        "root_cause": safe_error,
+        "plain_explanation": _classify_error_message(safe_error),
+        "category": "unknown",
+        "agent_fixable": True,
+        "retry_instructions": (
+            "Re-attempt the task carefully and make sure every expected output file is actually "
+            "written to the working directory before finishing."
+        ),
+        "user_action": "If it fails again, reply to this message describing what to change, or open the dashboard.",
+        "confidence": 0.3,
+        "source": "fallback",
+        "_phase": phase,
+    }
+
+    if not (OPENROUTER_API_KEY or GROQ_API_KEY):
+        return fallback
+
+    system_prompt = (
+        "You are the self-diagnosis module of an autonomous academic-task build agent. "
+        "A build just failed. Analyze the real root cause instead of guessing, and decide whether the "
+        "agent can fix it on its own single retry or whether a human must intervene. Be concrete and honest. "
+        "Distinguish transient/provider errors (a retry likely helps) from specification problems "
+        "(the build instructions must change), capability limits (the agent literally cannot do it — e.g. a "
+        "missing/expired credential, or an action only the human can perform), and environment issues.\n\n"
+        "Return STRICT JSON only, no prose, with exactly these keys:\n"
+        "{\n"
+        '  "root_cause": "one or two sentences, technical",\n'
+        '  "plain_explanation": "explain to a non-technical student, in plain language, what went wrong",\n'
+        '  "category": "provider|spec|capability|environment|transient|unknown",\n'
+        '  "agent_fixable": true or false,\n'
+        '  "retry_instructions": "concrete, specific instructions to append to the build prompt for ONE retry that fixes this",\n'
+        '  "user_action": "what the student can do; if they can fix it by replying on Telegram, say exactly what to reply",\n'
+        '  "confidence": 0.0 to 1.0\n'
+        "}"
+    )
+    user_prompt = (
+        f"TASK TITLE: {task.get('title')}\n"
+        f"TASK TYPE: {task.get('task_type')} (weight: {task.get('weight', 'light')})\n"
+        f"FAILED PHASE: {phase}\n"
+        f"SUCCESS CRITERIA: {str(task.get('success_criteria'))[:400]}\n"
+        f"BUILD SPEC (truncated):\n{str(task.get('build_spec'))[:1200]}\n\n"
+        f"FILES PRODUCED: {file_names or 'NONE'}\n"
+        f"ERROR / VERIFICATION REASON:\n{safe_error}\n\n"
+        f"STDOUT TAIL:\n{safe_stdout or '(none)'}\n\n"
+        f"This is {'the analysis AFTER an informed retry already failed' if post_retry else 'the first failure, before any retry'}."
+    )
+
+    raw = call_llm_worker(
+        [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+        temperature=0.1,
+        max_tokens=800,
+    )
+    if not raw:
+        print("[Diagnose] LLM unavailable — using rule-based fallback diagnosis.")
+        return fallback
+
+    try:
+        cleaned = raw.strip()
+        cleaned = re.sub(r"^```(?:json)?", "", cleaned).strip()
+        cleaned = re.sub(r"```$", "", cleaned).strip()
+        start, end = cleaned.find("{"), cleaned.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            cleaned = cleaned[start:end + 1]
+        parsed = json.loads(cleaned)
+    except Exception as e:
+        print(f"[Diagnose] Could not parse LLM diagnosis ({e}) — using fallback.")
+        return fallback
+
+    result = dict(fallback)
+    result["source"] = "ai"
+    for key in ("root_cause", "plain_explanation", "category", "retry_instructions", "user_action"):
+        val = parsed.get(key)
+        if isinstance(val, str) and val.strip():
+            result[key] = _sanitize_for_report(val.strip())
+    if isinstance(parsed.get("agent_fixable"), bool):
+        result["agent_fixable"] = parsed["agent_fixable"]
+    try:
+        result["confidence"] = max(0.0, min(1.0, float(parsed.get("confidence", 0.5))))
+    except (TypeError, ValueError):
+        result["confidence"] = 0.5
+    if result["category"] not in ("provider", "spec", "capability", "environment", "transient", "unknown"):
+        result["category"] = "unknown"
+    return result
+
+
 def _classify_error_message(error_message: str) -> str:
-    """Phase 3A: Returns a user-friendly contextual error explanation."""
+    """Phase 3A: Returns a user-friendly contextual error explanation.
+    Kept as the offline fallback for diagnose_failure when no LLM provider is reachable."""
     err_lower = error_message.lower()
     if "rate limit" in err_lower or "429" in err_lower or "quota" in err_lower:
         return "⚡ AI quota / rate limit reached. The worker will retry automatically on the next cycle."
@@ -1600,29 +1771,65 @@ def _classify_error_message(error_message: str) -> str:
     return f"Build/verification error: {error_message[:200]}"
 
 
-def handle_task_failure(task: Dict[str, Any], error_message: str) -> None:
-    """Flags task on persistent failure and alerts the user (PRD Section 6.3 / 6.4)."""
+def handle_task_failure(task: Dict[str, Any], error_message: str, diagnosis: Optional[Dict[str, Any]] = None) -> None:
+    """Flags a task after the single informed retry has failed, and sends a CLEAR, plain-language
+    Telegram report the student can act on — including a one-tap "just reply to fix it" path.
+    (PRD Section 6.3 / 6.4; CLAUDE.md: one retry, then flag.)
+
+    `diagnosis` is the AI root-cause analysis from diagnose_failure(); when absent (e.g. LLM
+    offline) it degrades to the rule-based _classify_error_message."""
     import html
     task_id = task["id"]
     sb = get_supabase()
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
-    friendly_error = _classify_error_message(error_message)
+    safe_error = _sanitize_for_report(error_message)
 
+    # Defense-in-depth: diagnose_failure already sanitizes its output, but this function is the
+    # final egress to Telegram + system_events, so re-sanitize every diagnosis-derived string here.
+    # A secret must never reach a Telegram message or a log line, regardless of how the diagnosis
+    # dict was produced (CLAUDE.md).
+    if diagnosis:
+        plain = _sanitize_for_report(diagnosis.get("plain_explanation") or "") or _classify_error_message(safe_error)
+        root_cause = _sanitize_for_report(diagnosis.get("root_cause") or "") or safe_error
+        user_action = _sanitize_for_report(diagnosis.get("user_action") or "") or "Reply to this message telling me what to change, and I'll fix it and rebuild."
+        category = diagnosis.get("category", "unknown")
+        confidence = diagnosis.get("confidence", 0.0)
+    else:
+        plain = _classify_error_message(safe_error)
+        root_cause = safe_error
+        user_action = "Reply to this message telling me what to change, and I'll fix it and rebuild."
+        category = "unknown"
+        confidence = 0.0
+
+    # result_summary is surfaced in the dashboard + /details — keep it human-readable & secret-free.
+    summary_line = f"Flagged after 1 informed retry — {plain}"
     sb.table("tasks").update({
         "status": "flagged",
-        "result_summary": f"Build/Verification failed: {error_message}",
+        "result_summary": summary_line[:1000],
         "updated_at": now_iso,
     }).eq("id", task_id).execute()
 
+    # Full structured diagnosis to system_events for audit (already secret-sanitized).
+    log_system_event(
+        "error",
+        "worker",
+        f"Task '{task.get('title')}' (ID: {task_id}) flagged [{category}, conf={confidence}, src={(diagnosis or {}).get('source', 'none')}]: {root_cause[:400]}",
+    )
+
     alert_msg = (
-        f"⚠️ <b>Task Flagged:</b> {html.escape(task['title'])}\n"
-        f"<b>Course:</b> {html.escape(task.get('course') or 'Unknown')}\n\n"
-        f"<b>What happened:</b> {friendly_error}\n\n"
-        f"<i>Use <code>/retry {task_id}</code> to requeue after fixing the issue, or check the dashboard.</i>"
+        f"⚠️ <b>I couldn't finish this task — I need your help</b>\n\n"
+        f"📌 <b>Task:</b> {html.escape(task.get('title') or 'Academic task')}\n"
+        f"📚 <b>Course:</b> {html.escape(task.get('course') or 'General')}\n\n"
+        f"<b>What went wrong:</b>\n{html.escape(plain)}\n\n"
+        f"<b>What I already tried:</b>\nI diagnosed the problem and automatically retried once with a fix, but it still didn't work.\n\n"
+        f"<b>What you can do:</b>\n{html.escape(user_action)}\n\n"
+        f"💬 <b>Easiest fix:</b> just <b>reply to this message</b> telling me what to change — for example "
+        f"\"make it 8 slides\", \"the deadline is next Monday\", or \"use IEEE citations\" — and I'll apply it and rebuild automatically.\n\n"
+        f"🆔 <code>{task_id}</code>\n"
+        f"<i>Or use</i> <code>/retry {task_id}</code> <i>to rebuild as-is, or</i> <code>/fix {task_id} &lt;instructions&gt;</code>."
     )
     send_telegram_notification(alert_msg)
-    log_system_event("error", "worker", f"Task '{task['title']}' flagged: {error_message}")
 
 
 def recover_stalled_tasks() -> None:
@@ -1695,28 +1902,58 @@ def run_worker_cycle() -> bool:
         }).eq("id", task["id"]).execute()
         return False
 
-    # Step 4: Execute build (with 1 automatic retry on failure)
+    # Step 4: Execute build. On failure the agent DIAGNOSES the root cause (Reflexion) and does
+    # at most ONE informed retry — never a blind re-run. The `retries_used` gate ensures the build
+    # and verification phases together never exceed one retry (CLAUDE.md: one retry, then flag).
+    retries_used = 0
+    last_diagnosis: Optional[Dict[str, Any]] = None
+
     success, stdout_output, produced_files = execute_build(task, retry_count=0)
-    
-    if not success or len(produced_files) == 0:
-        print(f"[Worker] Initial build failed. Attempting 1 automatic retry (PRD Section 6.3)...")
-        time.sleep(2)
-        success, stdout_output, produced_files = execute_build(task, retry_count=1)
 
     if not success or len(produced_files) == 0:
-        handle_task_failure(task, f"Subprocess exited with failure or no files generated. Output snippet: {stdout_output[:300]}")
+        print("[Worker] Initial build failed. Diagnosing root cause before the single informed retry (PRD 6.3)...")
+        last_diagnosis = diagnose_failure(
+            task, "build",
+            f"Build produced no usable output. Output snippet: {stdout_output[:400]}",
+            stdout_output=stdout_output, produced_files=produced_files,
+        )
+        print(f"[Worker] Diagnosis [{last_diagnosis.get('category')}]: {last_diagnosis.get('root_cause')}")
+        time.sleep(2)
+        retries_used = 1
+        success, stdout_output, produced_files = execute_build(
+            task, retry_count=1, retry_note=last_diagnosis.get("retry_instructions", ""),
+        )
+
+    if not success or len(produced_files) == 0:
+        handle_task_failure(task, "Build produced no usable output after one informed retry.", last_diagnosis)
         return True
 
-    # Step 5: Verify build
+    # Step 5: Verify build. Reuse the single retry budget only if it hasn't been spent already.
     verified, summary, details = verify_build(task, stdout_output, produced_files)
-    if not verified:
-        print(f"[Worker] Verification failed. Attempting 1 retry with verification feedback...")
-        success, stdout_output, produced_files = execute_build(task, retry_count=1)
-        if success:
+    if not verified and retries_used == 0:
+        print("[Worker] Verification failed. Diagnosing before the single informed retry...")
+        last_diagnosis = diagnose_failure(
+            task, "verification", summary,
+            stdout_output=stdout_output, produced_files=produced_files, verify_details=details,
+        )
+        print(f"[Worker] Diagnosis [{last_diagnosis.get('category')}]: {last_diagnosis.get('root_cause')}")
+        retries_used = 1
+        success, stdout_output, produced_files = execute_build(
+            task, retry_count=1, retry_note=last_diagnosis.get("retry_instructions", ""),
+        )
+        if success and len(produced_files) > 0:
             verified, summary, details = verify_build(task, stdout_output, produced_files)
 
     if not verified:
-        handle_task_failure(task, summary)
+        # Ensure the flag reflects the actual (verification) failure, re-diagnosing only if the
+        # diagnosis we hold is from the earlier build phase.
+        if last_diagnosis is None or last_diagnosis.get("_phase") != "verification":
+            last_diagnosis = diagnose_failure(
+                task, "verification", summary,
+                stdout_output=stdout_output, produced_files=produced_files,
+                verify_details=details, post_retry=(retries_used > 0),
+            )
+        handle_task_failure(task, summary, last_diagnosis)
         return True
 
     # Step 6: Deliver & Track

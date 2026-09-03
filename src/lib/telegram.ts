@@ -6,7 +6,7 @@ import { getGmailClient, getClassroomClient } from './google-auth';
 import { TaskType } from './types';
 import { rememberCourseCorrection } from './aethos';
 
-const TELEGRAM_API_BASE = 'https://api.telegram.org/bot';
+const TELEGRAM_API_BASE = process.env.TELEGRAM_API_BASE || 'https://api.telegram.org/bot';
 
 export interface TelegramUpdate {
   update_id: number;
@@ -169,7 +169,7 @@ Extract the structured task details into strict JSON:
   const openRouterKey = process.env.OPENROUTER_API_KEY;
   if (openRouterKey) {
     try {
-      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      const res = await fetch(process.env.OPENROUTER_API_URL || 'https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${openRouterKey}`,
@@ -264,6 +264,119 @@ Extract the structured task details into strict JSON:
     `🏷️ <b>Type:</b> <code>${taskType}</code>\n` +
     `⏰ <b>Due:</b> ${displayDue}\n\n` +
     `<i>The background daemon worker will pick this up automatically.</i>`
+  );
+}
+
+/**
+ * Reply-to-fix loop: takes a flagged/failed task plus the user's plain-language fix instruction,
+ * uses the LLM to patch the build spec / success criteria / requirements, then re-queues the task
+ * so the worker rebuilds automatically. This is the human-in-the-loop remediation path — the user
+ * simply replies to a flag on Telegram and the agent applies the change and rebuilds.
+ * (PRD Section 6.3 / 8; CLAUDE.md: one retry, then flag — this is a *user-initiated* re-queue,
+ * not an extra automatic retry.)
+ */
+export async function applyFixAndRequeue(taskId: string, instruction: string): Promise<string> {
+  const supabase = getSupabaseAdmin();
+
+  const { data: task } = await supabase
+    .from('tasks')
+    .select('*')
+    .eq('id', taskId)
+    .maybeSingle();
+
+  if (!task) {
+    return `❌ I couldn't find that task (<code>${escapeHtml(taskId)}</code>) to fix.`;
+  }
+
+  const currentReqs = task.extracted_requirements || {};
+  const currentItems: string[] = Array.isArray(currentReqs.items) ? currentReqs.items : [];
+
+  let patch: any = null;
+  const openRouterKey = process.env.OPENROUTER_API_KEY;
+  if (openRouterKey) {
+    const systemPrompt = `You are the remediation module of an autonomous academic-task agent. A build task FAILED and the student has told you, in plain language, how to fix it. Apply ONLY the student's requested change (plus anything the failure summary clearly requires) to the task definition. Preserve everything that was already correct — do not drop existing requirements.
+
+Return STRICT JSON only, no prose:
+{
+  "build_spec": string (the FULL updated build instructions, not a diff),
+  "success_criteria": string (updated verification criteria),
+  "requirements": string[] (updated list of key requirements),
+  "change_summary": string (one short sentence describing what you changed, for the student)
+}`;
+    const userPrompt = `TASK TITLE: ${task.title}
+COURSE: ${task.course || 'General'}
+TYPE: ${task.task_type}
+WHY IT FAILED: ${task.result_summary || 'unknown'}
+
+CURRENT BUILD SPEC:
+${task.build_spec || '(none)'}
+
+CURRENT SUCCESS CRITERIA:
+${task.success_criteria || '(none)'}
+
+CURRENT REQUIREMENTS:
+${currentItems.map((r) => `- ${r}`).join('\n') || '(none)'}
+
+STUDENT'S FIX INSTRUCTION:
+${instruction}`;
+
+    try {
+      const res = await fetch(process.env.OPENROUTER_API_URL || 'https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${openRouterKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'minimax/minimax-m3:free',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          temperature: 0.1,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const content = data.choices?.[0]?.message?.content || '{}';
+        patch = JSON.parse(content.replace(/```json/g, '').replace(/```/g, '').trim());
+      }
+    } catch (err) {
+      console.warn('applyFixAndRequeue LLM patch error:', err);
+    }
+  }
+
+  // If the LLM patch failed, still honor the fix by appending the raw instruction to the build spec
+  // and requirements — never silently drop the user's instruction.
+  const nowIso = new Date().toISOString();
+  const changeSummary: string = patch?.change_summary || `Applied your instruction: "${instruction}"`;
+  const newBuildSpec: string = (patch?.build_spec && String(patch.build_spec).trim())
+    ? String(patch.build_spec)
+    : `${task.build_spec || ''}\n\n[USER FIX]: ${instruction}`;
+  const newSuccess: string = (patch?.success_criteria && String(patch.success_criteria).trim())
+    ? String(patch.success_criteria)
+    : task.success_criteria;
+  const newItems: string[] = Array.isArray(patch?.requirements) && patch.requirements.length > 0
+    ? patch.requirements
+    : [...currentItems, instruction];
+
+  const { error } = await supabase.from('tasks').update({
+    status: 'queued',
+    build_spec: newBuildSpec,
+    success_criteria: newSuccess,
+    extracted_requirements: { ...currentReqs, items: newItems },
+    result_summary: `Re-queued after your fix: ${changeSummary}`.slice(0, 1000),
+    updated_at: nowIso,
+  }).eq('id', taskId);
+
+  if (error) {
+    return `❌ I understood the fix but couldn't save it: ${escapeHtml(error.message)}`;
+  }
+
+  await logSystemEvent('info', 'telegram', `User fix applied to task ${taskId} and re-queued: ${changeSummary}`);
+
+  return (
+    `✅ <b>Got it — I've updated the task and I'm rebuilding it now.</b>\n\n` +
+    `📌 <b>Task:</b> ${escapeHtml(task.title)}\n` +
+    `🔧 <b>What I changed:</b> ${escapeHtml(changeSummary)}\n\n` +
+    `<i>The worker will pick it up on its next cycle. I'll message you when it's done.</i>`
   );
 }
 
@@ -494,7 +607,7 @@ CRITICAL RULES:
   const openRouterKey = process.env.OPENROUTER_API_KEY;
   if (openRouterKey) {
     try {
-      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      const res = await fetch(process.env.OPENROUTER_API_URL || 'https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${openRouterKey}`,
@@ -859,14 +972,14 @@ async function transcribeVoiceMessage(fileId: string): Promise<string> {
 
   try {
     // Step 1: Get file path from Telegram
-    const fileRes = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`);
+    const fileRes = await fetch(`${process.env.TELEGRAM_API_BASE || 'https://api.telegram.org/bot'}${token}/getFile?file_id=${fileId}`);
     if (!fileRes.ok) throw new Error('Failed to get file info from Telegram');
     const fileData = await fileRes.json();
     const filePath = fileData.result?.file_path;
     if (!filePath) throw new Error('No file_path in Telegram response');
 
     // Step 2: Download voice file
-    const audioUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
+    const audioUrl = `${process.env.TELEGRAM_FILE_BASE || 'https://api.telegram.org/file/bot'}${token}/${filePath}`;
     const audioRes = await fetch(audioUrl);
     if (!audioRes.ok) throw new Error('Failed to download voice file');
     const audioBuffer = await audioRes.arrayBuffer();
@@ -911,14 +1024,14 @@ async function extractTaskFromImage(fileId: string, mimeType?: string): Promise<
 
   try {
     // Step 1: Get file download URL
-    const fileRes = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`);
+    const fileRes = await fetch(`${process.env.TELEGRAM_API_BASE || 'https://api.telegram.org/bot'}${token}/getFile?file_id=${fileId}`);
     const fileData = await fileRes.json();
     const filePath = fileData.result?.file_path;
     if (!filePath) return '';
-    const fileUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
+    const fileUrl = `${process.env.TELEGRAM_FILE_BASE || 'https://api.telegram.org/file/bot'}${token}/${filePath}`;
 
     // Step 2: Send to OpenRouter vision model for OCR + extraction
-    const visionRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const visionRes = await fetch(process.env.OPENROUTER_API_URL || 'https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${openRouterKey}`,
@@ -1051,7 +1164,32 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
     }
   }
 
-  // 2. Check if user is replying to a pending question
+  // 2. Reply-to-fix: user is replying to a flagged-task alert with a plain-language fix instruction.
+  // Runs BEFORE the pending-question handler so fix instructions are never captured as question answers.
+  // Detection is deliberately strict: the replied-to message must carry a task UUID AND flag markers,
+  // AND the task must actually be flagged/failed — so replies to questions or confirmations fall through.
+  const fixReplyTo = update.message?.reply_to_message;
+  if (fixReplyTo?.text && text && !text.startsWith('/')) {
+    const uuidMatch = fixReplyTo.text.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+    const looksLikeFlag = fixReplyTo.text.includes('⚠️')
+      || /couldn.?t finish|what went wrong|what i already tried|flagged/i.test(fixReplyTo.text);
+    if (uuidMatch && looksLikeFlag) {
+      const flaggedId = uuidMatch[1];
+      const { data: flaggedTask } = await supabase
+        .from('tasks')
+        .select('id, status')
+        .eq('id', flaggedId)
+        .maybeSingle();
+      if (flaggedTask && (flaggedTask.status === 'flagged' || flaggedTask.status === 'failed')) {
+        await reply('🔧 <i>Understood — applying your fix and rebuilding...</i>');
+        const fixMsg = await applyFixAndRequeue(flaggedId, text);
+        await reply(fixMsg);
+        return { handled: true, responseText: 'Fix applied and task re-queued' };
+      }
+    }
+  }
+
+  // 3. Check if user is replying to a pending question
   const replyTo = update.message?.reply_to_message;
   let pendingQuestion = null;
 
@@ -1080,7 +1218,7 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
     const openRouterKey = process.env.OPENROUTER_API_KEY;
     if (openRouterKey) {
       try {
-        const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        const res = await fetch(process.env.OPENROUTER_API_URL || 'https://openrouter.ai/api/v1/chat/completions', {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${openRouterKey}`,
@@ -1349,23 +1487,51 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
     return { handled: true };
   }
 
-  // 8. Retry Command
+  // 8. Retry Command — `/retry <id>` re-queues as-is; `/retry <id> <instructions>` applies an AI fix first
   if (lower.startsWith('/retry')) {
     const parts = text.split(/\s+/);
     if (parts.length > 1) {
       const taskId = parts[1].trim();
+      const instruction = text.replace(/^\/retry\s+\S+\s*/i, '').trim();
+
+      if (instruction) {
+        await reply('🔧 <i>Applying your fix and rebuilding...</i>');
+        const fixMsg = await applyFixAndRequeue(taskId, instruction);
+        await reply(fixMsg);
+        return { handled: true };
+      }
+
       const { error } = await supabase
         .from('tasks')
         .update({ status: 'queued', updated_at: new Date().toISOString() })
         .eq('id', taskId);
 
       if (!error) {
-        await reply(`🔄 Task <code>${escapeHtml(taskId)}</code> requeued for build.\n\n<i>The background worker will pick it up on the next cycle.</i>`);
+        await reply(`🔄 Task <code>${escapeHtml(taskId)}</code> requeued for build.\n\n<i>The background worker will pick it up on the next cycle. Tip: <code>/retry ${escapeHtml(taskId)} &lt;what to change&gt;</code> to fix it first.</i>`);
       } else {
         await reply(`❌ Could not retry task: ${escapeHtml(error.message)}`);
       }
       return { handled: true };
     }
+  }
+
+  // 8b. Fix Command — `/fix <id> <instructions>`: apply an AI patch to the task, then re-queue it
+  if (lower.startsWith('/fix')) {
+    const parts = text.split(/\s+/);
+    const instruction = text.replace(/^\/fix\s+\S+\s*/i, '').trim();
+    if (parts.length < 3 || !instruction) {
+      await reply(
+        'Usage: <code>/fix &lt;task_id&gt; &lt;what to change&gt;</code>\n\n' +
+        'Example: <code>/fix 1234abcd-... make it 8 slides and add IEEE citations</code>\n\n' +
+        '<i>Tip: you can also just reply to a flagged-task alert with your instruction — no command needed.</i>'
+      );
+      return { handled: true };
+    }
+    const taskId = parts[1].trim();
+    await reply('🔧 <i>Applying your fix and rebuilding...</i>');
+    const fixMsg = await applyFixAndRequeue(taskId, instruction);
+    await reply(fixMsg);
+    return { handled: true };
   }
 
   // Phase 3D: /ask Command — search past deliverables + AI Q&A
@@ -1441,8 +1607,12 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
       `• <code>/task &lt;details&gt;</code> — Create &amp; queue task\n` +
       `• <code>/tasks</code> — View all active tasks\n` +
       `• <code>/details &lt;task_id&gt;</code> — View requirements &amp; download links\n` +
-      `• <code>/retry &lt;task_id&gt;</code> — Requeue a flagged task\n` +
+      `• <code>/retry &lt;task_id&gt;</code> — Requeue a flagged task as-is\n` +
+      `• <code>/fix &lt;task_id&gt; &lt;change&gt;</code> — Fix &amp; rebuild a flagged task\n` +
       `• <code>/cancel &lt;task_id&gt;</code> — Archive / cancel a task\n\n` +
+      `<b>🛠️ When a task gets flagged:</b>\n` +
+      `• I'll message you in plain language explaining exactly what went wrong.\n` +
+      `• <b>Just reply to that message</b> telling me what to change (e.g. "make it 8 slides") and I'll fix it and rebuild automatically — no command needed.\n\n` +
       `<b>🔍 Search &amp; Ask:</b>\n` +
       `• <code>/ask &lt;question&gt;</code> — Search past deliverables &amp; results\n` +
       `• <code>/status</code> — Live system telemetry\n\n` +
