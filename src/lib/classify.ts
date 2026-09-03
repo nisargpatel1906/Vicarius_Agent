@@ -64,7 +64,7 @@ async function callLlmWithFallback(prompt: string, systemPrompt: string): Promis
     }
   }
 
-  // 2. Fallback 1: Groq (llama-3.3-70b-versatile)
+  // 2. Fallback 1: Groq (qwen/qwen3.8-27b)
   if (groqKey) {
     try {
       const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -74,7 +74,7 @@ async function callLlmWithFallback(prompt: string, systemPrompt: string): Promis
           Authorization: `Bearer ${groqKey}`,
         },
         body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
+          model: process.env.GROQ_MODEL || 'qwen/qwen3.8-27b',
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: prompt },

@@ -407,7 +407,7 @@ def call_llm_worker(messages: List[Dict], temperature: float = 0.2, max_tokens: 
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": "llama-3.3-70b-versatile",
+                    "model": os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b"),
                     "messages": messages,
                     "temperature": temperature,
                     "max_tokens": min(max_tokens, 4096),
