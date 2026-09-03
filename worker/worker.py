@@ -1625,6 +1625,50 @@ def handle_task_failure(task: Dict[str, Any], error_message: str) -> None:
     log_system_event("error", "worker", f"Task '{task['title']}' flagged: {error_message}")
 
 
+def recover_stalled_tasks() -> None:
+    """Finds tasks that are stuck in processing states and resets them to 'queued'."""
+    try:
+        sb = get_supabase()
+        now = datetime.datetime.now(datetime.timezone.utc)
+        
+        # Query for potentially stalled tasks
+        resp = sb.table("tasks").select("*").in_("status", ["claimed", "building", "verifying"]).execute()
+        stalled_tasks = resp.data
+        
+        if not stalled_tasks:
+            return
+            
+        for task in stalled_tasks:
+            updated_str = task.get("updated_at") or task.get("created_at")
+            if not updated_str: continue
+            
+            try:
+                updated_dt = datetime.datetime.fromisoformat(updated_str.replace("Z", "+00:00"))
+            except Exception:
+                continue
+                
+            weight = task.get("weight", "light")
+            timeout_mins = (
+                HEAVY_TIMEOUT_MINUTES if weight == "heavy" 
+                else (MEDIUM_TIMEOUT_MINUTES if weight == "medium" else LIGHT_TIMEOUT_MINUTES)
+            )
+            
+            # Grace period of 15 minutes over the standard timeout
+            elapsed_seconds = (now - updated_dt).total_seconds()
+            if elapsed_seconds > (timeout_mins + 15) * 60:
+                print(f"[Worker] Recovering stalled task '{task.get('title')}' (ID: {task['id']}) from status '{task['status']}'")
+                sb.table("tasks").update({
+                    "status": "queued",
+                    "worker_id": None,
+                    "updated_at": now.isoformat(),
+                    "result_summary": f"Recovered from stalled {task['status']} state."
+                }).eq("id", task["id"]).execute()
+                log_system_event("info", "worker", f"Recovered stalled task '{task.get('title')}' back to queued state.")
+                
+    except Exception as e:
+        print(f"[Worker-Recovery] Error checking for stalled tasks: {e}")
+
+
 def run_worker_cycle() -> bool:
     """Runs a single worker polling cycle."""
     set_below_normal_priority()
@@ -1699,11 +1743,15 @@ if __name__ == "__main__":
         last_heartbeat = time.time()
         HEARTBEAT_INTERVAL = 1800  # 30 minutes
 
+        # Initial recovery check on daemon startup
+        recover_stalled_tasks()
+
         while True:
             try:
                 # Phase 1A: Heartbeat every 30 min so system_events confirms daemon is alive
                 if time.time() - last_heartbeat > HEARTBEAT_INTERVAL:
                     log_system_event("info", "worker", f"Daemon heartbeat — alive. Worker ID: {WORKER_ID}")
+                    recover_stalled_tasks()  # Periodic recovery check
                     last_heartbeat = time.time()
                     idle_count = 0  # reset backoff on heartbeat
 
@@ -1725,4 +1773,5 @@ if __name__ == "__main__":
                 log_system_event("error", "worker", f"Daemon cycle error: {e}")
                 time.sleep(10)
     else:
+        recover_stalled_tasks()
         run_worker_cycle()

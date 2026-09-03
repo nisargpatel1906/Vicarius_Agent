@@ -7,6 +7,7 @@ import { runIngestion } from '@/lib/ingest';
 import { processNewTasks } from '@/lib/classify';
 import { logSystemEvent } from '@/lib/supabase';
 import { ApiResponse } from '@/lib/types';
+import { getGmailClient } from '@/lib/google-auth';
 
 export async function POST(req: NextRequest) {
   try {
@@ -29,7 +30,25 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Run ingestion
+    // Renew Gmail Watch Subscription (expires every 7 days)
+    try {
+      const gmail = getGmailClient();
+      await gmail.users.watch({
+        userId: 'me',
+        requestBody: {
+          labelIds: ['INBOX'],
+          labelFilterAction: 'include',
+          // Note: In production, the topic name should come from env var
+          topicName: process.env.GOOGLE_PUBSUB_TOPIC || 'projects/YOUR_PROJECT_ID/topics/vicarius-ingest'
+        }
+      });
+      await logSystemEvent('info', 'ingestion', 'Successfully renewed Gmail Pub/Sub watch subscription');
+    } catch (watchErr: any) {
+      console.error('Failed to renew Gmail watch:', watchErr);
+      await logSystemEvent('warning', 'ingestion', `Failed to renew Gmail watch: ${watchErr?.message || watchErr}`);
+    }
+
+    // Run ingestion (fallback batch sync)
     const ingestionResult = await runIngestion();
 
     // Automatically trigger classification on any newly ingested tasks

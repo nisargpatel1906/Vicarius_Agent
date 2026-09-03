@@ -316,70 +316,8 @@ async function findFuzzyDuplicate(
 
   // Upsert items into tasks table using (source, external_id) and fuzzy cross-source dedup
   for (const item of rawItems) {
-    try {
-      // 1. Exact dedup by (source, external_id)
-      const { data: existing } = await supabase
-        .from('tasks')
-        .select('id, status')
-        .eq('source', item.source)
-        .eq('external_id', item.external_id)
-        .maybeSingle();
-
-      if (existing) {
-        continue;
-      }
-
-      // 2. Cross-source fuzzy dedup (G2/A4: title similarity >= 0.70 + course + 24h due date)
-      const fuzzyMatch = await findFuzzyDuplicate(supabase, item);
-      if (fuzzyMatch) {
-        // Merge attachments into existing task
-        const newAttachments = (item.attachments || []).filter(
-          (na) => !fuzzyMatch.attachments.some((ea: any) => ea.name === na.name)
-        );
-
-        if (newAttachments.length > 0) {
-          const mergedRequirements = {
-            ...fuzzyMatch.extracted_requirements,
-            attachments: [...fuzzyMatch.attachments, ...newAttachments],
-          };
-          await supabase.from('tasks').update({
-            extracted_requirements: mergedRequirements,
-            updated_at: new Date().toISOString(),
-          }).eq('id', fuzzyMatch.id);
-        }
-
-        await logSystemEvent(
-          'info',
-          'ingestion',
-          `Cross-source duplicate suppressed: '${item.title}' (${item.source}) merged into task '${fuzzyMatch.title}' (${fuzzyMatch.id})`
-        );
-        continue;
-      }
-
-      // Insert new task in 'new' status
-      const { error: insertErr } = await supabase.from('tasks').insert({
-        source: item.source,
-        external_id: item.external_id,
-        course: item.course,
-        title: item.title,
-        task_type: 'document', // Default initially before classification
-        status: 'new',
-        due_date: item.due_date || null,
-        extracted_requirements: {
-          raw_body: item.raw_body,
-          attachments: item.attachments || [],
-          posted_date: item.posted_date,
-        },
-      });
-
-      if (insertErr) {
-        console.error(`Failed to insert task ${item.external_id}:`, insertErr.message);
-      } else {
-        result.upsertedCount++;
-      }
-    } catch (upsertErr: any) {
-      console.error(`Upsert error for item ${item.external_id}:`, upsertErr?.message || upsertErr);
-    }
+    const success = await processSingleItem(item, supabase);
+    if (success) result.upsertedCount++;
   }
 
   await logSystemEvent(
@@ -390,3 +328,78 @@ async function findFuzzyDuplicate(
 
   return result;
 }
+
+/**
+ * Processes a single ingested item (useful for webhook-triggered events)
+ */
+export async function processSingleItem(item: NormalizedRawItem, supabaseClient?: any): Promise<boolean> {
+  const supabase = supabaseClient || getSupabaseAdmin();
+  
+  try {
+    // 1. Exact dedup by (source, external_id)
+    const { data: existing } = await supabase
+      .from('tasks')
+      .select('id, status')
+      .eq('source', item.source)
+      .eq('external_id', item.external_id)
+      .maybeSingle();
+
+    if (existing) {
+      return false; // Already exists
+    }
+
+    // 2. Cross-source fuzzy dedup (G2/A4: title similarity >= 0.70 + course + 24h due date)
+    const fuzzyMatch = await findFuzzyDuplicate(supabase, item);
+    if (fuzzyMatch) {
+      // Merge attachments into existing task
+      const newAttachments = (item.attachments || []).filter(
+        (na) => !fuzzyMatch.attachments.some((ea: any) => ea.name === na.name)
+      );
+
+      if (newAttachments.length > 0) {
+        const mergedRequirements = {
+          ...fuzzyMatch.extracted_requirements,
+          attachments: [...fuzzyMatch.attachments, ...newAttachments],
+        };
+        await supabase.from('tasks').update({
+          extracted_requirements: mergedRequirements,
+          updated_at: new Date().toISOString(),
+        }).eq('id', fuzzyMatch.id);
+      }
+
+      await logSystemEvent(
+        'info',
+        'ingestion',
+        `Cross-source duplicate suppressed: '${item.title}' (${item.source}) merged into task '${fuzzyMatch.title}' (${fuzzyMatch.id})`
+      );
+      return false;
+    }
+
+    // Insert new task in 'new' status
+    const { error: insertErr } = await supabase.from('tasks').insert({
+      source: item.source,
+      external_id: item.external_id,
+      course: item.course,
+      title: item.title,
+      task_type: 'document', // Default initially before classification
+      status: 'new',
+      due_date: item.due_date || null,
+      extracted_requirements: {
+        raw_body: item.raw_body,
+        attachments: item.attachments || [],
+        posted_date: item.posted_date,
+      },
+    });
+
+    if (insertErr) {
+      console.error(`Failed to insert task ${item.external_id}:`, insertErr.message);
+      return false;
+    }
+    
+    return true; // Successfully inserted
+  } catch (upsertErr: any) {
+    console.error(`Upsert error for item ${item.external_id}:`, upsertErr?.message || upsertErr);
+    return false;
+  }
+}
+
