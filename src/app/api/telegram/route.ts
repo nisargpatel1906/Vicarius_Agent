@@ -1,17 +1,29 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { TelegramUpdate } from '@/lib/telegram';
+import { NextRequest, NextResponse, after } from 'next/server';
+import { TelegramUpdate, handleTelegramWebhook } from '@/lib/telegram';
 
 export async function POST(req: NextRequest) {
   try {
     const body: TelegramUpdate = await req.json();
-    
-    // TEMPORARILY DISABLED TO STOP INFINITE LOOP
-    console.log("Webhook received but disabled:", body?.update_id);
-    
+
+    if (!body || !body.update_id) {
+      return NextResponse.json({ success: true, handled: false });
+    }
+
+    // Process asynchronously after returning 200 OK to Telegram instantly.
+    // This prevents Telegram webhook timeouts (5s limit) and eliminates retry loops.
+    after(async () => {
+      try {
+        await handleTelegramWebhook(body);
+      } catch (err) {
+        console.error(`Background Telegram update processing error (Update ID ${body.update_id}):`, err);
+      }
+    });
+
+    // Return instant 200 OK to Telegram
     return NextResponse.json({ success: true, handled: true });
   } catch (err: any) {
-    console.error('Telegram webhook error:', err);
-    return NextResponse.json({ success: false, error: err?.message || 'Error processing update' });
+    console.error('Telegram webhook route error:', err);
+    return NextResponse.json({ success: true, error: err?.message });
   }
 }
 
