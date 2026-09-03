@@ -36,7 +36,7 @@ async function callLlmWithFallback(prompt: string, systemPrompt: string): Promis
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${openRouterKey}`,
-          'HTTP-Referer': 'https://vicarius-agent.local',
+          'HTTP-Referer': process.env.HTTP_REFERER || 'https://vicarius-agent.local',
           'X-Title': 'Vicarius Agent',
         },
         body: JSON.stringify({

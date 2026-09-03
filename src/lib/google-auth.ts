@@ -18,7 +18,7 @@ export function getGoogleOAuth2Client(): OAuth2Client {
   const oauth2Client = new google.auth.OAuth2(
     clientId,
     clientSecret,
-    'https://developers.google.com/oauthplayground' // standard redirect URI or custom
+    process.env.GOOGLE_OAUTH_REDIRECT_URI || 'https://developers.google.com/oauthplayground' // standard redirect URI or custom
   );
 
   oauth2Client.setCredentials({

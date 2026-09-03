@@ -40,24 +40,27 @@ export async function GET() {
     const totalTasks = allTasks?.length || 0;
     const completedTasks = allTasks?.filter((t) => t.status === 'done').length || 0;
 
+    const groqDailyLimit = parseInt(process.env.GROQ_DAILY_LIMIT || '14400', 10);
+    const geminiDailyLimit = parseInt(process.env.GEMINI_DAILY_LIMIT || '1500', 10);
+
     const usage = {
       groq: {
         estimatedCalls: totalTasks * 2, // classification + answer parsing
-        dailyLimit: 14400, // Groq free tier standard
-        usagePercent: Math.min(100, Math.round(((totalTasks * 2) / 14400) * 100)),
+        dailyLimit: groqDailyLimit,
+        usagePercent: Math.min(100, Math.round(((totalTasks * 2) / groqDailyLimit) * 100)),
       },
       gemini: {
         estimatedCalls: totalTasks,
-        dailyLimit: 1500, // Gemini Flash free tier RPM/RPD
-        usagePercent: Math.min(100, Math.round((totalTasks / 1500) * 100)),
+        dailyLimit: geminiDailyLimit,
+        usagePercent: Math.min(100, Math.round((totalTasks / geminiDailyLimit) * 100)),
       },
       openrouter: {
         estimatedCalls: 0,
-        status: 'Active Fallback',
+        status: process.env.OPENROUTER_STATUS || 'Active Fallback',
       },
       antigravity: {
         totalRuns: completedTasks,
-        status: 'Local Engine Active',
+        status: process.env.ANTIGRAVITY_STATUS || 'Local Engine Active',
       },
     };
 

@@ -2,17 +2,18 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { logSystemEvent } from './supabase';
 
-const AETHOS_DEFAULT_URL = 'https://placeholder_ref.supabase.co';
-const AETHOS_DEFAULT_KEY = 'REDACTED';
-const AETHOS_DEFAULT_USER_ID = '00000000-0000-0000-0000-000000000000';
-
 let _aethosClient: SupabaseClient | null = null;
 
 export function getAethosClient(): SupabaseClient {
   if (!_aethosClient) {
-    const url = process.env.AETHOS_SUPABASE_URL || AETHOS_DEFAULT_URL;
-    const key = process.env.AETHOS_SERVICE_ROLE_KEY || AETHOS_DEFAULT_KEY;
-    _aethosClient = createClient(url, key, {
+    const url = process.env.AETHOS_SUPABASE_URL || '';
+    const key = process.env.AETHOS_SERVICE_ROLE_KEY || '';
+    
+    if (!url || !key) {
+      console.warn('Missing AETHOS_SUPABASE_URL or AETHOS_SERVICE_ROLE_KEY. Aethos memory will be disabled.');
+    }
+    
+    _aethosClient = createClient(url || 'https://placeholder.supabase.co', key || 'placeholder', {
       auth: { persistSession: false, autoRefreshToken: false },
     });
   }
@@ -20,7 +21,7 @@ export function getAethosClient(): SupabaseClient {
 }
 
 export function getAethosUserId(): string {
-  return process.env.AETHOS_USER_ID || AETHOS_DEFAULT_USER_ID;
+  return process.env.AETHOS_USER_ID || '';
 }
 
 /**
