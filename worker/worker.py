@@ -30,6 +30,12 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_WORKER_KEY") or os.getenv("SUPABASE_SERVICE_KEY")
 PINNED_AGY_VERSION = os.getenv("ANTIGRAVITY_PINNED_VERSION", "1.1.12")
 JOB_TIMEOUT_MINUTES = int(os.getenv("JOB_TIMEOUT_MINUTES", "45"))
+LIGHT_TIMEOUT_MINUTES = int(os.getenv("LIGHT_TIMEOUT_MINUTES", "15"))
+MEDIUM_TIMEOUT_MINUTES = int(os.getenv("MEDIUM_TIMEOUT_MINUTES", "45"))
+HEAVY_TIMEOUT_MINUTES = int(os.getenv("HEAVY_TIMEOUT_MINUTES", "240"))
+HEAVY_JOB_PROGRESS_INTERVAL_MINUTES = int(os.getenv("HEAVY_JOB_PROGRESS_INTERVAL_MINUTES", "30"))
+HEAVY_JOB_PREFERRED_START = os.getenv("HEAVY_JOB_PREFERRED_START", "23:00")
+HEAVY_JOB_PREFERRED_END = os.getenv("HEAVY_JOB_PREFERRED_END", "07:00")
 QUESTION_WAIT_TIMEOUT_MINUTES = int(os.getenv("QUESTION_WAIT_TIMEOUT_MINUTES", "20"))
 TIMEZONE_STR = os.getenv("TIMEZONE", "Asia/Kolkata")
 DRIVE_OUTPUT_FOLDER_ID = os.getenv("DRIVE_OUTPUT_FOLDER_ID")
@@ -41,6 +47,68 @@ OPENROUTER_AI_MODEL = os.getenv("OPENROUTER_MODEL", "minimax/minimax-m3:free")
 TARGET_TZ = pytz.timezone(TIMEZONE_STR)
 WORKER_ID = f"worker-local-{os.environ.get('COMPUTERNAME', 'pc')}"
 BASE_WORK_DIR = Path(__file__).resolve().parent.parent / "work_dirs"
+
+# Windows Sleep Prevention Constants (PRD Section 6.3.1 / micro_upgradeV3)
+ES_CONTINUOUS = 0x80000000
+ES_SYSTEM_REQUIRED = 0x00000001
+ES_AWAYMODE_REQUIRED = 0x00000040
+
+def set_sleep_prevention(enable: bool = True) -> None:
+    """Prevents Windows from entering sleep or standby during active heavy builds (PRD Section 6.3.1)."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            if enable:
+                flags = ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED
+                ctypes.windll.kernel32.SetThreadExecutionState(flags)
+                print("[Worker] Windows sleep prevention enabled.")
+            else:
+                ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS)
+                print("[Worker] Windows sleep prevention disabled.")
+        except Exception as e:
+            print(f"[Worker] Could not set Windows execution state: {e}")
+
+def check_gpu_availability() -> Tuple[bool, str]:
+    """Checks GPU hardware availability for heavy ML workloads (PRD Section 6.3.1)."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            device_name = torch.cuda.get_device_name(0)
+            return True, f"NVIDIA GPU detected: {device_name}"
+    except ImportError:
+        pass
+
+    try:
+        res = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            gpu_name = res.stdout.strip().splitlines()[0]
+            return True, f"NVIDIA GPU detected: {gpu_name}"
+    except Exception:
+        pass
+
+    return False, "No dedicated GPU detected (CPU-only execution)."
+
+def get_user_profile() -> Dict[str, Any]:
+    """Pulls student profile from Supabase profile table (PRD Section 5 & 6.2)."""
+    try:
+        sb = get_supabase()
+        res = sb.table("profile").select("*").limit(1).execute()
+        if res.data and len(res.data) > 0:
+            return res.data[0]
+    except Exception as e:
+        print(f"[Worker] Could not fetch profile from Supabase: {e}")
+    return {
+        "full_name": "Nisarg Patel",
+        "university": "Academic Institution",
+        "program": "B.Tech, Computer Engineering (AIML)",
+        "current_semester": "Semester 4",
+        "default_citation_style": "IEEE",
+    }
 
 # Cognitive Heritage Design Tokens (docx/DESIGN.md)
 CH_SURFACE = (255, 248, 244)       # #fff8f4
@@ -174,15 +242,16 @@ def check_antigravity_cli_version() -> bool:
         return False
 
 
-def check_system_load_and_concurrency(due_date_str: Optional[str]) -> bool:
+def check_system_load_and_concurrency(due_date_str: Optional[str], weight: str = "light") -> bool:
     """
-    Checks system load and foreground concurrency (PRD Section 6.3).
+    Checks system load, foreground concurrency, and preferred scheduling window (PRD Section 6.3 & 6.3.1).
     Returns True if worker can proceed, False if it should defer.
     """
     cpu_percent = psutil.cpu_percent(interval=1.0)
     
     # Check if deadline is close (< 2 hours in IST)
     is_deadline_close = False
+    hours_left = 999.0
     if due_date_str:
         try:
             due_dt = datetime.datetime.fromisoformat(due_date_str.replace("Z", "+00:00")).astimezone(TARGET_TZ)
@@ -192,6 +261,25 @@ def check_system_load_and_concurrency(due_date_str: Optional[str]) -> bool:
                 is_deadline_close = True
         except Exception:
             pass
+
+    # Preferred Scheduling Window check for Heavy-Lift Tasks (PRD Section 6.3.1)
+    if weight == "heavy" and hours_left > 24.0:
+        now_ist = datetime.datetime.now(TARGET_TZ).time()
+        start_h, start_m = map(int, HEAVY_JOB_PREFERRED_START.split(":"))
+        end_h, end_m = map(int, HEAVY_JOB_PREFERRED_END.split(":"))
+        start_time = datetime.time(start_h, start_m)
+        end_time = datetime.time(end_h, end_m)
+
+        # e.g. 23:00 to 07:00 crosses midnight
+        in_window = False
+        if start_time > end_time:
+            in_window = now_ist >= start_time or now_ist <= end_time
+        else:
+            in_window = start_time <= now_ist <= end_time
+
+        if not in_window:
+            print(f"[Worker] Heavy-lift task prefers night window ({HEAVY_JOB_PREFERRED_START}-{HEAVY_JOB_PREFERRED_END}). Slack remaining: {hours_left:.1f}h. Deferring.")
+            return False
 
     # Check foreground agy sessions (excluding this worker)
     active_agy_sessions = 0
@@ -326,6 +414,10 @@ def generate_content_with_ai(task: Dict[str, Any]) -> Dict[str, Any]:
     requirements = task.get("extracted_requirements") or {}
     req_items = requirements.get("items", []) if isinstance(requirements, dict) else []
     slide_count = (requirements.get("slide_count") if isinstance(requirements, dict) else None) or 10
+
+    if task_type == "presentation" and isinstance(requirements, dict) and requirements.get("slides"):
+        print(f"[AI-Content] Using {len(requirements['slides'])} structured slides from task requirements.")
+        return {"slides": requirements["slides"]}
 
     req_text = "\n".join(f"- {r}" for r in req_items) if req_items else build_spec[:500]
 
@@ -725,13 +817,22 @@ def execute_build(task: Dict[str, Any], retry_count: int = 0) -> Tuple[bool, str
     """
     Phase 1C: Generates academic deliverables using AI content generation.
     Falls back to Antigravity CLI (agy) for complex code projects.
+    Handles Heavy-Lift Tasks (PRD Section 6.3.1) with tiered timeouts, sleep prevention,
+    hardware awareness, and progress reporting.
     Returns (success, stdout_output, list_of_produced_files).
     """
     import html as html_module
     task_id = task["id"]
     task_type = task.get("task_type", "document")
+    weight = task.get("weight", "light")
     task_work_dir = BASE_WORK_DIR / task_id
     task_work_dir.mkdir(parents=True, exist_ok=True)
+
+    # Tiered Timeout Selection (PRD Section 6.3.1 & 9)
+    timeout_minutes = (
+        HEAVY_TIMEOUT_MINUTES if weight == "heavy"
+        else (MEDIUM_TIMEOUT_MINUTES if weight == "medium" else LIGHT_TIMEOUT_MINUTES)
+    )
 
     build_spec = task.get("build_spec") or f"Complete academic task: {task.get('title')}"
     if retry_count > 0:
@@ -747,15 +848,44 @@ def execute_build(task: Dict[str, Any], retry_count: int = 0) -> Tuple[bool, str
     start_msg = (
         f"🚀 <b>Task Started:</b> {html_module.escape(task['title'])}\n"
         f"<b>Course:</b> {html_module.escape(task.get('course') or 'General')}\n"
-        f"<b>Type:</b> <code>{task_type}</code>\n\n"
+        f"<b>Type:</b> <code>{task_type}</code> ({weight} lift)\n"
+        f"<b>Timeout:</b> {timeout_minutes}m\n\n"
         f"<i>AI is generating your academic deliverables...</i>"
     )
     send_telegram_notification(start_msg)
 
-    print(f"[Worker] AI build starting for task '{task['title']}' (ID: {task_id})")
+    # Sleep Prevention during Heavy Lift (PRD Section 6.3.1)
+    if weight == "heavy":
+        set_sleep_prevention(True)
+
+    def update_heavy_progress(note: str):
+        if weight != "heavy":
+            return
+        try:
+            now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            sb.table("tasks").update({
+                "progress_note": note,
+                "last_progress_at": now_iso,
+                "updated_at": now_iso,
+            }).eq("id", task_id).execute()
+            send_telegram_notification(f"⏳ <b>Heavy Job Progress:</b>\n{html_module.escape(note)}")
+        except Exception as pe:
+            print(f"[Worker] Could not report heavy progress: {pe}")
+
+    print(f"[Worker] AI build starting for task '{task['title']}' (ID: {task_id}, Weight: {weight}, Timeout: {timeout_minutes}m)")
     start_time = time.time()
     produced_files: List[Path] = []
-    stdout_log = f"Task: {task['title']}\nType: {task_type}\n"
+    stdout_log = f"Task: {task['title']}\nType: {task_type}\nWeight: {weight}\n"
+
+    # Hardware & GPU Awareness (PRD Section 6.3.1)
+    if task_type == "ml_training":
+        has_gpu, gpu_info = check_gpu_availability()
+        print(f"[Worker] GPU check: {gpu_info}")
+        stdout_log += f"Hardware: {gpu_info}\n"
+        if not has_gpu:
+            stdout_log += "Auto-scoping: CPU execution active. Hyperparameters calibrated for CPU efficiency.\n"
+
+    update_heavy_progress(f"Commencing generation of {task_type} deliverables using {OPENROUTER_AI_MODEL}...")
 
     try:
         # ── Phase 1C: Generate content via AI ──
@@ -797,6 +927,8 @@ def execute_build(task: Dict[str, Any], retry_count: int = 0) -> Tuple[bool, str
         stdout_log += f"Build completed in {duration:.1f}s.\n"
         print(f"[Worker] AI build finished in {duration:.1f}s, produced {len(produced_files)} files.")
 
+        update_heavy_progress(f"Build complete ({len(produced_files)} files generated). Commencing verification check...")
+
         # Also scan work_dir for any extra files produced (e.g. from agy side effects)
         all_work_files = [
             f for f in task_work_dir.glob("**/*")
@@ -811,6 +943,9 @@ def execute_build(task: Dict[str, Any], retry_count: int = 0) -> Tuple[bool, str
         err_msg = str(e)
         print(f"[Worker] Exception during AI build: {err_msg}")
         return False, f"Build exception: {err_msg}", []
+    finally:
+        if weight == "heavy":
+            set_sleep_prevention(False)
 
 
 def package_code_project(task_work_dir: Path) -> Optional[Path]:
@@ -996,6 +1131,17 @@ def perform_verification_check(task: Dict[str, Any], stdout_output: str, produce
     for pattern in ai_filler_patterns:
         if re.search(pattern, stdout_output, re.IGNORECASE):
             return False, f"Verification failed: Output violates academic tone standards (detected generic AI filler phrase matching '{pattern}').", verification_details
+
+    # Also inspect text/markdown file contents on disk
+    for pf in produced_files:
+        if pf.suffix.lower() in {".txt", ".md", ".py"}:
+            try:
+                fc = pf.read_text(encoding="utf-8", errors="ignore")
+                for pattern in ai_filler_patterns:
+                    if re.search(pattern, fc, re.IGNORECASE):
+                        return False, f"Verification failed: Deliverable '{pf.name}' violates academic tone standards (detected generic AI filler phrase matching '{pattern}').", verification_details
+            except Exception:
+                pass
 
     # 6. Format result summary
     summary_parts = [
@@ -1265,8 +1411,8 @@ def run_worker_cycle() -> bool:
 
     print(f"\n[Worker] Claimed task: {task['title']} (Due: {task.get('due_date')})")
 
-    # Step 3: Check system load & concurrency
-    if not check_system_load_and_concurrency(task.get("due_date")):
+    # Step 3: Check system load & concurrency (and preferred window for heavy tasks)
+    if not check_system_load_and_concurrency(task.get("due_date"), weight=task.get("weight", "light")):
         # Return task back to queued
         sb = get_supabase()
         sb.table("tasks").update({

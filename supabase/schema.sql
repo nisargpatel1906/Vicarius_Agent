@@ -10,6 +10,9 @@ create table if not exists tasks (
   task_type text not null check (task_type in (
     'document', 'presentation', 'handwritten', 'code_project', 'research', 'ml_training'
   )),
+  weight text not null default 'light' check (weight in ('light', 'medium', 'heavy')),
+  progress_note text,
+  last_progress_at timestamptz,
   extracted_requirements jsonb,
   success_criteria text,
   build_spec text,
@@ -97,4 +100,22 @@ create index if not exists idx_chat_messages_chat_id on chat_messages (chat_id, 
 alter table chat_messages enable row level security;
 
 create policy "Allow all access to chat_messages" on chat_messages
+  for all using (true) with check (true);
+
+-- User Profile (PRD Section 5 / micro_upgradeV3)
+create table if not exists profile (
+  id uuid primary key default gen_random_uuid(),
+  full_name text not null,
+  university text not null,
+  program text not null,
+  current_semester text not null,
+  default_citation_style text default 'APA',
+  writing_voice_sample text,
+  academic_level_note text,
+  updated_at timestamptz not null default now()
+);
+
+alter table profile enable row level security;
+
+create policy "Allow all access to profile" on profile
   for all using (true) with check (true);

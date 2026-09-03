@@ -37,6 +37,7 @@
   "exclude": [
     "node_modules",
     "worker",
-    "work_dirs"
+    "work_dirs",
+    "scripts"
   ]
 }

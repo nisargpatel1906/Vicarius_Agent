@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useMemo } from 'react';
-import { Task, Question, Deliverable, SystemEvent } from '@/lib/types';
+import { Task, Question, Deliverable, SystemEvent, UserProfile } from '@/lib/types';
 import { VicariusLogo } from '@/components/VicariusLogo';
 import {
   ClockIcon,
@@ -39,6 +39,10 @@ interface HealthData {
 export default function DashboardPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [health, setHealth] = useState<HealthData | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [showProfileModal, setShowProfileModal] = useState<boolean>(false);
+  const [profileSaving, setProfileSaving] = useState<boolean>(false);
+  const [profileSavedMsg, setProfileSavedMsg] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -75,13 +79,15 @@ export default function DashboardPage() {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [tasksRes, healthRes] = await Promise.all([
+      const [tasksRes, healthRes, profileRes] = await Promise.all([
         fetch(`/api/tasks?archived=${showArchived}`),
         fetch(`/api/health`),
+        fetch(`/api/profile`),
       ]);
 
       const tasksData = await tasksRes.json();
       const healthData = await healthRes.json();
+      const profileData = await profileRes.json();
 
       if (tasksData.success) {
         setTasks(tasksData.data || []);
@@ -89,10 +95,39 @@ export default function DashboardPage() {
       if (healthData.success) {
         setHealth(healthData.data);
       }
+      if (profileData.success && profileData.data) {
+        setProfile(profileData.data);
+      }
     } catch (err) {
       console.error('Error fetching dashboard data:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!profile) return;
+    try {
+      setProfileSaving(true);
+      setProfileSavedMsg('');
+      const res = await fetch('/api/profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(profile),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setProfile(data.data);
+        setProfileSavedMsg('Profile successfully saved live to Supabase! All future tasks read this immediately.');
+        setTimeout(() => setProfileSavedMsg(''), 5000);
+      } else {
+        alert(data.error?.message || 'Failed to update profile');
+      }
+    } catch (err: any) {
+      alert('Error updating profile: ' + (err?.message || err));
+    } finally {
+      setProfileSaving(false);
     }
   };
 
@@ -405,6 +440,16 @@ export default function DashboardPage() {
           >
             <RefreshIcon size={14} />
             <span>Refresh Stream</span>
+          </button>
+
+          <button
+            onClick={() => setShowProfileModal(true)}
+            className="btn-heritage-secondary"
+            title="View and edit student profile (PRD Section 5 & 6.6)"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            <VicariusLogo size={14} variant="mark" fill="var(--primary)" />
+            <span>Student Profile</span>
           </button>
 
           <button
@@ -853,15 +898,49 @@ export default function DashboardPage() {
                           </span>
                         </td>
                         <td>
-                          <span
-                            style={{
-                              fontSize: '0.78rem',
-                              color: 'var(--secondary)',
-                              textTransform: 'capitalize',
-                            }}
-                          >
-                            {t.task_type?.replace('_', ' ')}
-                          </span>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            <span
+                              style={{
+                                fontSize: '0.78rem',
+                                color: 'var(--secondary)',
+                                textTransform: 'capitalize',
+                                fontWeight: 600,
+                              }}
+                            >
+                              {t.task_type?.replace('_', ' ')}
+                            </span>
+                            {t.weight && (
+                              <span
+                                style={{
+                                  fontSize: '0.65rem',
+                                  fontWeight: 700,
+                                  letterSpacing: '0.04em',
+                                  textTransform: 'uppercase',
+                                  padding: '1px 6px',
+                                  borderRadius: 4,
+                                  width: 'fit-content',
+                                  background:
+                                    t.weight === 'heavy'
+                                      ? 'rgba(186, 26, 26, 0.12)'
+                                      : t.weight === 'medium'
+                                      ? 'rgba(139, 111, 62, 0.15)'
+                                      : 'rgba(112, 87, 40, 0.08)',
+                                  color:
+                                    t.weight === 'heavy'
+                                      ? 'var(--error)'
+                                      : t.weight === 'medium'
+                                      ? 'var(--primary-container)'
+                                      : 'var(--primary)',
+                                  border:
+                                    t.weight === 'heavy'
+                                      ? '1px solid rgba(186, 26, 26, 0.3)'
+                                      : '1px solid var(--outline-variant)',
+                                }}
+                              >
+                                {t.weight}
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td>
                           <div>
@@ -1127,6 +1206,32 @@ export default function DashboardPage() {
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                   {renderStatusBadge(selectedTask.status)}
+                  {selectedTask.weight && (
+                    <span
+                      style={{
+                        fontSize: '0.72rem',
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        padding: '2px 8px',
+                        borderRadius: 4,
+                        background:
+                          selectedTask.weight === 'heavy'
+                            ? 'rgba(186, 26, 26, 0.12)'
+                            : selectedTask.weight === 'medium'
+                            ? 'rgba(139, 111, 62, 0.15)'
+                            : 'rgba(112, 87, 40, 0.08)',
+                        color:
+                          selectedTask.weight === 'heavy'
+                            ? 'var(--error)'
+                            : selectedTask.weight === 'medium'
+                            ? 'var(--primary-container)'
+                            : 'var(--primary)',
+                        border: '1px solid var(--outline-variant)',
+                      }}
+                    >
+                      {selectedTask.weight} lift
+                    </span>
+                  )}
                   <span
                     style={{
                       fontSize: '0.78rem',
@@ -1166,7 +1271,7 @@ export default function DashboardPage() {
               {selectedTask.title}
             </h2>
 
-            <p style={{ color: 'var(--on-surface-variant)', fontSize: '0.88rem', marginBottom: 24 }}>
+            <p style={{ color: 'var(--on-surface-variant)', fontSize: '0.88rem', marginBottom: selectedTask.progress_note ? 14 : 24 }}>
               <strong>Due Date:</strong>{' '}
               {selectedTask.due_date
                 ? new Date(selectedTask.due_date).toLocaleString('en-IN', {
@@ -1176,6 +1281,30 @@ export default function DashboardPage() {
                   })
                 : 'No explicit deadline specified'}
             </p>
+
+            {selectedTask.progress_note && (
+              <div
+                style={{
+                  background: 'rgba(139, 111, 62, 0.08)',
+                  border: '1px solid var(--outline-variant)',
+                  borderRadius: 6,
+                  padding: '10px 14px',
+                  marginBottom: 18,
+                  fontSize: '0.85rem',
+                  color: 'var(--on-surface)',
+                }}
+              >
+                <div style={{ fontWeight: 600, color: 'var(--primary)', marginBottom: 2 }}>
+                  ⚡ Heavy Lift Progress Update:
+                </div>
+                <div>{selectedTask.progress_note}</div>
+                {selectedTask.last_progress_at && (
+                  <div style={{ fontSize: '0.72rem', color: 'var(--outline)', marginTop: 4 }}>
+                    Reported at: {new Date(selectedTask.last_progress_at).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })} IST
+                  </div>
+                )}
+              </div>
+            )}
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 22, position: 'relative', zIndex: 1 }}>
               {/* Extracted Requirements Checklist */}
@@ -1491,6 +1620,214 @@ export default function DashboardPage() {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Student Profile Settings Modal (PRD Section 5 & 6.6) */}
+      {showProfileModal && profile && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(35, 26, 15, 0.45)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 100,
+            padding: 20,
+          }}
+          onClick={() => setShowProfileModal(false)}
+        >
+          <div
+            className="heritage-card"
+            style={{
+              maxWidth: 720,
+              width: '100%',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+              padding: '32px 36px',
+              position: 'relative',
+              background: 'var(--surface)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Close Button */}
+            <button
+              onClick={() => setShowProfileModal(false)}
+              style={{
+                position: 'absolute',
+                top: 24,
+                right: 24,
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                color: 'var(--outline)',
+                padding: 4,
+              }}
+            >
+              <CloseIcon size={20} />
+            </button>
+
+            {/* Modal Header */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 8 }}>
+              <VicariusLogo size={42} variant="crest" />
+              <div>
+                <h2 className="heading-h2" style={{ fontSize: '1.45rem', color: 'var(--on-surface)', margin: 0 }}>
+                  Student Profile & Tone Register
+                </h2>
+                <div style={{ fontSize: '0.82rem', color: 'var(--on-surface-variant)', marginTop: 2 }}>
+                  Stored in Supabase <code>profile</code> table. Every build prompt reads live from this row.
+                </div>
+              </div>
+            </div>
+
+            {profileSavedMsg && (
+              <div
+                style={{
+                  background: '#e2f0d9',
+                  border: '1px solid #c3e6cb',
+                  color: '#276a3c',
+                  padding: '10px 14px',
+                  borderRadius: 6,
+                  fontSize: '0.86rem',
+                  fontWeight: 600,
+                  marginTop: 14,
+                  marginBottom: 14,
+                }}
+              >
+                ✓ {profileSavedMsg}
+              </div>
+            )}
+
+            <form onSubmit={handleSaveProfile} style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 18 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--on-surface)', marginBottom: 6 }}>
+                    Full Name
+                  </label>
+                  <input
+                    type="text"
+                    value={profile.full_name || ''}
+                    onChange={(e) => setProfile({ ...profile, full_name: e.target.value })}
+                    className="stationery-input"
+                    style={{ width: '100%' }}
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--on-surface)', marginBottom: 6 }}>
+                    University / Institution
+                  </label>
+                  <input
+                    type="text"
+                    value={profile.university || ''}
+                    onChange={(e) => setProfile({ ...profile, university: e.target.value })}
+                    className="stationery-input"
+                    style={{ width: '100%' }}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 16 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--on-surface)', marginBottom: 6 }}>
+                    Degree & Program
+                  </label>
+                  <input
+                    type="text"
+                    value={profile.program || ''}
+                    onChange={(e) => setProfile({ ...profile, program: e.target.value })}
+                    className="stationery-input"
+                    style={{ width: '100%' }}
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--on-surface)', marginBottom: 6 }}>
+                    Current Semester
+                  </label>
+                  <input
+                    type="text"
+                    value={profile.current_semester || ''}
+                    onChange={(e) => setProfile({ ...profile, current_semester: e.target.value })}
+                    className="stationery-input"
+                    style={{ width: '100%' }}
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--on-surface)', marginBottom: 6 }}>
+                    Citation Style
+                  </label>
+                  <select
+                    value={profile.default_citation_style || 'IEEE'}
+                    onChange={(e) => setProfile({ ...profile, default_citation_style: e.target.value })}
+                    className="stationery-select"
+                    style={{ width: '100%' }}
+                  >
+                    <option value="IEEE">IEEE</option>
+                    <option value="APA">APA</option>
+                    <option value="MLA">MLA</option>
+                    <option value="Chicago">Chicago</option>
+                    <option value="Harvard">Harvard</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--on-surface)', marginBottom: 6 }}>
+                  Academic Level & Register Note
+                </label>
+                <textarea
+                  rows={2}
+                  value={profile.academic_level_note || ''}
+                  onChange={(e) => setProfile({ ...profile, academic_level_note: e.target.value })}
+                  className="stationery-input"
+                  style={{ width: '100%', resize: 'vertical' }}
+                  placeholder="e.g. Comfortable with rigorous technical depth, distributed systems, machine learning architectures..."
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--on-surface)', marginBottom: 6 }}>
+                  Writing Voice Sample
+                  <span style={{ fontWeight: 400, color: 'var(--outline)', marginLeft: 6 }}>
+                    (Used as tone/style register reference, never copied verbatim)
+                  </span>
+                </label>
+                <textarea
+                  rows={4}
+                  value={profile.writing_voice_sample || ''}
+                  onChange={(e) => setProfile({ ...profile, writing_voice_sample: e.target.value })}
+                  className="stationery-input"
+                  style={{ width: '100%', resize: 'vertical', fontFamily: 'var(--font-serif)', fontSize: '0.9rem' }}
+                  placeholder="A paragraph of your own past writing to anchor sentence rhythm and technical register..."
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 12 }}>
+                <button
+                  type="button"
+                  onClick={() => setShowProfileModal(false)}
+                  className="btn-heritage-secondary"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={profileSaving}
+                  className="btn-heritage-primary"
+                >
+                  {profileSaving ? 'Saving to Supabase...' : 'Save Profile Live'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

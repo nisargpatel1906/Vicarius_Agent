@@ -3,7 +3,7 @@
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { getSupabaseAdmin, logSystemEvent } from './supabase';
-import { Task, TaskType, ExtractedRequirements } from './types';
+import { Task, TaskType, ExtractedRequirements, TaskWeight, UserProfile } from './types';
 import { sendTelegramAlert } from './telegram';
 
 export interface ClassificationOutput {
@@ -15,6 +15,7 @@ export interface ClassificationOutput {
   success_criteria: string | null;
   output_format: string;
   build_spec: string;
+  weight: TaskWeight;
 }
 
 /**
@@ -106,7 +107,33 @@ async function queryAethosCourseNotes(courseName: string): Promise<string[]> {
 }
 
 /**
- * Generates the standardized Build Spec template (PRD Section 6.3)
+ * Fetch student profile row from Supabase (PRD Section 5 & 6.2)
+ */
+export async function getUserProfile(): Promise<UserProfile> {
+  try {
+    const supabase = getSupabaseAdmin();
+    const { data, error } = await supabase.from('profile').select('*').limit(1).single();
+    if (!error && data) {
+      return data as UserProfile;
+    }
+  } catch (err) {
+    console.warn('Could not fetch user profile from Supabase:', err);
+  }
+  return {
+    id: 'default',
+    full_name: 'Nisarg Patel',
+    university: 'Academic Institution',
+    program: 'B.Tech, Computer Engineering (AIML)',
+    current_semester: 'Semester 4',
+    default_citation_style: 'IEEE',
+    academic_level_note: 'Comfortable with rigorous technical depth, distributed systems, machine learning architectures, and academic prose; avoids superficial generalizations.',
+    writing_voice_sample: 'In distributed systems, ensuring high availability often necessitates trade-offs against immediate consistency, as characterized by the CAP theorem. Our evaluation demonstrates that leader-based consensus mechanisms such as Raft offer superior operational simplicity compared to traditional Paxos deployments without sacrificing fault tolerance.',
+    updated_at: new Date().toISOString(),
+  };
+}
+
+/**
+ * Generates the standardized Build Spec template (PRD Section 6.3 & PROMPT_AND_OUTPUT_STANDARDS.md)
  */
 export function generateBuildSpec(
   title: string,
@@ -114,7 +141,8 @@ export function generateBuildSpec(
   taskType: TaskType,
   requirementsList: string[],
   successCriteria: string | null,
-  outputFormat: string
+  outputFormat: string,
+  profile?: UserProfile
 ): string {
   const reqsFormatted = requirementsList.map((r) => `- ${r}`).join('\n');
   const criteriaFormatted = successCriteria ? successCriteria : 'None explicitly specified';
@@ -126,12 +154,18 @@ export function generateBuildSpec(
   • Typography: Headings ('Noto Serif' 600/700), Body & Controls ('Manrope' 400/600).
   • Visual Standards: Clean card-based structure, smooth micro-interactions (0.2s cubic-bezier), modern border-radius (8px buttons, 12px cards, 9999px badges), and high legibility.` : '';
 
+  const studentContext = profile ? `\n\nStudent Profile:
+- Student: ${profile.full_name} (${profile.program} - ${profile.current_semester} at ${profile.university})
+- Academic Register: ${profile.academic_level_note || 'Formal undergraduate technical standard'}
+- Default Citation Style: ${profile.default_citation_style || 'IEEE'}
+- Writing Voice Guidance: Let the student's voice sample inform natural phrasing and cadence without copying verbatim: "${profile.writing_voice_sample || ''}"` : '';
+
   return `Task: ${title}
 Source: ${course || 'Academic Course'} — ${taskType}
 Requirements:
 ${reqsFormatted}
 Success criteria: ${criteriaFormatted}
-Output format: ${outputFormat}
+Output format: ${outputFormat}${studentContext}
 ${designDirective}
 
 Instructions:
@@ -160,7 +194,11 @@ Tone and format requirements:
   numbered or bulleted points where the content is genuinely a list, full
   paragraphs otherwise. Don't produce an undifferentiated wall of text.
 - Match terminology and conventions to the specific course/subject where
-  that context is available.`;
+  that context is available.
+- Match the academic level and general writing register described in the
+  user's profile — not more polished or more advanced than that level, and
+  not generic. If a writing voice sample is available, let it inform
+  natural phrasing and sentence rhythm without copying it directly.`;
 }
 
 /**
@@ -308,13 +346,29 @@ ${courseNotes.join('\n')}
     'document.docx'
   );
 
+  // 10. Weight Classification (PRD Section 6.3.1 / micro_upgradeV3)
+  let weight: TaskWeight = 'light';
+  if (taskType === 'ml_training') {
+    weight = 'heavy';
+  } else if (taskType === 'code_project') {
+    const isHeavyCode = /full-stack|microservice|distributed|pipeline|large dataset|multi-container|kubernetes/i.test(rawBody) || /full-stack|microservice|distributed/i.test(task.title);
+    weight = isHeavyCode ? 'heavy' : 'medium';
+  } else if (taskType === 'research') {
+    weight = 'medium';
+  } else {
+    weight = 'light';
+  }
+
+  const profile = await getUserProfile();
+
   const buildSpec = generateBuildSpec(
     task.title,
     parsed.course || task.course || 'Course',
     taskType,
     requirementsList,
     parsed.success_criteria || task.success_criteria || null,
-    outputFormat
+    outputFormat,
+    profile
   );
 
   return {
@@ -322,6 +376,7 @@ ${courseNotes.join('\n')}
     course: parsed.course || task.course || 'Course',
     due_date: parsed.due_date || task.due_date || null,
     confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.9,
+    weight,
     extracted_requirements: {
       summary: task.title,
       items: requirementsList,
@@ -370,6 +425,7 @@ export async function processNewTasks(): Promise<{ processed: number; flagged: n
         await supabase.from('tasks').update({
           status: 'flagged',
           task_type: classification.task_type,
+          weight: classification.weight,
           course: classification.course,
           due_date: classification.due_date,
           extracted_requirements: classification.extracted_requirements,
@@ -394,6 +450,7 @@ export async function processNewTasks(): Promise<{ processed: number; flagged: n
         await supabase.from('tasks').update({
           status: 'queued',
           task_type: classification.task_type,
+          weight: classification.weight,
           course: classification.course,
           due_date: classification.due_date,
           extracted_requirements: classification.extracted_requirements,

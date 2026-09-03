@@ -48,6 +48,8 @@ export type DeliveredVia = 'email' | 'telegram' | 'both';
 
 export type EventLevel = 'info' | 'warning' | 'error';
 
+export type TaskWeight = 'light' | 'medium' | 'heavy';
+
 export interface Task {
   id: string;
   source: TaskSource;
@@ -55,6 +57,9 @@ export interface Task {
   course: string | null;
   title: string;
   task_type: TaskType;
+  weight: TaskWeight;
+  progress_note: string | null;
+  last_progress_at: string | null;
   extracted_requirements: ExtractedRequirements | Record<string, any> | null;
   success_criteria: string | null;
   build_spec: string | null;
@@ -65,6 +70,18 @@ export interface Task {
   result_summary: string | null;
   archived: boolean;
   created_at: string;
+  updated_at: string;
+}
+
+export interface UserProfile {
+  id: string;
+  full_name: string;
+  university: string;
+  program: string;
+  current_semester: string;
+  default_citation_style: string;
+  writing_voice_sample: string | null;
+  academic_level_note: string | null;
   updated_at: string;
 }
 
