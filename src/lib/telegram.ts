@@ -931,8 +931,10 @@ Instructions:
         /(ppt|presentation|slide|report|essay|research|code|project|app)/i.test(userPrompt)
       );
 
-      if (looksLikeTaskOutline) {
-        console.log('[AI-Safety-Net] Model returned outline instead of calling tool — auto-creating task.');
+      const hallucinatedCreation = /AI Agent Created/i.test(aiText) || /Task ID:/i.test(aiText);
+
+      if (looksLikeTaskOutline || hallucinatedCreation) {
+        console.log('[AI-Safety-Net] Model hallucinated or returned outline instead of calling tool — auto-creating task.');
         try {
           const autoConfirmation = await createTaskFromTelegram(userPrompt);
           const safetyMsg = `⚡ <b>Auto-detected:</b> I noticed you want me to build something, so I've automatically queued it!\n\n${autoConfirmation}`;

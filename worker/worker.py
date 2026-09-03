@@ -1691,8 +1691,9 @@ def diagnose_failure(
         "missing/expired credential, or an action only the human can perform), and environment issues.\n\n"
         "Return STRICT JSON only, no prose, with exactly these keys:\n"
         "{\n"
+        '  "thought_process": "step-by-step reasoning about why the failure occurred and how it can be fixed",\n'
         '  "root_cause": "one or two sentences, technical",\n'
-        '  "plain_explanation": "explain to a non-technical student, in plain language, what went wrong",\n'
+        '  "plain_explanation": "a direct, professional, and concise explanation of what went wrong. Do NOT use analogies, metaphors, or overly conversational language. Use your own technical logic.",\n'
         '  "category": "provider|spec|capability|environment|transient|unknown",\n'
         '  "agent_fixable": true or false,\n'
         '  "retry_instructions": "concrete, specific instructions to append to the build prompt for ONE retry that fixes this",\n'
@@ -1771,7 +1772,7 @@ def _classify_error_message(error_message: str) -> str:
     return f"Build/verification error: {error_message[:200]}"
 
 
-def handle_task_failure(task: Dict[str, Any], error_message: str, diagnosis: Optional[Dict[str, Any]] = None) -> None:
+def handle_task_failure(task: Dict[str, Any], error_message: str, diagnosis: Optional[Dict[str, Any]] = None, produced_files: Optional[List[Path]] = None) -> None:
     """Flags a task after the single informed retry has failed, and sends a CLEAR, plain-language
     Telegram report the student can act on — including a one-tap "just reply to fix it" path.
     (PRD Section 6.3 / 6.4; CLAUDE.md: one retry, then flag.)
@@ -1817,12 +1818,26 @@ def handle_task_failure(task: Dict[str, Any], error_message: str, diagnosis: Opt
         f"Task '{task.get('title')}' (ID: {task_id}) flagged [{category}, conf={confidence}, src={(diagnosis or {}).get('source', 'none')}]: {root_cause[:400]}",
     )
 
+    # Upload partial files to Drive if present
+    drive_links = []
+    if produced_files:
+        creds = get_google_credentials()
+        if creds and DRIVE_OUTPUT_FOLDER_ID:
+            for f in produced_files:
+                if f.exists():
+                    link = upload_to_drive(creds, task.get("course") or "General", task_id, f)
+                    if link:
+                        drive_links.append(f"<a href=\"{link}\">{html.escape(f.name)}</a>")
+    
+    partial_files_text = f"📂 <b>Partial Outputs:</b> {', '.join(drive_links)}\n\n" if drive_links else ""
+
     alert_msg = (
         f"⚠️ <b>I couldn't finish this task — I need your help</b>\n\n"
         f"📌 <b>Task:</b> {html.escape(task.get('title') or 'Academic task')}\n"
         f"📚 <b>Course:</b> {html.escape(task.get('course') or 'General')}\n\n"
         f"<b>What went wrong:</b>\n{html.escape(plain)}\n\n"
         f"<b>What I already tried:</b>\nI diagnosed the problem and automatically retried once with a fix, but it still didn't work.\n\n"
+        f"{partial_files_text}"
         f"<b>What you can do:</b>\n{html.escape(user_action)}\n\n"
         f"💬 <b>Easiest fix:</b> just <b>reply to this message</b> telling me what to change — for example "
         f"\"make it 8 slides\", \"the deadline is next Monday\", or \"use IEEE citations\" — and I'll apply it and rebuild automatically.\n\n"
@@ -1925,7 +1940,7 @@ def run_worker_cycle() -> bool:
         )
 
     if not success or len(produced_files) == 0:
-        handle_task_failure(task, "Build produced no usable output after one informed retry.", last_diagnosis)
+        handle_task_failure(task, "Build produced no usable output after one informed retry.", last_diagnosis, produced_files=produced_files)
         return True
 
     # Step 5: Verify build. Reuse the single retry budget only if it hasn't been spent already.
@@ -1953,7 +1968,7 @@ def run_worker_cycle() -> bool:
                 stdout_output=stdout_output, produced_files=produced_files,
                 verify_details=details, post_retry=(retries_used > 0),
             )
-        handle_task_failure(task, summary, last_diagnosis)
+        handle_task_failure(task, summary, last_diagnosis, produced_files=produced_files)
         return True
 
     # Step 6: Deliver & Track
