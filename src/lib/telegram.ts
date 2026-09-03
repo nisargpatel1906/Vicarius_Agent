@@ -1111,6 +1111,10 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
     await reply('🔍 <i>Checking your Google Classroom for recent messages & announcements...</i>');
     const classroomMsg = await getLatestClassroomMessages(5);
     await reply(classroomMsg);
+    await supabase.from('chat_messages').insert([
+      { chat_id: incomingChatId, role: 'user', content: text },
+      { chat_id: incomingChatId, role: 'assistant', content: classroomMsg }
+    ]);
     return { handled: true };
   }
 
@@ -1126,6 +1130,10 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
     await reply('📬 <i>Checking your Gmail inbox for recent messages...</i>');
     const emailMsg = await getRecentGmailEmails(5);
     await reply(emailMsg);
+    await supabase.from('chat_messages').insert([
+      { chat_id: incomingChatId, role: 'user', content: text },
+      { chat_id: incomingChatId, role: 'assistant', content: emailMsg }
+    ]);
     return { handled: true };
   }
 
@@ -1139,6 +1147,10 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
     await reply('🔄 <i>Syncing Google Classroom & Gmail now...</i>');
     const syncMsg = await syncClassroomAndGmail();
     await reply(syncMsg);
+    await supabase.from('chat_messages').insert([
+      { chat_id: incomingChatId, role: 'user', content: text },
+      { chat_id: incomingChatId, role: 'assistant', content: syncMsg }
+    ]);
     return { handled: true };
   }
 
