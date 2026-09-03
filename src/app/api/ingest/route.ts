@@ -11,23 +11,22 @@ import { getGmailClient } from '@/lib/google-auth';
 
 export async function POST(req: NextRequest) {
   try {
-    // Verify optional secret token if configured
     const expectedToken = process.env.INGEST_SECRET_TOKEN;
-    if (expectedToken) {
-      const authHeader = req.headers.get('authorization');
-      const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
-      if (token !== expectedToken) {
-        return NextResponse.json<ApiResponse>(
-          {
-            success: false,
-            error: {
-              code: 'UNAUTHORIZED',
-              message: 'Invalid or missing bearer token',
-            },
-          },
-          { status: 401 }
-        );
-      }
+    if (!expectedToken) {
+      console.error('CRITICAL: INGEST_SECRET_TOKEN is not configured.');
+      return NextResponse.json<ApiResponse>(
+        { success: false, error: { code: 'CONFIG_ERROR', message: 'Server configuration error' } },
+        { status: 500 }
+      );
+    }
+    
+    const authHeader = req.headers.get('authorization');
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
+    if (token !== expectedToken) {
+      return NextResponse.json<ApiResponse>(
+        { success: false, error: { code: 'UNAUTHORIZED', message: 'Invalid or missing bearer token' } },
+        { status: 401 }
+      );
     }
 
     // Renew Gmail Watch Subscription (expires every 7 days)
@@ -87,8 +86,4 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     );
   }
-}
-
-export async function GET(req: NextRequest) {
-  return POST(req);
 }
