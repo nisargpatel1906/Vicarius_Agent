@@ -2,7 +2,7 @@
 // Sourced from PRD_academic_task_agent.md (Section 8, Section 7)
 
 import { getSupabaseAdmin, logSystemEvent } from './supabase';
-import { getGmailClient } from './google-auth';
+import { getGmailClient, getClassroomClient } from './google-auth';
 import { TaskType } from './types';
 
 const TELEGRAM_API_BASE = 'https://api.telegram.org/bot';
@@ -267,6 +267,172 @@ Extract the structured task details into strict JSON:
 }
 
 /**
+ * Fetches latest announcements, notices, and coursework posts directly from Google Classroom
+ */
+export async function getLatestClassroomMessages(limit: number = 5): Promise<string> {
+  try {
+    const classroom = getClassroomClient();
+    const coursesRes = await classroom.courses.list({ courseStates: ['ACTIVE'], pageSize: 10 });
+    const courses = coursesRes.data.courses || [];
+
+    if (courses.length === 0) {
+      return '📚 <b>Google Classroom:</b> No active courses found in your account.';
+    }
+
+    const messages: Array<{
+      course: string;
+      type: string;
+      time: string;
+      title?: string;
+      text: string;
+    }> = [];
+
+    for (const course of courses) {
+      const courseName = course.name || 'Unnamed Course';
+      const courseId = course.id;
+      if (!courseId) continue;
+
+      // 1. Announcements
+      try {
+        const annRes = await classroom.courses.announcements.list({
+          courseId,
+          announcementStates: ['PUBLISHED'],
+          pageSize: 5,
+        });
+        for (const ann of annRes.data.announcements || []) {
+          messages.push({
+            course: courseName,
+            type: 'Announcement',
+            time: ann.creationTime || '',
+            text: ann.text || '(No text)',
+          });
+        }
+      } catch (e) {
+        // ignore per-course errors
+      }
+
+      // 2. CourseWork
+      try {
+        const cwRes = await classroom.courses.courseWork.list({
+          courseId,
+          courseWorkStates: ['PUBLISHED'],
+          pageSize: 5,
+        });
+        for (const cw of cwRes.data.courseWork || []) {
+          messages.push({
+            course: courseName,
+            type: 'Assignment',
+            time: cw.creationTime || '',
+            title: cw.title || 'Untitled',
+            text: cw.description || '',
+          });
+        }
+      } catch (e) {
+        // ignore per-course errors
+      }
+    }
+
+    // Sort by creationTime desc
+    messages.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+
+    if (messages.length === 0) {
+      return '📚 <b>Google Classroom:</b> No recent announcements or assignments found across your active courses.';
+    }
+
+    const top = messages.slice(0, limit);
+    let output = `📢 <b>Latest Google Classroom Posts (${top.length}):</b>\n\n`;
+
+    top.forEach((m, idx) => {
+      const dateStr = m.time
+        ? new Date(m.time).toLocaleString('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+          })
+        : 'Recent';
+
+      output += `${idx + 1}. [${m.type.toUpperCase()}] <b>${escapeHtml(m.course)}</b>\n`;
+      if (m.title) {
+        output += `   📌 <b>${escapeHtml(m.title)}</b>\n`;
+      }
+      const preview = m.text.length > 280 ? m.text.slice(0, 280) + '...' : m.text;
+      output += `   💬 ${escapeHtml(preview)}\n`;
+      output += `   🕒 <i>${dateStr} IST</i>\n\n`;
+    });
+
+    return output;
+  } catch (err: any) {
+    console.error('Error fetching Classroom messages:', err);
+    return `❌ Could not fetch Google Classroom messages: ${escapeHtml(err.message)}`;
+  }
+}
+
+/**
+ * Fetches recent academic emails from Gmail
+ */
+export async function getRecentGmailEmails(limit: number = 5): Promise<string> {
+  try {
+    const gmail = getGmailClient();
+    const res = await gmail.users.messages.list({
+      userId: 'me',
+      maxResults: limit,
+      q: 'newer_than:7d',
+    });
+    const messages = res.data.messages || [];
+    if (messages.length === 0) {
+      return '✉️ <b>Gmail:</b> No recent emails found in the last 7 days.';
+    }
+
+    let output = `📬 <b>Recent Emails (${messages.length}):</b>\n\n`;
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
+      if (!msg.id) continue;
+      const detail = await gmail.users.messages.get({
+        userId: 'me',
+        id: msg.id,
+        format: 'metadata',
+        metadataHeaders: ['Subject', 'From', 'Date'],
+      });
+      const headers = detail.data.payload?.headers || [];
+      const subject = headers.find((h) => h.name?.toLowerCase() === 'subject')?.value || 'No Subject';
+      const from = headers.find((h) => h.name?.toLowerCase() === 'from')?.value || 'Unknown Sender';
+      const date = headers.find((h) => h.name?.toLowerCase() === 'date')?.value || '';
+      const snippet = detail.data.snippet || '';
+
+      output += `${i + 1}. <b>${escapeHtml(subject)}</b>\n`;
+      output += `   👤 From: <code>${escapeHtml(from)}</code>\n`;
+      if (snippet) output += `   💬 ${escapeHtml(snippet.slice(0, 150))}...\n`;
+      output += `   🕒 <i>${escapeHtml(date)}</i>\n\n`;
+    }
+    return output;
+  } catch (err: any) {
+    console.error('Error fetching Gmail messages:', err);
+    return `❌ Could not fetch Gmail messages: ${escapeHtml(err.message)}`;
+  }
+}
+
+/**
+ * Triggers on-demand synchronization of Google Classroom and Gmail
+ */
+export async function syncClassroomAndGmail(): Promise<string> {
+  try {
+    const { runIngestion } = await import('./ingest');
+    const res = await runIngestion();
+    return (
+      `🔄 <b>Synchronization Complete!</b>\n\n` +
+      `• 📚 Google Classroom items scanned: <b>${res.classroomCount}</b>\n` +
+      `• ✉️ Gmail items scanned: <b>${res.gmailCount}</b>\n` +
+      `• 🆕 New tasks queued: <b>${res.upsertedCount}</b>\n` +
+      (res.errors.length > 0 ? `\n⚠️ Warnings: ${escapeHtml(res.errors.join(', '))}` : '')
+    );
+  } catch (err: any) {
+    return `❌ Sync failed: ${escapeHtml(err.message)}`;
+  }
+}
+
+/**
  * Intelligent Academic AI Assistant Chat on Telegram
  */
 export async function askAiAssistant(userPrompt: string, chatId: string): Promise<string> {
@@ -305,16 +471,23 @@ export async function askAiAssistant(userPrompt: string, chatId: string): Promis
   }));
 
   const systemPrompt = `You are Vicarius, an autonomous AI academic assistant and agent for Nisarg Patel (Computer Engineering / AI-ML student at Academic Institution).
-You manage coursework, research papers, presentations, lab reports, ML models, and programming assignments.
+You HAVE LIVE CONNECTIVITY to Nisarg's academic tools via Google OAuth 2.0:
+1. Google Classroom: You CAN and MUST read live announcements, notices, assignments, and posts from all active courses using 'get_classroom_latest_messages'.
+2. Gmail: You CAN read recent academic emails using 'get_recent_emails'.
+3. Sync: You CAN trigger live synchronization of Classroom and Gmail using 'sync_classroom_and_gmail'.
+4. Task Management: You CAN create and queue tasks with 'create_academic_task', check telemetry with 'get_system_status', and list tasks with 'list_active_tasks'.
 
 Current Active Tasks in System:
 ${taskContext || 'No active tasks.'}
 
-MANDATORY RULES:
-1. When the student asks you to do, create, build, generate, write, or train an assignment/project, or says "use this and make a ppt" / "make slides", you MUST IMMEDIATELY call the 'create_academic_task' tool! Do NOT just print the text outline or ask them to type /task.
-2. If the student asks for status or lists of tasks, call 'get_system_status' or 'list_active_tasks'.
-3. If the student asks conceptual questions or converses, respond directly with rich technical depth and clarity.
-4. Format all text replies in clean, valid HTML (<b>bold</b>, <i>italic</i>, <code>code</code>, bullet points •). Do NOT use markdown asterisks.`;
+CRITICAL RULES:
+1. NEVER EVER say you don't have access to Google Classroom, Gmail, or coursework! You DO have live access via authorized Google API tools.
+2. If the student asks about messages, announcements, or posts from Classroom (e.g. "Tell me last message of my classroom", "What did the teacher post?", "Check classroom notices"), YOU MUST CALL 'get_classroom_latest_messages'!
+3. If the student asks about emails, call 'get_recent_emails'!
+4. When the student asks you to do, create, build, generate, write, or train an assignment/project, or says "use this and make a ppt" / "make slides", you MUST IMMEDIATELY call the 'create_academic_task' tool! Do NOT just print the text outline or ask them to type /task.
+5. If the student asks for status or lists of tasks, call 'get_system_status' or 'list_active_tasks'.
+6. If the student asks conceptual questions or converses, respond directly with rich technical depth and clarity.
+7. Format all text replies in clean, valid HTML (<b>bold</b>, <i>italic</i>, <code>code</code>, bullet points •). Do NOT use markdown asterisks.`;
 
   const openRouterKey = process.env.OPENROUTER_API_KEY;
   if (openRouterKey) {
@@ -332,6 +505,40 @@ MANDATORY RULES:
             ...historyMessages,
           ],
           tools: [
+            {
+              type: 'function',
+              function: {
+                name: 'get_classroom_latest_messages',
+                description: 'Fetches the latest announcements, notices, messages, and coursework posts from the student\'s active Google Classroom courses.',
+                parameters: {
+                  type: 'object',
+                  properties: {
+                    limit: { type: 'number', description: 'Number of recent posts to fetch (default: 5)' }
+                  }
+                }
+              }
+            },
+            {
+              type: 'function',
+              function: {
+                name: 'get_recent_emails',
+                description: 'Fetches recent academic emails and university notices from the student\'s Gmail inbox.',
+                parameters: {
+                  type: 'object',
+                  properties: {
+                    limit: { type: 'number', description: 'Number of recent emails to fetch (default: 5)' }
+                  }
+                }
+              }
+            },
+            {
+              type: 'function',
+              function: {
+                name: 'sync_classroom_and_gmail',
+                description: 'Polls and synchronizes all new coursework, announcements, and emails from Google Classroom and Gmail into the database.',
+                parameters: { type: 'object', properties: {} }
+              }
+            },
             {
               type: 'function',
               function: {
@@ -398,6 +605,36 @@ MANDATORY RULES:
           args = JSON.parse(toolCall.function?.arguments || '{}');
         } catch (e) {
           args = {};
+        }
+
+        if (funcName === 'get_classroom_latest_messages') {
+          const classroomMsg = await getLatestClassroomMessages(args.limit || 5);
+          await supabase.from('chat_messages').insert({
+            chat_id: chatId,
+            role: 'assistant',
+            content: classroomMsg,
+          });
+          return classroomMsg;
+        }
+
+        if (funcName === 'get_recent_emails') {
+          const emailMsg = await getRecentGmailEmails(args.limit || 5);
+          await supabase.from('chat_messages').insert({
+            chat_id: chatId,
+            role: 'assistant',
+            content: emailMsg,
+          });
+          return emailMsg;
+        }
+
+        if (funcName === 'sync_classroom_and_gmail') {
+          const syncMsg = await syncClassroomAndGmail();
+          await supabase.from('chat_messages').insert({
+            chat_id: chatId,
+            role: 'assistant',
+            content: syncMsg,
+          });
+          return syncMsg;
         }
 
         if (funcName === 'create_academic_task') {
@@ -861,6 +1098,50 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
 
   const lower = text.toLowerCase();
 
+  // 3a. Direct Google Classroom Query (Commands & Natural Language)
+  const isClassroomQuery =
+    lower.startsWith('/classroom') ||
+    lower.startsWith('/announcements') ||
+    lower.startsWith('/notices') ||
+    /^(tell me|show me|what is|check|get|fetch)?\s*(the\s*)?(last|latest|recent|new)?\s*(message|messages|announcement|announcements|notice|notices|post|posts|update|updates)?\s*(of|from|in|on)?\s*(my\s*)?(google\s*)?(classroom|class room)/i.test(text) ||
+    /(classroom|class room).*(last|latest|recent|message|announcement|notice|post)/i.test(text) ||
+    /(last|latest|recent).*(message|notice|announcement).*(classroom|class room)/i.test(text);
+
+  if (isClassroomQuery) {
+    await reply('🔍 <i>Checking your Google Classroom for recent messages & announcements...</i>');
+    const classroomMsg = await getLatestClassroomMessages(5);
+    await reply(classroomMsg);
+    return { handled: true };
+  }
+
+  // 3b. Direct Gmail Query (Commands & Natural Language)
+  const isEmailQuery =
+    lower.startsWith('/emails') ||
+    lower.startsWith('/mail') ||
+    lower.startsWith('/inbox') ||
+    /^(tell me|show me|check|what are|get|fetch)?\s*(my\s*)?(recent|latest|new|unread)?\s*(emails|email|messages|mails|inbox)/i.test(text) ||
+    /(gmail|email|inbox).*(check|latest|recent|new|messages)/i.test(text);
+
+  if (isEmailQuery) {
+    await reply('📬 <i>Checking your Gmail inbox for recent messages...</i>');
+    const emailMsg = await getRecentGmailEmails(5);
+    await reply(emailMsg);
+    return { handled: true };
+  }
+
+  // 3c. Direct Sync / Poll Command
+  const isSyncQuery =
+    lower.startsWith('/sync') ||
+    lower.startsWith('/poll') ||
+    /^(sync|poll|refresh)\s*(classroom|gmail|sources|tasks|assignments)?/i.test(text);
+
+  if (isSyncQuery) {
+    await reply('🔄 <i>Syncing Google Classroom & Gmail now...</i>');
+    const syncMsg = await syncClassroomAndGmail();
+    await reply(syncMsg);
+    return { handled: true };
+  }
+
   // 3. Create Task Command: /task, /new, /add, /create
   if (
     lower.startsWith('/task') ||
@@ -1109,6 +1390,10 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
   if (lower === '/help' || lower === '/start') {
     const helpMsg =
       `🤖 <b>Vicarius Academic Assistant</b>\n\n` +
+      `<b>📚 Live Classroom &amp; Email:</b>\n` +
+      `• <code>/classroom</code> — View latest Google Classroom notices &amp; messages\n` +
+      `• <code>/emails</code> — View recent Gmail messages &amp; academic alerts\n` +
+      `• <code>/sync</code> — On-demand re-poll of Classroom and Gmail\n\n` +
       `<b>📝 Task Management:</b>\n` +
       `• <code>/task &lt;details&gt;</code> — Create &amp; queue task\n` +
       `• <code>/tasks</code> — View all active tasks\n` +
@@ -1119,7 +1404,8 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
       `• <code>/ask &lt;question&gt;</code> — Search past deliverables &amp; results\n` +
       `• <code>/status</code> — Live system telemetry\n\n` +
       `<b>🎙️ Natural Language Input:</b>\n` +
-      `• <b>Type naturally:</b> "make me a 10-slide ppt on Cloud Computing" → auto-queued!\n` +
+      `• <b>Ask naturally:</b> "Tell me last message of my classroom" → reads live announcements!\n` +
+      `• <b>Build tasks:</b> "make me a 10-slide ppt on Cloud Computing" → auto-queued!\n` +
       `• <b>Voice notes:</b> 🎤 Send a voice message — I'll transcribe and process it\n` +
       `• <b>Photos:</b> 📷 Send a photo of an assignment sheet — I'll extract requirements\n` +
       `• <b>PDFs:</b> 📄 Attach a PDF — I'll read and auto-create the task\n\n` +
