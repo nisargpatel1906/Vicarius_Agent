@@ -67,7 +67,8 @@ export async function GET(request: Request) {
       timeZone: "Asia/Kolkata", weekday: "long", day: "numeric", month: "long", year: "numeric",
     });
 
-    let msg = `\u{1F305} <b>Good Morning, Nisarg!</b>\n\u{1F4C5} <b>${todayStr}</b>\n\n`;
+    const studentName = process.env.STUDENT_NAME || 'Student';
+    let msg = `\u{1F305} <b>Good Morning, ${studentName}!</b>\n\u{1F4C5} <b>${todayStr}</b>\n\n`;
 
     // Escalation section for stuck queue items
     if (stuckTasks && stuckTasks.length > 0) {

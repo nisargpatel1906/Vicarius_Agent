@@ -18,11 +18,18 @@ export interface ClassificationOutput {
   weight: TaskWeight;
 }
 
+const OPENROUTER_API_URL = process.env.OPENROUTER_API_URL || 'https://openrouter.ai/api/v1/chat/completions';
+const GROQ_API_URL = process.env.GROQ_API_URL || 'https://api.groq.com/openai/v1/chat/completions';
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'minimax/minimax-m3:free';
+const OPENROUTER_FALLBACK_MODEL = process.env.OPENROUTER_FALLBACK_MODEL || 'meta-llama/llama-3.3-70b-instruct:free';
+const OPENROUTER_VISION_MODEL = process.env.OPENROUTER_VISION_MODEL || 'meta-llama/llama-3.2-11b-vision-instruct:free';
+const GROQ_MODEL = process.env.GROQ_MODEL || 'qwen/qwen3.8-27b';
+
 /**
  * Call LLM with multi-provider fallback:
  * Primary: OpenRouter (MiniMax or configured model)
- * Fallback 1: Groq (llama-3.3-70b-versatile)
- * Fallback 2: Secondary OpenRouter model (meta-llama/llama-3.3-70b-instruct:free)
+ * Fallback 1: Groq (llama-3.3-70b-versatile or configured model)
+ * Fallback 2: Secondary OpenRouter model
  */
 async function callLlmWithFallback(prompt: string, systemPrompt: string): Promise<string> {
   const openRouterKey = process.env.OPENROUTER_API_KEY;
@@ -31,7 +38,7 @@ async function callLlmWithFallback(prompt: string, systemPrompt: string): Promis
   // 1. Primary: OpenRouter
   if (openRouterKey) {
     try {
-      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      const res = await fetch(OPENROUTER_API_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -40,7 +47,7 @@ async function callLlmWithFallback(prompt: string, systemPrompt: string): Promis
           'X-Title': 'Vicarius Agent',
         },
         body: JSON.stringify({
-          model: process.env.OPENROUTER_MODEL || 'minimax/minimax-m3:free',
+          model: OPENROUTER_MODEL,
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: prompt },
@@ -64,17 +71,17 @@ async function callLlmWithFallback(prompt: string, systemPrompt: string): Promis
     }
   }
 
-  // 2. Fallback 1: Groq (qwen/qwen3.8-27b)
+  // 2. Fallback 1: Groq
   if (groqKey) {
     try {
-      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      const res = await fetch(GROQ_API_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${groqKey}`,
         },
         body: JSON.stringify({
-          model: process.env.GROQ_MODEL || 'qwen/qwen3.8-27b',
+          model: GROQ_MODEL,
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: prompt },
@@ -87,7 +94,7 @@ async function callLlmWithFallback(prompt: string, systemPrompt: string): Promis
         const data = await res.json();
         const content = data.choices?.[0]?.message?.content;
         if (content) {
-          console.log('[Classify] Successfully recovered using Groq llama-3.3-70b-versatile');
+          console.log(`[Classify] Successfully recovered using Groq ${GROQ_MODEL}`);
           await logSystemEvent('info', 'classify', 'Successfully completed classification using Groq fallback.');
           return content;
         }
@@ -105,14 +112,14 @@ async function callLlmWithFallback(prompt: string, systemPrompt: string): Promis
   // 3. Fallback 2: Secondary OpenRouter model
   if (openRouterKey) {
     try {
-      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      const res = await fetch(OPENROUTER_API_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${openRouterKey}`,
         },
         body: JSON.stringify({
-          model: 'meta-llama/llama-3.3-70b-instruct:free',
+          model: OPENROUTER_FALLBACK_MODEL,
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: prompt },
@@ -178,14 +185,14 @@ If the image is unreadable or has no extractable text, say exactly:
   if (openRouterKey && base64Data && mimeType) {
     try {
       const imageUrl = `data:${mimeType};base64,${base64Data}`;
-      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      const res = await fetch(OPENROUTER_API_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${openRouterKey}`,
         },
         body: JSON.stringify({
-          model: 'meta-llama/llama-3.2-11b-vision-instruct:free',
+          model: OPENROUTER_VISION_MODEL,
           messages: [
             {
               role: 'user',
@@ -235,10 +242,10 @@ export async function getUserProfile(): Promise<UserProfile> {
   }
   return {
     id: 'default',
-    full_name: 'Nisarg Patel',
-    university: 'Academic Institution',
-    program: 'B.Tech, Computer Engineering (AIML)',
-    current_semester: 'Semester 4',
+    full_name: process.env.STUDENT_NAME || 'Student',
+    university: process.env.STUDENT_UNIVERSITY || 'University',
+    program: process.env.STUDENT_PROGRAM || 'B.Tech, Computer Engineering (AIML)',
+    current_semester: process.env.STUDENT_SEMESTER || 'Semester 4',
     default_citation_style: 'IEEE',
     academic_level_note: 'Comfortable with rigorous technical depth, distributed systems, machine learning architectures, and academic prose; avoids superficial generalizations.',
     writing_voice_sample: 'In distributed systems, ensuring high availability often necessitates trade-offs against immediate consistency, as characterized by the CAP theorem. Our evaluation demonstrates that leader-based consensus mechanisms such as Raft offer superior operational simplicity compared to traditional Paxos deployments without sacrificing fault tolerance.',

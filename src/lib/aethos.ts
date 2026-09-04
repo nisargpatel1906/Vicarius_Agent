@@ -4,16 +4,16 @@ import { logSystemEvent } from './supabase';
 
 let _aethosClient: SupabaseClient | null = null;
 
-export function getAethosClient(): SupabaseClient {
+export function getAethosClient(): SupabaseClient | null {
   if (!_aethosClient) {
-    const url = process.env.AETHOS_SUPABASE_URL || '';
-    const key = process.env.AETHOS_SERVICE_ROLE_KEY || '';
+    const url = process.env.AETHOS_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+    const key = process.env.AETHOS_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || '';
     
     if (!url || !key) {
-      console.warn('Missing AETHOS_SUPABASE_URL or AETHOS_SERVICE_ROLE_KEY. Aethos memory will be disabled.');
+      return null;
     }
     
-    _aethosClient = createClient(url || 'https://placeholder.supabase.co', key || 'placeholder', {
+    _aethosClient = createClient(url, key, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
   }
@@ -48,6 +48,7 @@ export async function getEmbedding(text: string): Promise<number[]> {
 export async function queryAethosCourseNotes(courseName: string): Promise<string[]> {
   try {
     const client = getAethosClient();
+    if (!client) return [];
     const userId = getAethosUserId();
     const embedding = await getEmbedding(courseName);
 
@@ -90,6 +91,9 @@ export async function queryAethosCourseNotes(courseName: string): Promise<string
 export async function rememberCourseCorrection(courseName: string, feedback: string): Promise<string> {
   try {
     const client = getAethosClient();
+    if (!client) {
+      return '⚠️ Aethos Memory client is not configured.';
+    }
     const userId = getAethosUserId();
     const embedding = await getEmbedding(feedback);
 

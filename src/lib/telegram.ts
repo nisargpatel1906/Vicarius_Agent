@@ -7,6 +7,15 @@ import { TaskType } from './types';
 import { rememberCourseCorrection } from './aethos';
 
 const TELEGRAM_API_BASE = process.env.TELEGRAM_API_BASE || 'https://api.telegram.org/bot';
+const TELEGRAM_FILE_BASE = process.env.TELEGRAM_FILE_BASE || 'https://api.telegram.org/file/bot';
+const OPENROUTER_API_URL = process.env.OPENROUTER_API_URL || 'https://openrouter.ai/api/v1/chat/completions';
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'minimax/minimax-m3:free';
+const GROQ_API_URL = process.env.GROQ_API_URL || 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+const OPENAI_WHISPER_URL = process.env.OPENAI_WHISPER_URL || 'https://api.openai.com/v1/audio/transcriptions';
+const STUDENT_NAME = process.env.STUDENT_NAME || 'Nisarg Patel';
+const STUDENT_UNIVERSITY = process.env.STUDENT_UNIVERSITY || 'Academic Institution';
+const STUDENT_PROGRAM = process.env.STUDENT_PROGRAM || 'Computer Engineering / AI-ML';
 
 export interface TelegramUpdate {
   update_id: number;
@@ -169,14 +178,14 @@ Extract the structured task details into strict JSON:
   const openRouterKey = process.env.OPENROUTER_API_KEY;
   if (openRouterKey) {
     try {
-      const res = await fetch(process.env.OPENROUTER_API_URL || 'https://openrouter.ai/api/v1/chat/completions', {
+      const res = await fetch(OPENROUTER_API_URL, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${openRouterKey}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model: 'minimax/minimax-m3:free',
+          model: OPENROUTER_MODEL,
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: rawBody },
@@ -185,15 +194,42 @@ Extract the structured task details into strict JSON:
         })
       });
       
-      if (!res.ok) {
-        throw new Error(`OpenRouter API error: ${res.statusText}`);
+      if (res.ok) {
+        const data = await res.json();
+        const content = data.choices?.[0]?.message?.content || '{}';
+        parsed = JSON.parse(content.replace(/```json/g, '').replace(/```/g, '').trim());
+      } else {
+        console.warn(`OpenRouter parsing failed (${res.status}). Falling back to Groq...`);
       }
-      
-      const data = await res.json();
-      const content = data.choices?.[0]?.message?.content || '{}';
-      parsed = JSON.parse(content.replace(/```json/g, '').replace(/```/g, '').trim());
     } catch (err) {
       console.warn('OpenRouter parsing error:', err);
+    }
+  }
+
+  if ((!parsed || Object.keys(parsed).length === 0) && groqKey) {
+    try {
+      const res = await fetch(GROQ_API_URL, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${groqKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: GROQ_MODEL,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: rawBody },
+          ],
+          temperature: 0.1,
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const content = data.choices?.[0]?.message?.content || '{}';
+        parsed = JSON.parse(content.replace(/```json/g, '').replace(/```/g, '').trim());
+      }
+    } catch (err) {
+      console.warn('Groq parsing error:', err);
     }
   }
 
@@ -332,11 +368,11 @@ STUDENT'S FIX INSTRUCTION:
 ${instruction}`;
 
     try {
-      const res = await fetch(process.env.OPENROUTER_API_URL || 'https://openrouter.ai/api/v1/chat/completions', {
+      const res = await fetch(OPENROUTER_API_URL, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${openRouterKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'minimax/minimax-m3:free',
+          model: OPENROUTER_MODEL,
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt },
@@ -608,8 +644,8 @@ export async function askAiAssistant(userPrompt: string, chatId: string): Promis
     content: msg.content
   }));
 
-  const systemPrompt = `You are Vicarius, an autonomous AI academic assistant and agent for Nisarg Patel (Computer Engineering / AI-ML student at Academic Institution).
-You HAVE LIVE CONNECTIVITY to Nisarg's academic tools via Google OAuth 2.0:
+  const systemPrompt = `You are Vicarius, an autonomous AI academic assistant and agent for ${STUDENT_NAME} (${STUDENT_PROGRAM} student at ${STUDENT_UNIVERSITY}).
+You HAVE LIVE CONNECTIVITY to ${STUDENT_NAME}'s academic tools via Google OAuth 2.0:
 1. Google Classroom: You CAN and MUST read live announcements, notices, assignments, and posts from all active courses using 'get_classroom_latest_messages'.
 2. Gmail: You CAN read recent academic emails using 'get_recent_emails'.
 3. Sync: You CAN trigger live synchronization of Classroom and Gmail using 'sync_classroom_and_gmail'.
@@ -628,125 +664,174 @@ CRITICAL RULES:
 7. Format all text replies in clean, valid HTML (<b>bold</b>, <i>italic</i>, <code>code</code>, bullet points •). Do NOT use markdown asterisks.
 8. If the student gives a correction, feedback, rule, or grade for a specific course (e.g. "for CE-401 always use IEEE format", or "my teacher said to include loss curves"), YOU MUST CALL 'save_course_feedback' to remember it!`;
 
-  const openRouterKey = process.env.OPENROUTER_API_KEY;
+  const academicTools = [
+    {
+      type: 'function',
+      function: {
+        name: 'get_classroom_latest_messages',
+        description: 'Fetches the latest announcements, notices, messages, and coursework posts from the student\'s active Google Classroom courses.',
+        parameters: {
+          type: 'object',
+          properties: {
+            limit: { type: 'number', description: 'Number of recent posts to fetch (default: 5)' }
+          }
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'get_recent_emails',
+        description: 'Fetches recent academic emails and university notices from the student\'s Gmail inbox.',
+        parameters: {
+          type: 'object',
+          properties: {
+            limit: { type: 'number', description: 'Number of recent emails to fetch (default: 5)' }
+          }
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'sync_classroom_and_gmail',
+        description: 'Polls and synchronizes all new coursework, announcements, and emails from Google Classroom and Gmail into the database.',
+        parameters: { type: 'object', properties: {} }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'create_academic_task',
+        description: 'Creates and queues a new academic task/assignment for the student in Supabase database.',
+        parameters: {
+          type: 'object',
+          properties: {
+            title: { type: 'string', description: 'Academic title of the task' },
+            course: { type: 'string', description: 'Course name e.g. CE-502 Cloud Computing, CE-401 Machine Learning, CE-403 Web Technologies, CE-505 Information Security, CE-402 Database Systems' },
+            task_type: { 
+              type: 'string', 
+              enum: ['presentation', 'code_project', 'ml_training', 'research', 'document', 'handwritten'],
+              description: 'Task deliverable category'
+            },
+            requirements: { type: 'array', items: { type: 'string' }, description: 'List of specific requirements' },
+            slide_count: { type: 'number', description: 'Exact slide count if presentation' },
+            success_criteria: { type: 'string', description: 'Verification criteria' }
+          },
+          required: ['title', 'course', 'task_type', 'requirements']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'get_system_status',
+        description: 'Returns the current telemetry, queue counts, and upcoming deadlines.',
+        parameters: { type: 'object', properties: {} }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'list_active_tasks',
+        description: 'Lists active pending or completed tasks for the student.',
+        parameters: {
+          type: 'object',
+          properties: {
+            course: { type: 'string', description: 'Optional course filter' }
+          }
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'save_course_feedback',
+        description: 'Saves feedback, corrections, or grades for a specific course to Aethos Memory so the AI remembers it for future tasks in that course.',
+        parameters: {
+          type: 'object',
+          properties: {
+            course: { type: 'string', description: 'Course name to tag this feedback with.' },
+            feedback: { type: 'string', description: 'The exact feedback, correction, or rule to remember.' }
+          },
+          required: ['course', 'feedback']
+        }
+      }
+    }
+  ];
+
+  const conversationMessages = [
+    { role: 'system', content: systemPrompt },
+    ...historyMessages,
+  ];
+
+  try {
+    const openRouterKey = process.env.OPENROUTER_API_KEY;
+    const groqKey = process.env.GROQ_API_KEY;
+    let data: any = null;
+
   if (openRouterKey) {
     try {
-      const res = await fetch(process.env.OPENROUTER_API_URL || 'https://openrouter.ai/api/v1/chat/completions', {
+      const res = await fetch(OPENROUTER_API_URL, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${openRouterKey}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model: 'minimax/minimax-m3:free',
-          messages: [
-            { role: 'system', content: systemPrompt },
-            ...historyMessages,
-          ],
-          tools: [
-            {
-              type: 'function',
-              function: {
-                name: 'get_classroom_latest_messages',
-                description: 'Fetches the latest announcements, notices, messages, and coursework posts from the student\'s active Google Classroom courses.',
-                parameters: {
-                  type: 'object',
-                  properties: {
-                    limit: { type: 'number', description: 'Number of recent posts to fetch (default: 5)' }
-                  }
-                }
-              }
-            },
-            {
-              type: 'function',
-              function: {
-                name: 'get_recent_emails',
-                description: 'Fetches recent academic emails and university notices from the student\'s Gmail inbox.',
-                parameters: {
-                  type: 'object',
-                  properties: {
-                    limit: { type: 'number', description: 'Number of recent emails to fetch (default: 5)' }
-                  }
-                }
-              }
-            },
-            {
-              type: 'function',
-              function: {
-                name: 'sync_classroom_and_gmail',
-                description: 'Polls and synchronizes all new coursework, announcements, and emails from Google Classroom and Gmail into the database.',
-                parameters: { type: 'object', properties: {} }
-              }
-            },
-            {
-              type: 'function',
-              function: {
-                name: 'create_academic_task',
-                description: 'Creates and queues a new academic task/assignment for the student in Supabase database.',
-                parameters: {
-                  type: 'object',
-                  properties: {
-                    title: { type: 'string', description: 'Academic title of the task' },
-                    course: { type: 'string', description: 'Course name e.g. CE-502 Cloud Computing, CE-401 Machine Learning, CE-403 Web Technologies, CE-505 Information Security, CE-402 Database Systems' },
-                    task_type: { 
-                      type: 'string', 
-                      enum: ['presentation', 'code_project', 'ml_training', 'research', 'document', 'handwritten'],
-                      description: 'Task deliverable category'
-                    },
-                    requirements: { type: 'array', items: { type: 'string' }, description: 'List of specific requirements' },
-                    slide_count: { type: 'number', description: 'Exact slide count if presentation' },
-                    success_criteria: { type: 'string', description: 'Verification criteria' }
-                  },
-                  required: ['title', 'course', 'task_type', 'requirements']
-                }
-              }
-            },
-            {
-              type: 'function',
-              function: {
-                name: 'get_system_status',
-                description: 'Returns the current telemetry, queue counts, and upcoming deadlines.',
-                parameters: { type: 'object', properties: {} }
-              }
-            },
-            {
-              type: 'function',
-              function: {
-                name: 'list_active_tasks',
-                description: 'Lists active pending or completed tasks for the student.',
-                parameters: {
-                  type: 'object',
-                  properties: {
-                    course: { type: 'string', description: 'Optional course filter' }
-                  }
-                }
-              }
-            },
-            {
-              type: 'function',
-              function: {
-                name: 'save_course_feedback',
-                description: 'Saves feedback, corrections, or grades for a specific course to Aethos Memory so the AI remembers it for future tasks in that course.',
-                parameters: {
-                  type: 'object',
-                  properties: {
-                    course: { type: 'string', description: 'Course name to tag this feedback with.' },
-                    feedback: { type: 'string', description: 'The exact feedback, correction, or rule to remember.' }
-                  },
-                  required: ['course', 'feedback']
-                }
-              }
-            }
-          ],
+          model: OPENROUTER_MODEL,
+          messages: conversationMessages,
+          tools: academicTools,
           temperature: 0.2,
         })
       });
-      
-      if (!res.ok) {
-        throw new Error(`OpenRouter API error: ${res.statusText}`);
+      if (res.ok) {
+        data = await res.json();
+      } else {
+        console.warn(`OpenRouter router failed (${res.status}). Trying Groq fallback...`);
       }
-      
-      const data = await res.json();
+    } catch (oe) {
+      console.warn('OpenRouter router request error:', oe);
+    }
+  }
+
+  if (!data && groqKey) {
+    try {
+      const groqRes = await fetch(GROQ_API_URL, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${groqKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: GROQ_MODEL,
+          messages: conversationMessages,
+          tools: academicTools,
+          temperature: 0.2,
+        })
+      });
+      if (groqRes.ok) {
+        data = await groqRes.json();
+      } else {
+        console.warn(`Groq router failed (${groqRes.status}).`);
+      }
+    } catch (ge) {
+      console.warn('Groq router fallback error:', ge);
+    }
+  }
+
+      if (!data) {
+        const isTaskRequest = /(assignment|task|create|build|generate|make|project|report|presentation|write)/i.test(userPrompt);
+        if (isTaskRequest) {
+          const autoConfirmation = await createTaskFromTelegram(userPrompt);
+          const safetyMsg = `⚡ <b>Auto-detected:</b> I noticed you want me to work on an assignment, so I've queued it directly!\n\n${autoConfirmation}`;
+          await supabase.from('chat_messages').insert({
+            chat_id: chatId, role: 'assistant', content: safetyMsg
+          });
+          return safetyMsg;
+        }
+        return "⚠️ I received your message, but the AI router is temporarily busy. Please describe your assignment to queue it directly.";
+      }
       const choice = data.choices?.[0];
       const message = choice?.message;
 
@@ -980,13 +1065,10 @@ Instructions:
       
       return aiText;
     } catch (err: any) {
-      console.error('OpenRouter AI error:', err);
+      console.error('AI assistant error:', err);
       return `❌ AI service error: ${escapeHtml(err.message)}`;
     }
   }
-
-  return 'I am currently unable to answer (AI key not configured).';
-}
 
 
 /**
@@ -998,14 +1080,14 @@ async function transcribeVoiceMessage(fileId: string): Promise<string> {
 
   try {
     // Step 1: Get file path from Telegram
-    const fileRes = await fetch(`${process.env.TELEGRAM_API_BASE || 'https://api.telegram.org/bot'}${token}/getFile?file_id=${fileId}`);
+    const fileRes = await fetch(`${TELEGRAM_API_BASE}${token}/getFile?file_id=${fileId}`);
     if (!fileRes.ok) throw new Error('Failed to get file info from Telegram');
     const fileData = await fileRes.json();
     const filePath = fileData.result?.file_path;
     if (!filePath) throw new Error('No file_path in Telegram response');
 
     // Step 2: Download voice file
-    const audioUrl = `${process.env.TELEGRAM_FILE_BASE || 'https://api.telegram.org/file/bot'}${token}/${filePath}`;
+    const audioUrl = `${TELEGRAM_FILE_BASE}${token}/${filePath}`;
     const audioRes = await fetch(audioUrl);
     if (!audioRes.ok) throw new Error('Failed to download voice file');
     const audioBuffer = await audioRes.arrayBuffer();
@@ -1019,7 +1101,7 @@ async function transcribeVoiceMessage(fileId: string): Promise<string> {
       formData.append('model', 'whisper-1');
       formData.append('language', 'en');
 
-      const whisperRes = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+      const whisperRes = await fetch(OPENAI_WHISPER_URL, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${openAiKey}` },
         body: formData,
@@ -1030,7 +1112,7 @@ async function transcribeVoiceMessage(fileId: string): Promise<string> {
       }
     }
 
-    // Fallback: Use OpenRouter MiniMax (text-only fallback message)
+    // Fallback: Voice message notice
     console.warn('[Whisper] OpenAI key not available, audio transcription skipped.');
     return '[Voice message received — transcription unavailable. Please type your request.]';
   } catch (err: any) {
@@ -1050,21 +1132,21 @@ async function extractTaskFromImage(fileId: string, mimeType?: string): Promise<
 
   try {
     // Step 1: Get file download URL
-    const fileRes = await fetch(`${process.env.TELEGRAM_API_BASE || 'https://api.telegram.org/bot'}${token}/getFile?file_id=${fileId}`);
+    const fileRes = await fetch(`${TELEGRAM_API_BASE}${token}/getFile?file_id=${fileId}`);
     const fileData = await fileRes.json();
     const filePath = fileData.result?.file_path;
     if (!filePath) return '';
-    const fileUrl = `${process.env.TELEGRAM_FILE_BASE || 'https://api.telegram.org/file/bot'}${token}/${filePath}`;
+    const fileUrl = `${TELEGRAM_FILE_BASE}${token}/${filePath}`;
 
     // Step 2: Send to OpenRouter vision model for OCR + extraction
-    const visionRes = await fetch(process.env.OPENROUTER_API_URL || 'https://openrouter.ai/api/v1/chat/completions', {
+    const visionRes = await fetch(OPENROUTER_API_URL, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${openRouterKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'minimax/minimax-m3:free',
+        model: OPENROUTER_MODEL,
         messages: [
           {
             role: 'user',
@@ -1244,14 +1326,14 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
     const openRouterKey = process.env.OPENROUTER_API_KEY;
     if (openRouterKey) {
       try {
-        const res = await fetch(process.env.OPENROUTER_API_URL || 'https://openrouter.ai/api/v1/chat/completions', {
+        const res = await fetch(OPENROUTER_API_URL, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${openRouterKey}`,
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            model: 'minimax/minimax-m3:free',
+            model: OPENROUTER_MODEL,
             messages: [
               {
                 role: 'system',

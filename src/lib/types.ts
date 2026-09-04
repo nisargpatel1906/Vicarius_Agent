@@ -77,12 +77,27 @@ export interface Task {
 export interface UserProfile {
   id: string;
   full_name: string;
+  preferred_name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  telegram_id?: string | null;
+  enrollment_no?: string | null;
   university: string;
+  department?: string | null;
   program: string;
+  degree?: string | null;
   current_semester: string;
+  graduation_year?: string | null;
+  cgpa_or_target_grade?: string | null;
+  bio?: string | null;
+  skills?: string[] | null;
+  research_interests?: string[] | null;
+  custom_instructions?: string | null;
+  custom_attributes?: Record<string, any> | null;
   default_citation_style: string;
   writing_voice_sample: string | null;
   academic_level_note: string | null;
+  created_at?: string;
   updated_at: string;
 }
 

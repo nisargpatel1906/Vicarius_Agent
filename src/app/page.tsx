@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { Task, Question, Deliverable, SystemEvent, UserProfile } from '@/lib/types';
 import { VicariusLogo } from '@/components/VicariusLogo';
+import { ProfileEditor } from '@/components/ProfileEditor';
 import {
   ClockIcon,
   RefreshIcon,
@@ -40,9 +41,8 @@ export default function DashboardPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [health, setHealth] = useState<HealthData | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [activeTab, setActiveTab] = useState<'pipeline' | 'profile'>('pipeline');
   const [showProfileModal, setShowProfileModal] = useState<boolean>(false);
-  const [profileSaving, setProfileSaving] = useState<boolean>(false);
-  const [profileSavedMsg, setProfileSavedMsg] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -112,31 +112,6 @@ export default function DashboardPage() {
     }
   };
 
-  const handleSaveProfile = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!profile) return;
-    try {
-      setProfileSaving(true);
-      setProfileSavedMsg('');
-      const res = await fetch('/api/profile', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(profile),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setProfile(data.data);
-        setProfileSavedMsg('Profile successfully saved live to Supabase! All future tasks read this immediately.');
-        setTimeout(() => setProfileSavedMsg(''), 5000);
-      } else {
-        alert(data.error?.message || 'Failed to update profile');
-      }
-    } catch (err: any) {
-      alert('Error updating profile: ' + (err?.message || err));
-    } finally {
-      setProfileSaving(false);
-    }
-  };
 
   useEffect(() => {
     fetchData();
@@ -468,13 +443,13 @@ export default function DashboardPage() {
           </button>
 
           <button
-            onClick={() => setShowProfileModal(true)}
-            className="btn-heritage-secondary"
-            title="View and edit student profile (PRD Section 5 & 6.6)"
+            onClick={() => setActiveTab(activeTab === 'profile' ? 'pipeline' : 'profile')}
+            className={activeTab === 'profile' ? 'btn-heritage-primary' : 'btn-heritage-secondary'}
+            title="View and edit student profile and user info database"
             style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
           >
-            <VicariusLogo size={14} variant="mark" fill="var(--primary)" />
-            <span>Student Profile</span>
+            <VicariusLogo size={14} variant="mark" fill={activeTab === 'profile' ? '#FFF9F6' : 'var(--primary)'} />
+            <span>{activeTab === 'profile' ? 'Academic Stream' : 'Profile & User Info'}</span>
           </button>
 
           <button
@@ -488,6 +463,97 @@ export default function DashboardPage() {
           </button>
         </div>
       </div>
+
+      {/* Primary View Switcher Navigation */}
+      <div
+        style={{
+          display: 'flex',
+          gap: 10,
+          borderBottom: '1px solid var(--outline-variant)',
+          marginBottom: 24,
+          background: 'var(--surface-container-low)',
+          padding: '6px 12px 0 12px',
+          borderRadius: '8px 8px 0 0',
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => setActiveTab('pipeline')}
+          style={{
+            padding: '10px 18px',
+            background: activeTab === 'pipeline' ? 'var(--surface)' : 'transparent',
+            border: 'none',
+            borderBottom: activeTab === 'pipeline' ? '3px solid var(--primary)' : '3px solid transparent',
+            color: activeTab === 'pipeline' ? 'var(--primary)' : 'var(--on-surface-variant)',
+            fontWeight: activeTab === 'pipeline' ? 700 : 500,
+            fontSize: '0.92rem',
+            cursor: 'pointer',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+            borderRadius: '6px 6px 0 0',
+            transition: 'all 0.15s ease',
+          }}
+        >
+          <ClassroomIcon size={16} color={activeTab === 'pipeline' ? 'var(--primary)' : 'var(--on-surface-variant)'} />
+          <span>Academic Pipeline Stream</span>
+          <span
+            style={{
+              fontSize: '11px',
+              padding: '2px 7px',
+              borderRadius: 10,
+              background: activeTab === 'pipeline' ? 'var(--primary)' : 'var(--surface-container-high)',
+              color: activeTab === 'pipeline' ? '#fff' : 'var(--on-surface-variant)',
+              fontWeight: 700,
+            }}
+          >
+            {tasks.length}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('profile')}
+          style={{
+            padding: '10px 18px',
+            background: activeTab === 'profile' ? 'var(--surface)' : 'transparent',
+            border: 'none',
+            borderBottom: activeTab === 'profile' ? '3px solid var(--primary)' : '3px solid transparent',
+            color: activeTab === 'profile' ? 'var(--primary)' : 'var(--on-surface-variant)',
+            fontWeight: activeTab === 'profile' ? 700 : 500,
+            fontSize: '0.92rem',
+            cursor: 'pointer',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+            borderRadius: '6px 6px 0 0',
+            transition: 'all 0.15s ease',
+          }}
+        >
+          <VicariusLogo size={16} variant="mark" fill={activeTab === 'profile' ? 'var(--primary)' : 'var(--on-surface-variant)'} />
+          <span>Profile & User Info Database</span>
+          <span
+            style={{
+              fontSize: '11px',
+              padding: '2px 7px',
+              borderRadius: 10,
+              background: '#e2f0d9',
+              color: '#276a3c',
+              fontWeight: 700,
+            }}
+          >
+            Live Vault
+          </span>
+        </button>
+      </div>
+
+      {activeTab === 'profile' ? (
+        <ProfileEditor
+          initialProfile={profile}
+          onProfileUpdated={(updated) => setProfile(updated)}
+        />
+      ) : (
+        <>
 
       {/* AI Executive Intelligence Briefing Strip (DESIGN.md Insight Highlight) */}
       <div className="insight-highlight" style={{ position: 'relative', overflow: 'hidden' }}>
@@ -1702,213 +1768,17 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
+      </>
+    )}
 
       {/* Student Profile Settings Modal (PRD Section 5 & 6.6) */}
-      {showProfileModal && profile && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(35, 26, 15, 0.45)',
-            backdropFilter: 'blur(4px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 100,
-            padding: 20,
-          }}
-          onClick={() => setShowProfileModal(false)}
-        >
-          <div
-            className="heritage-card"
-            style={{
-              maxWidth: 720,
-              width: '100%',
-              maxHeight: '90vh',
-              overflowY: 'auto',
-              padding: '32px 36px',
-              position: 'relative',
-              background: 'var(--surface)',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Close Button */}
-            <button
-              onClick={() => setShowProfileModal(false)}
-              style={{
-                position: 'absolute',
-                top: 24,
-                right: 24,
-                background: 'none',
-                border: 'none',
-                cursor: 'pointer',
-                color: 'var(--outline)',
-                padding: 4,
-              }}
-            >
-              <CloseIcon size={20} />
-            </button>
-
-            {/* Modal Header */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 8 }}>
-              <VicariusLogo size={42} variant="crest" />
-              <div>
-                <h2 className="heading-h2" style={{ fontSize: '1.45rem', color: 'var(--on-surface)', margin: 0 }}>
-                  Student Profile & Tone Register
-                </h2>
-                <div style={{ fontSize: '0.82rem', color: 'var(--on-surface-variant)', marginTop: 2 }}>
-                  Stored in Supabase <code>profile</code> table. Every build prompt reads live from this row.
-                </div>
-              </div>
-            </div>
-
-            {profileSavedMsg && (
-              <div
-                style={{
-                  background: '#e2f0d9',
-                  border: '1px solid #c3e6cb',
-                  color: '#276a3c',
-                  padding: '10px 14px',
-                  borderRadius: 6,
-                  fontSize: '0.86rem',
-                  fontWeight: 600,
-                  marginTop: 14,
-                  marginBottom: 14,
-                }}
-              >
-                ✓ {profileSavedMsg}
-              </div>
-            )}
-
-            <form onSubmit={handleSaveProfile} style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 18 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--on-surface)', marginBottom: 6 }}>
-                    Full Name
-                  </label>
-                  <input
-                    type="text"
-                    value={profile.full_name || ''}
-                    onChange={(e) => setProfile({ ...profile, full_name: e.target.value })}
-                    className="stationery-input"
-                    style={{ width: '100%' }}
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--on-surface)', marginBottom: 6 }}>
-                    University / Institution
-                  </label>
-                  <input
-                    type="text"
-                    value={profile.university || ''}
-                    onChange={(e) => setProfile({ ...profile, university: e.target.value })}
-                    className="stationery-input"
-                    style={{ width: '100%' }}
-                    required
-                  />
-                </div>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 16 }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--on-surface)', marginBottom: 6 }}>
-                    Degree & Program
-                  </label>
-                  <input
-                    type="text"
-                    value={profile.program || ''}
-                    onChange={(e) => setProfile({ ...profile, program: e.target.value })}
-                    className="stationery-input"
-                    style={{ width: '100%' }}
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--on-surface)', marginBottom: 6 }}>
-                    Current Semester
-                  </label>
-                  <input
-                    type="text"
-                    value={profile.current_semester || ''}
-                    onChange={(e) => setProfile({ ...profile, current_semester: e.target.value })}
-                    className="stationery-input"
-                    style={{ width: '100%' }}
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--on-surface)', marginBottom: 6 }}>
-                    Citation Style
-                  </label>
-                  <select
-                    value={profile.default_citation_style || 'IEEE'}
-                    onChange={(e) => setProfile({ ...profile, default_citation_style: e.target.value })}
-                    className="stationery-select"
-                    style={{ width: '100%' }}
-                  >
-                    <option value="IEEE">IEEE</option>
-                    <option value="APA">APA</option>
-                    <option value="MLA">MLA</option>
-                    <option value="Chicago">Chicago</option>
-                    <option value="Harvard">Harvard</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--on-surface)', marginBottom: 6 }}>
-                  Academic Level & Register Note
-                </label>
-                <textarea
-                  rows={2}
-                  value={profile.academic_level_note || ''}
-                  onChange={(e) => setProfile({ ...profile, academic_level_note: e.target.value })}
-                  className="stationery-input"
-                  style={{ width: '100%', resize: 'vertical' }}
-                  placeholder="e.g. Comfortable with rigorous technical depth, distributed systems, machine learning architectures..."
-                />
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--on-surface)', marginBottom: 6 }}>
-                  Writing Voice Sample
-                  <span style={{ fontWeight: 400, color: 'var(--outline)', marginLeft: 6 }}>
-                    (Used as tone/style register reference, never copied verbatim)
-                  </span>
-                </label>
-                <textarea
-                  rows={4}
-                  value={profile.writing_voice_sample || ''}
-                  onChange={(e) => setProfile({ ...profile, writing_voice_sample: e.target.value })}
-                  className="stationery-input"
-                  style={{ width: '100%', resize: 'vertical', fontFamily: 'var(--font-serif)', fontSize: '0.9rem' }}
-                  placeholder="A paragraph of your own past writing to anchor sentence rhythm and technical register..."
-                />
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 12 }}>
-                <button
-                  type="button"
-                  onClick={() => setShowProfileModal(false)}
-                  className="btn-heritage-secondary"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={profileSaving}
-                  className="btn-heritage-primary"
-                >
-                  {profileSaving ? 'Saving to Supabase...' : 'Save Profile Live'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+      {showProfileModal && (
+        <ProfileEditor
+          initialProfile={profile}
+          isModal={true}
+          onClose={() => setShowProfileModal(false)}
+          onProfileUpdated={(updated) => setProfile(updated)}
+        />
       )}
     </div>
   );
