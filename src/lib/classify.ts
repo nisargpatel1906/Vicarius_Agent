@@ -218,6 +218,7 @@ If the image is unreadable or has no extractable text, say exactly:
 }
 
 import { queryAethosCourseNotes } from './aethos';
+import { queryKnowledgeBase } from './vector';
 
 /**
  * Fetch student profile row from Supabase (PRD Section 5 & 6.2)
@@ -257,6 +258,7 @@ export function generateBuildSpec(
   outputFormat: string,
   profile?: UserProfile,
   courseNotes?: string[],
+  ragContext?: string[],
   weight: TaskWeight = 'light',
   dueDate?: string | null
 ): string {
@@ -285,35 +287,45 @@ export function generateBuildSpec(
     ? `\n\nStanding course notes (past corrections — honor these):\n${courseNotes.map(n => `- ${n}`).join('\n')}`
     : `\n\nStanding course notes (past corrections — honor these):\n- none`;
 
-  // C3 Task-Type Inserts
+  const ragSection = ragContext && ragContext.length > 0
+    ? `\n\nRelevant Classroom Context (from Vector DB):\n${ragContext.map((c, i) => `[Context ${i + 1}]:\n${c}`).join('\n\n')}`
+    : '';
+
+  // C3 Task-Type Inserts (Now with Methodological Execution steps)
   let taskTypeInsert = '';
   if (taskType === 'document') {
-    taskTypeInsert = `\n\nTask-Specific Guidance (Document):
-- Default to introduction → body → conclusion unless the source implies another structure (lab report: Objective/Hypothesis, Apparatus & Method, Observations & Results, Discussion & Conclusion; formal letter: follow letter conventions).
-- If a word/page target exists, hit it within ±10% and report the actual count.`;
+    taskTypeInsert = `\n\nTask-Specific Methodology (Document):
+1. Plan: Formulate a clear thesis/objective. Map R1..Rn to specific paragraphs or sections.
+2. Draft: Follow standard academic structure (Intro -> Body -> Conclusion) unless specified otherwise.
+3. If a word/page target exists, hit it within ±10% and report the actual count.`;
   } else if (taskType === 'presentation') {
-    taskTypeInsert = `\n\nTask-Specific Guidance (Presentation):
-- Slides are visual-first: a title + 3–6 concise bullets each, never pasted paragraphs. Depth goes in speaker notes on every content slide.
-- Produce EXACTLY the requested slide count (incl. a title slide). Report the count.`;
+    taskTypeInsert = `\n\nTask-Specific Methodology (Presentation):
+1. Plan: Map out the slide titles to ensure exactly the required count.
+2. Draft Slides: Slides are visual-first (title + 3–6 concise bullets). Never paste paragraphs.
+3. Draft Notes: Put all depth and explanation into the speaker notes on every content slide.`;
   } else if (taskType === 'code_project') {
-    taskTypeInsert = `\n\nTask-Specific Guidance (Code Project):
-- Idiomatic style for the language; meaningful names; comments only where they aid understanding. No leftover TODO/placeholder in delivered code.
-- Include a README (prereqs, setup, run) and a smoke test proving it boots.
-- If it's a UI/web app, launch it and capture a real screenshot (screenshot.png).
-- Zip excludes node_modules, .venv, __pycache__, .git, .next, dist, build.`;
+    taskTypeInsert = `\n\nTask-Specific Methodology (Code Project):
+1. Scaffold: Set up project structure and README.
+2. Logic: Write idiomatic code with meaningful names. No leftover TODO/placeholder.
+3. Test: Include a smoke test proving it boots. If a UI, launch it and capture screenshot.png.
+4. Package: Zip excludes node_modules, .venv, __pycache__, .git, .next, dist, build.`;
   } else if (taskType === 'ml_training') {
-    taskTypeInsert = `\n\nTask-Specific Guidance (ML Training):
-- The numeric target is a hard pass/fail: iterate (epochs/arch/hyperparameters) until you meet it or exhaust a reasonable attempt budget; report the ACTUAL final number either way — never claim a number you didn't measure.
-- Checkpoint every few epochs to ./checkpoints/ and resume from the latest if present (an interrupted run must not restart from zero).
-- Check GPU availability first; if CPU-only and the run would be very long, reduce scope (smaller sample/fewer epochs) and say so in assumptions, or ask_human.
-- Deliver: model weights artifact, training logs/loss curve, and an evaluation_report.docx written in the same formal register as a document task.`;
+    taskTypeInsert = `\n\nTask-Specific Methodology (ML Training):
+1. Setup: Check GPU availability. Implement a naive baseline.
+2. Train: The numeric target is a hard pass/fail. Iterate until met or budget exhausted. Report ACTUAL number.
+3. Checkpoint: Save to ./checkpoints/ every few epochs to allow resume.
+4. Evaluate: Produce model weights artifact, training logs, and an evaluation_report.docx.`;
   } else if (taskType === 'research') {
-    taskTypeInsert = `\n\nTask-Specific Guidance (Research):
-- Use real web search; cite exact, reachable URLs in ${profile?.default_citation_style || 'IEEE'} style. No invented or approximate sources.
-- Original synthesis in your own framing — never lightly reworded copying.`;
+    taskTypeInsert = `\n\nTask-Specific Methodology (Research):
+1. Search: Gather real web sources using browser/search tools.
+2. Filter: Discard poor sources. Use exact, verifiable URLs.
+3. Synthesize: Original synthesis in your own framing — never lightly reworded copying.
+4. Format: Use ${profile?.default_citation_style || 'IEEE'} style.`;
   } else if (taskType === 'handwritten') {
-    taskTypeInsert = `\n\nTask-Specific Guidance (Handwritten):
-- Output clean, copy-ready plain text (.txt) the student will transcribe by hand. No .docx styling, no markdown artifacts, no page furniture — just the text.`;
+    taskTypeInsert = `\n\nTask-Specific Methodology (Handwritten):
+1. Plan text layout.
+2. Output clean, copy-ready plain text (.txt) the student will transcribe by hand.
+3. No .docx styling, no markdown artifacts, no page furniture — just the text.`;
   }
 
   return `Task: ${title}
@@ -324,22 +336,19 @@ Requirements — address every one, in this exact order, and reference its ID in
 ${reqsFormatted}
 
 Success criteria (mechanical pass/fail): ${criteriaFormatted}
-Output format: ${outputFormat}${studentContext}${designDirective}${aethosContext}${taskTypeInsert}
+Output format: ${outputFormat}${studentContext}${designDirective}${aethosContext}${ragSection}${taskTypeInsert}
 
 How to work:
-- Work to completion without stopping for approval; your permissions cover everything needed here.
-- If — and only if — you hit a genuine blocker (a real choice that changes the deliverable and isn't a minor judgment call), call the ask_human tool with a single specific question. Wait up to the configured timeout; if no answer comes, pick the most reasonable option and record it under "assumptions".
-- For ordinary ambiguity, choose the most reasonable interpretation and note it — do not stop.
+- You MUST begin your response with a <scratchpad> XML block. Use this to think step-by-step, plan your architecture/outline, and map out exactly how you will satisfy R1..Rn.
+- Work to completion without stopping for approval.
+- If you hit a genuine blocker, call the ask_human tool. Wait up to the configured timeout; if no answer comes, pick the most reasonable option and record it under "assumptions".
 
-Before you finish (self-check — do this, don't assume):
-- Re-read R1..Rn and confirm each is actually addressed in the artifact, in order.
-- Open/run the file you produced and confirm it's valid: a .docx opens and hits the word/section target; a .pptx has exactly the required slide count; code actually runs a smoke test; a model file exists and the reported metric is real.
-- Remove any placeholder, TODO, or lorem text.
+Before you finish (Self-Critique):
+- You MUST output a <self_critique> XML block before your final JSON. In this block, explicitly check if you hit the word/slide counts, met the success criteria, and addressed R1..Rn. If you failed any, fix the deliverable before proceeding.
 
 Tone & format (mandatory):
-- Formal academic register fit for submission to a professor. Plain and direct.
-- BANNED phrasings (do not use): "in today's fast-paced world", "in today's digital era", "delve into", "it is important to note that", "as an AI language model", "in conclusion" used reflexively, "unlock the power of", "navigate the complexities of". Vary sentence structure; avoid the uniform three-sentence paragraph rhythm that reads as machine-written.
-- Structure clearly: headings for real sections, lists only for genuine lists, full paragraphs otherwise. Match subject terminology to the course.
+- Formal academic register fit for submission to a professor.
+- BANNED phrasings: "in today's fast-paced world", "in today's digital era", "delve into", "it is important to note that", "as an AI language model".
 
 End your run with EXACTLY this JSON block, fenced, as the last thing you output:
 \`\`\`json
@@ -532,6 +541,10 @@ ${courseNotes.join('\n')}
 
   const profile = await getUserProfile();
 
+  // Query Vector DB for RAG context
+  const kbMatches = await queryKnowledgeBase(task.title + " " + rawBody, parsed.course || task.course, 3);
+  const ragContext = kbMatches.map((m: any) => `Source: ${m.title}\n${m.content}`);
+
   const buildSpec = generateBuildSpec(
     task.title,
     parsed.course || task.course || 'Course',
@@ -541,6 +554,7 @@ ${courseNotes.join('\n')}
     outputFormat,
     profile,
     courseNotes,
+    ragContext,
     weight,
     parsed.due_date || task.due_date || null
   );

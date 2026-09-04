@@ -102,12 +102,20 @@ export async function POST(req: NextRequest) {
                 attachments.push({
                   name: mat.driveFile.driveFile.title || 'Classroom Attachment',
                   driveFileId: mat.driveFile.driveFile.id || undefined,
-                  mimeType: mat.driveFile.driveFile.alternateLink ? 'application/drive' : undefined,
+                  url: mat.driveFile.driveFile.alternateLink || undefined,
+                  thumbnailUrl: mat.driveFile.driveFile.thumbnailUrl || undefined,
                 });
               } else if (mat.link) {
                 attachments.push({
                   name: mat.link.title || mat.link.url || 'Link',
                   mimeType: 'text/url',
+                  url: mat.link.url || undefined,
+                });
+              } else if (mat.youtubeVideo) {
+                attachments.push({
+                  name: mat.youtubeVideo.title || 'YouTube Video',
+                  mimeType: 'video/youtube',
+                  url: mat.youtubeVideo.alternateLink || undefined,
                 });
               }
             }
@@ -128,6 +136,26 @@ export async function POST(req: NextRequest) {
         } else if (parsedData.collection === 'courses.announcements') {
           const annRes = await classroom.courses.announcements.get({ courseId, id: itemId });
           const ann = annRes.data;
+
+          const attachments: any[] = [];
+          if (ann.materials) {
+            for (const mat of ann.materials) {
+              if (mat.driveFile?.driveFile) {
+                attachments.push({
+                  name: mat.driveFile.driveFile.title || 'Classroom Attachment',
+                  driveFileId: mat.driveFile.driveFile.id || undefined,
+                  url: mat.driveFile.driveFile.alternateLink || undefined,
+                  thumbnailUrl: mat.driveFile.driveFile.thumbnailUrl || undefined,
+                });
+              } else if (mat.link) {
+                attachments.push({
+                  name: mat.link.title || mat.link.url || 'Link',
+                  mimeType: 'text/url',
+                  url: mat.link.url || undefined,
+                });
+              }
+            }
+          }
           
           const item = {
             source: 'classroom' as const,
@@ -135,6 +163,7 @@ export async function POST(req: NextRequest) {
             course: courseName,
             title: `Announcement: ${(ann.text || 'Notice').slice(0, 60)}...`,
             raw_body: ann.text || '',
+            attachments,
             posted_date: ann.creationTime || new Date().toISOString(),
           };
           await processSingleItem(item);

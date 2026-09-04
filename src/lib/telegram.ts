@@ -202,11 +202,15 @@ Extract the structured task details into strict JSON:
   
   let taskType: TaskType = parsed.task_type || 'document';
   const lower = rawBody.toLowerCase();
-  if (lower.includes('presentation') || lower.includes('slide') || lower.includes('deck') || lower.includes('.pptx')) {
+  
+  // Explicit format declarations take top precedence
+  if (lower.includes('type: document') || lower.includes('type:document') || lower.includes('report') || lower.includes('essay') || lower.includes('paper') || lower.includes('document')) {
+    taskType = 'document';
+  } else if (lower.includes('presentation') || lower.includes('slide') || lower.includes('deck') || lower.includes('.pptx')) {
     taskType = 'presentation';
   } else if (lower.includes('code') || lower.includes('react') || lower.includes('next.js') || lower.includes('python script') || lower.includes('web app') || lower.includes('gui')) {
     taskType = 'code_project';
-  } else if (lower.includes('train') || lower.includes('cifar') || lower.includes('epoch') || lower.includes('accuracy target') || lower.includes('val_acc')) {
+  } else if (lower.includes('train') || lower.includes('epoch') || lower.includes('accuracy target') || lower.includes('val_acc')) {
     taskType = 'ml_training';
   } else if (lower.includes('research') || lower.includes('citation') || lower.includes('literature review') || lower.includes('ieee') || lower.includes('survey')) {
     taskType = 'research';
@@ -357,8 +361,21 @@ ${instruction}`;
     ? patch.requirements
     : [...currentItems, instruction];
 
+  let updatedTaskType = task.task_type;
+  const instLower = instruction.toLowerCase();
+  if (instLower.includes('document') || instLower.includes('report') || instLower.includes('paper')) {
+    updatedTaskType = 'document';
+  } else if (instLower.includes('presentation') || instLower.includes('slide') || instLower.includes('.pptx')) {
+    updatedTaskType = 'presentation';
+  } else if (instLower.includes('code') || instLower.includes('project')) {
+    updatedTaskType = 'code_project';
+  } else if (instLower.includes('ml') || instLower.includes('train')) {
+    updatedTaskType = 'ml_training';
+  }
+
   const { error } = await supabase.from('tasks').update({
     status: 'queued',
+    task_type: updatedTaskType,
     build_spec: newBuildSpec,
     success_criteria: newSuccess,
     extracted_requirements: { ...currentReqs, items: newItems },

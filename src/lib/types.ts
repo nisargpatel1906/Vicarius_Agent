@@ -69,6 +69,7 @@ export interface Task {
   claimed_at: string | null;
   result_summary: string | null;
   archived: boolean;
+  posted_date?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -125,6 +126,9 @@ export interface NormalizedRawItem {
     mimeType?: string;
     dataBase64?: string;
     driveFileId?: string;
+    url?: string;
+    thumbnailUrl?: string;
+    extracted_text?: string;
   }>;
   posted_date?: string;
   due_date?: string | null;
@@ -138,4 +142,16 @@ export interface ApiResponse<T = any> {
     message: string;
     fields?: Record<string, string>;
   };
+}
+
+export interface KnowledgeItem {
+  id?: string;
+  source: TaskSource;
+  external_id: string;
+  course: string | null;
+  title: string;
+  content: string;
+  embedding?: number[];
+  metadata?: Record<string, any>;
+  posted_date?: string;
 }

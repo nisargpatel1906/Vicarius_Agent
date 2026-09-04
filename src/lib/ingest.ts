@@ -1,8 +1,9 @@
 // Ingestion Pipeline: Gmail & Google Classroom
 // Sourced from PRD_academic_task_agent.md (Section 6.1, Section 7)
 
-import { getGmailClient, getClassroomClient } from './google-auth';
+import { getGmailClient, getClassroomClient, getDriveClient } from './google-auth';
 import { getSupabaseAdmin, logSystemEvent } from './supabase';
+import { generateEmbedding, extractPdfText, extractDocxText, extractImageText } from './vector';
 import { NormalizedRawItem, TaskSource } from './types';
 
 export interface IngestionResult {
@@ -99,6 +100,42 @@ export async function pollGoogleClassroom(): Promise<NormalizedRawItem[]> {
       if (!course.id) continue;
       const courseName = course.name || `Course ${course.id}`;
 
+      // Helper to extract material attachments cleanly
+      const parseMaterials = (materialsList?: any[]): Array<{ name: string; driveFileId?: string; mimeType?: string; url?: string; thumbnailUrl?: string }> => {
+        const result: Array<{ name: string; driveFileId?: string; mimeType?: string; url?: string; thumbnailUrl?: string }> = [];
+        if (!materialsList || !Array.isArray(materialsList)) return result;
+        for (const mat of materialsList) {
+          if (mat.driveFile?.driveFile) {
+            result.push({
+              name: mat.driveFile.driveFile.title || 'Classroom Attachment',
+              driveFileId: mat.driveFile.driveFile.id || undefined,
+              mimeType: undefined, // Let Drive API determine actual mimeType accurately
+              url: mat.driveFile.driveFile.alternateLink || undefined,
+              thumbnailUrl: mat.driveFile.driveFile.thumbnailUrl || undefined,
+            });
+          } else if (mat.link) {
+            result.push({
+              name: mat.link.title || mat.link.url || 'Link',
+              mimeType: 'text/url',
+              url: mat.link.url || undefined,
+            });
+          } else if (mat.youtubeVideo) {
+            result.push({
+              name: mat.youtubeVideo.title || 'YouTube Video',
+              mimeType: 'video/youtube',
+              url: mat.youtubeVideo.alternateLink || undefined,
+            });
+          } else if (mat.form) {
+            result.push({
+              name: mat.form.title || 'Google Form',
+              mimeType: 'form/google',
+              url: mat.form.formUrl || undefined,
+            });
+          }
+        }
+        return result;
+      };
+
       // 1. Fetch CourseWork (Assignments)
       try {
         const workRes = await classroom.courses.courseWork.list({
@@ -121,24 +158,7 @@ export async function pollGoogleClassroom(): Promise<NormalizedRawItem[]> {
             dueDateIso = new Date(`${year}-${month}-${day}T${hour}:${minute}:00Z`).toISOString();
           }
 
-          // Extract materials/attachments
-          const attachments: Array<{ name: string; driveFileId?: string; mimeType?: string }> = [];
-          if (cw.materials) {
-            for (const mat of cw.materials) {
-              if (mat.driveFile?.driveFile) {
-                attachments.push({
-                  name: mat.driveFile.driveFile.title || 'Classroom Attachment',
-                  driveFileId: mat.driveFile.driveFile.id || undefined,
-                  mimeType: mat.driveFile.driveFile.alternateLink ? 'application/drive' : undefined,
-                });
-              } else if (mat.link) {
-                attachments.push({
-                  name: mat.link.title || mat.link.url || 'Link',
-                  mimeType: 'text/url',
-                });
-              }
-            }
-          }
+          const attachments = parseMaterials(cw.materials);
 
           items.push({
             source: 'classroom',
@@ -155,7 +175,33 @@ export async function pollGoogleClassroom(): Promise<NormalizedRawItem[]> {
         console.warn(`Classroom courseWork error for course ${course.id}:`, cwErr?.message || cwErr);
       }
 
-      // 2. Fetch Announcements
+      // 2. Fetch CourseWork Materials (Lecture notes, Syllabus, Readings)
+      try {
+        const cwmRes = await classroom.courses.courseWorkMaterials.list({
+          courseId: course.id,
+          courseWorkMaterialStates: ['PUBLISHED'],
+        });
+        const cwmList = cwmRes.data.courseWorkMaterial || [];
+
+        for (const cwm of cwmList) {
+          if (!cwm.id) continue;
+          const attachments = parseMaterials(cwm.materials);
+
+          items.push({
+            source: 'classroom',
+            external_id: `cwm_${cwm.id}`,
+            course: courseName,
+            title: cwm.title || 'Course Material',
+            raw_body: cwm.description || cwm.title || '',
+            attachments,
+            posted_date: cwm.creationTime || new Date().toISOString(),
+          });
+        }
+      } catch (cwmErr: any) {
+        console.warn(`Classroom courseWorkMaterials error for course ${course.id}:`, cwmErr?.message || cwmErr);
+      }
+
+      // 3. Fetch Announcements (with attachment parsing)
       try {
         const annRes = await classroom.courses.announcements.list({
           courseId: course.id,
@@ -165,12 +211,15 @@ export async function pollGoogleClassroom(): Promise<NormalizedRawItem[]> {
 
         for (const ann of announcements) {
           if (!ann.id) continue;
+          const attachments = parseMaterials(ann.materials);
+
           items.push({
             source: 'classroom',
             external_id: `ann_${ann.id}`,
             course: courseName,
             title: `Announcement: ${(ann.text || 'Notice').slice(0, 60)}...`,
             raw_body: ann.text || '',
+            attachments,
             posted_date: ann.creationTime || new Date().toISOString(),
           });
         }
@@ -377,13 +426,242 @@ async function findFuzzyDuplicate(
 }
 
 /**
- * Processes a single ingested item (useful for webhook-triggered events)
+ * Downloads and extracts complete text from an attachment in Google Drive.
+ * Supports:
+ * - Google Docs (export to text/plain)
+ * - Google Sheets (export to text/csv)
+ * - Google Slides (export to text/plain)
+ * - Word Docs .docx (Mammoth text & table parser)
+ * - PDFs (pdf-parse)
+ * - Images .png, .jpg, .jpeg, .webp (Gemini Vision OCR & visual transcription)
+ * - Plain text, markdown, CSV, JSON, and source code
+ */
+export async function downloadAndExtractDriveFile(
+  drive: any,
+  fileId: string,
+  hintName: string = '',
+  thumbnailUrl?: string,
+  alternateLink?: string
+): Promise<{ text: string; mimeType: string; name: string }> {
+  let mimeType = '';
+  let fileName = hintName || 'Attachment';
+
+  // 1. Try direct Google Drive API
+  try {
+    const fileMeta = await drive.files.get({
+      fileId,
+      fields: 'id, name, mimeType, size',
+      supportsAllDrives: true,
+    });
+
+    mimeType = fileMeta.data.mimeType || '';
+    fileName = fileMeta.data.name || hintName || 'Attachment';
+
+    // Google Workspace Cloud Files (Docs, Sheets, Slides)
+    if (mimeType === 'application/vnd.google-apps.document') {
+      try {
+        const res = await drive.files.export(
+          { fileId, mimeType: 'text/plain' },
+          { responseType: 'text' }
+        );
+        return { text: String(res.data || '').trim(), mimeType, name: fileName };
+      } catch (docErr: any) {
+        console.warn(`Export failed for Google Doc ${fileName}:`, docErr?.message || docErr);
+      }
+    }
+
+    if (mimeType === 'application/vnd.google-apps.spreadsheet') {
+      try {
+        const res = await drive.files.export(
+          { fileId, mimeType: 'text/csv' },
+          { responseType: 'text' }
+        );
+        return { text: String(res.data || '').trim(), mimeType, name: fileName };
+      } catch (sheetErr: any) {
+        console.warn(`Export failed for Google Sheet ${fileName}:`, sheetErr?.message || sheetErr);
+      }
+    }
+
+    if (mimeType === 'application/vnd.google-apps.presentation') {
+      try {
+        const res = await drive.files.export(
+          { fileId, mimeType: 'text/plain' },
+          { responseType: 'text' }
+        );
+        return { text: String(res.data || '').trim(), mimeType, name: fileName };
+      } catch (slideErr: any) {
+        console.warn(`Export failed for Google Slide ${fileName}:`, slideErr?.message || slideErr);
+      }
+    }
+
+    // Binary files: download media buffer
+    const res = await drive.files.get(
+      { fileId, alt: 'media', supportsAllDrives: true },
+      { responseType: 'arraybuffer' }
+    );
+    const buffer = Buffer.from(res.data as ArrayBuffer);
+
+    // Word Documents (.docx, .doc)
+    const isDocx =
+      mimeType.includes('wordprocessingml') ||
+      mimeType.includes('msword') ||
+      fileName.toLowerCase().endsWith('.docx') ||
+      fileName.toLowerCase().endsWith('.doc');
+
+    if (isDocx) {
+      const text = await extractDocxText(buffer);
+      if (text.trim()) {
+        return {
+          text: text.trim(),
+          mimeType: mimeType || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          name: fileName,
+        };
+      }
+    }
+
+    // PDF Documents (.pdf)
+    const isPdf = mimeType === 'application/pdf' || fileName.toLowerCase().endsWith('.pdf');
+    if (isPdf) {
+      const text = await extractPdfText(buffer);
+      if (text.trim()) {
+        return { text: text.trim(), mimeType: 'application/pdf', name: fileName };
+      }
+    }
+
+    // Images (.png, .jpg, .jpeg, .webp, .gif) -> OCR via Gemini Vision
+    const isImage =
+      mimeType.startsWith('image/') ||
+      /\.(png|jpe?g|webp|gif|bmp)$/i.test(fileName);
+
+    if (isImage) {
+      const text = await extractImageText(buffer, mimeType || 'image/jpeg');
+      if (text.trim()) {
+        return { text: text.trim(), mimeType: mimeType || 'image/jpeg', name: fileName };
+      }
+    }
+
+    // Plain text, Markdown, CSV, JSON, Code files
+    if (
+      mimeType.includes('text') ||
+      mimeType.includes('json') ||
+      mimeType.includes('csv') ||
+      /\.(txt|md|csv|json|py|js|ts|cpp|java|html|xml|yaml|yml)$/i.test(fileName)
+    ) {
+      const text = buffer.toString('utf-8');
+      return { text: text.trim(), mimeType: mimeType || 'text/plain', name: fileName };
+    }
+  } catch (driveErr: any) {
+    // Direct Drive access failed (e.g. file owned by professor, restricted by drive.file scope)
+    // Seamlessly fallback to high-resolution preview + Gemini Vision OCR below
+  }
+
+  // 2. High-Resolution Visual OCR Fallback via Classroom thumbnailUrl
+  // Classroom provides rendered preview thumbnails for PDFs, Word docs, Images, and Google Docs
+  if (thumbnailUrl) {
+    try {
+      const highResUrl = thumbnailUrl.replace(/=s\d+$/, '=s1600');
+      const imgRes = await fetch(highResUrl);
+      if (imgRes.ok) {
+        const imgBuffer = Buffer.from(await imgRes.arrayBuffer());
+        const ocrText = await extractImageText(imgBuffer, 'image/jpeg');
+        if (ocrText && ocrText.trim()) {
+          return {
+            text: ocrText.trim(),
+            mimeType: 'application/rendered-preview',
+            name: fileName,
+          };
+        }
+      }
+    } catch (thumbErr: any) {
+      console.warn(`Failed to extract via thumbnailUrl for ${fileName}:`, thumbErr?.message || thumbErr);
+    }
+  }
+
+  return { text: '', mimeType, name: fileName };
+}
+
+/**
+ * Processes a single ingested item (useful for webhook-triggered events and bulk sync)
  */
 export async function processSingleItem(item: NormalizedRawItem, supabaseClient?: any): Promise<boolean> {
   const supabase = supabaseClient || getSupabaseAdmin();
   
   try {
-    // 1. Exact dedup by (source, external_id)
+    // 0. Extract attachments full text for Vector Knowledge Base and Task Requirements
+    const richAttachments: any[] = [];
+    let attachmentsText = '';
+
+    if (item.attachments && item.attachments.length > 0) {
+      const drive = getDriveClient();
+      for (const att of item.attachments) {
+        if (att.driveFileId) {
+          const extracted = await downloadAndExtractDriveFile(
+            drive,
+            att.driveFileId,
+            att.name,
+            (att as any).thumbnailUrl,
+            (att as any).url
+          );
+          richAttachments.push({
+            ...att,
+            name: extracted.name || att.name,
+            mimeType: extracted.mimeType || att.mimeType,
+            extracted_text: extracted.text,
+          });
+          if (extracted.text.trim()) {
+            attachmentsText += `\n\n--- Attachment: ${extracted.name} (${extracted.mimeType || 'unknown'}) ---\n${extracted.text}`;
+          }
+        } else {
+          richAttachments.push(att);
+        }
+      }
+    }
+
+    let fullContent = `${item.title}\n\n${item.raw_body}`;
+    if (attachmentsText) {
+      fullContent += `\n${attachmentsText}`;
+    }
+
+    // 1. Push to Vector Knowledge Base
+    try {
+      const { data: kbExisting } = await supabase
+        .from('knowledge_base')
+        .select('id')
+        .eq('source', item.source)
+        .eq('external_id', item.external_id)
+        .maybeSingle();
+
+      if (!kbExisting) {
+        const embedding = await generateEmbedding(fullContent);
+        
+        await supabase.from('knowledge_base').insert({
+          source: item.source,
+          external_id: item.external_id,
+          course: item.course,
+          title: item.title,
+          content: fullContent,
+          embedding,
+          metadata: {
+            attachments: richAttachments,
+            attachment_count: richAttachments.length,
+            has_extracted_text: richAttachments.some((a: any) => a.extracted_text && a.extracted_text.length > 0),
+          },
+          posted_date: item.posted_date || new Date().toISOString(),
+        });
+      }
+    } catch (vectorErr: any) {
+      console.warn(`Failed to insert into knowledge_base for ${item.external_id}:`, vectorErr?.message || vectorErr);
+    }
+
+    // Determine if this item is actionable and should go to tasks table
+    const isClassroomAssignment = item.source === 'classroom' && item.external_id.startsWith('cw_');
+    const isEmailTask = item.source === 'gmail' && !!item.due_date;
+
+    if (!isClassroomAssignment && !isEmailTask) {
+      return true; // Successfully saved to knowledge base
+    }
+
+    // 2. Exact dedup by (source, external_id)
     const { data: existing } = await supabase
       .from('tasks')
       .select('id, status')
@@ -395,11 +673,10 @@ export async function processSingleItem(item: NormalizedRawItem, supabaseClient?
       return false; // Already exists
     }
 
-    // 2. Cross-source fuzzy dedup (G2/A4: title similarity >= 0.70 + course + 24h due date)
+    // 3. Cross-source fuzzy dedup
     const fuzzyMatch = await findFuzzyDuplicate(supabase, item);
     if (fuzzyMatch) {
-      // Merge attachments into existing task
-      const newAttachments = (item.attachments || []).filter(
+      const newAttachments = (richAttachments || []).filter(
         (na) => !fuzzyMatch.attachments.some((ea: any) => ea.name === na.name)
       );
 
@@ -422,18 +699,23 @@ export async function processSingleItem(item: NormalizedRawItem, supabaseClient?
       return false;
     }
 
-    // Insert new task in 'new' status
+    // Insert new task in 'new' status with posted_date and rich attachments
+    const fullBody = attachmentsText
+      ? `${item.raw_body}\n${attachmentsText}`
+      : item.raw_body;
+
     const { error: insertErr } = await supabase.from('tasks').insert({
       source: item.source,
       external_id: item.external_id,
       course: item.course,
       title: item.title,
-      task_type: 'document', // Default initially before classification
+      task_type: 'document',
       status: 'new',
       due_date: item.due_date || null,
+      posted_date: item.posted_date || new Date().toISOString(),
       extracted_requirements: {
-        raw_body: item.raw_body,
-        attachments: item.attachments || [],
+        raw_body: fullBody,
+        attachments: richAttachments,
         posted_date: item.posted_date,
       },
     });
@@ -443,7 +725,7 @@ export async function processSingleItem(item: NormalizedRawItem, supabaseClient?
       return false;
     }
     
-    return true; // Successfully inserted
+    return true;
   } catch (upsertErr: any) {
     console.error(`Upsert error for item ${item.external_id}:`, upsertErr?.message || upsertErr);
     return false;

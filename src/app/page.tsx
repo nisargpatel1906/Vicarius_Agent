@@ -49,6 +49,7 @@ export default function DashboardPage() {
   const [courseFilter, setCourseFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [showArchived, setShowArchived] = useState<boolean>(false);
+  const [sortBy, setSortBy] = useState<string>('posted_desc');
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [replyText, setReplyText] = useState<string>('');
   const [actionLoading, setActionLoading] = useState<boolean>(false);
@@ -79,8 +80,14 @@ export default function DashboardPage() {
   const fetchData = async () => {
     try {
       setLoading(true);
+      const sortParam =
+        sortBy === 'posted_asc'
+          ? 'posted_date_asc'
+          : sortBy === 'due_asc'
+          ? 'due_date_asc'
+          : 'posted_date_desc';
       const [tasksRes, healthRes, profileRes] = await Promise.all([
-        fetch(`/api/tasks?archived=${showArchived}`),
+        fetch(`/api/tasks?archived=${showArchived}&sort_by=${sortParam}`),
         fetch(`/api/health`),
         fetch(`/api/profile`),
       ]);
@@ -135,7 +142,7 @@ export default function DashboardPage() {
     fetchData();
     const interval = setInterval(fetchData, 15000); // Auto-refresh every 15s
     return () => clearInterval(interval);
-  }, [showArchived]);
+  }, [showArchived, sortBy]);
 
   // Trigger manual ingestion
   const handleTriggerIngest = async () => {
@@ -364,17 +371,35 @@ export default function DashboardPage() {
     };
   };
 
-  // Filter tasks
-  const filteredTasks = tasks.filter((t) => {
-    const matchesSearch =
-      (t.title || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (t.course || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (t.task_type || '').toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesStatus = statusFilter === 'all' || t.status === statusFilter;
-    const matchesCourse = courseFilter === 'all' || t.course === courseFilter;
-    const matchesType = typeFilter === 'all' || t.task_type === typeFilter;
-    return matchesSearch && matchesStatus && matchesCourse && matchesType;
-  });
+  // Filter and sort tasks (Default: Newest / Early on top, Old on bottom)
+  const filteredTasks = useMemo(() => {
+    const list = tasks.filter((t) => {
+      const matchesSearch =
+        (t.title || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (t.course || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (t.task_type || '').toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesStatus = statusFilter === 'all' || t.status === statusFilter;
+      const matchesCourse = courseFilter === 'all' || t.course === courseFilter;
+      const matchesType = typeFilter === 'all' || t.task_type === typeFilter;
+      return matchesSearch && matchesStatus && matchesCourse && matchesType;
+    });
+
+    return list.sort((a, b) => {
+      const dateA = a.posted_date ? new Date(a.posted_date).getTime() : new Date(a.created_at).getTime();
+      const dateB = b.posted_date ? new Date(b.posted_date).getTime() : new Date(b.created_at).getTime();
+
+      if (sortBy === 'posted_asc') {
+        return dateA - dateB;
+      }
+      if (sortBy === 'due_asc') {
+        if (!a.due_date) return 1;
+        if (!b.due_date) return -1;
+        return new Date(a.due_date).getTime() - new Date(b.due_date).getTime();
+      }
+      // Default: posted_desc (Newest / Early on top, Old on bottom)
+      return dateB - dateA;
+    });
+  }, [tasks, searchQuery, statusFilter, courseFilter, typeFilter, sortBy]);
 
   const flaggedTasks = tasks.filter((t) => t.status === 'flagged');
   const queuedTasks = tasks.filter((t) => t.status === 'queued');
@@ -803,6 +828,18 @@ export default function DashboardPage() {
               <option value="research">Research Summary</option>
               <option value="handwritten">Handwritten Style</option>
             </select>
+
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              className="stationery-select"
+              title="Classroom post date ordering"
+              style={{ fontWeight: 600, color: 'var(--primary)' }}
+            >
+              <option value="posted_desc">Sort: Classroom Posted (Newest First / Old at Bottom)</option>
+              <option value="posted_asc">Sort: Classroom Posted (Oldest First)</option>
+              <option value="due_asc">Sort: Deadline (Most Urgent First)</option>
+            </select>
           </div>
 
           {/* Academic Table View */}
@@ -814,6 +851,7 @@ export default function DashboardPage() {
                   <th>Assignment / Deliverable</th>
                   <th>Course</th>
                   <th>Type</th>
+                  <th>Posted (Classroom)</th>
                   <th>Deadline (IST)</th>
                   <th>Status</th>
                   <th style={{ textAlign: 'right' }}>Actions</th>
@@ -822,7 +860,7 @@ export default function DashboardPage() {
               <tbody>
                 {filteredTasks.length === 0 ? (
                   <tr>
-                    <td colSpan={7} style={{ padding: '48px 16px', textAlign: 'center' }}>
+                    <td colSpan={8} style={{ padding: '48px 16px', textAlign: 'center' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
                         <VicariusLogo size={48} variant="mark" fill="var(--outline-variant)" />
                         <div className="font-serif" style={{ fontSize: '1.1rem', color: 'var(--on-surface-variant)' }}>
@@ -839,6 +877,24 @@ export default function DashboardPage() {
                 ) : (
                   filteredTasks.map((t) => {
                     const deadline = getDeadlineInfo(t.due_date);
+                    const postedFormatted = t.posted_date
+                      ? new Date(t.posted_date).toLocaleDateString('en-IN', {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          timeZone: 'Asia/Kolkata',
+                        })
+                      : t.created_at
+                      ? new Date(t.created_at).toLocaleDateString('en-IN', {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          timeZone: 'Asia/Kolkata',
+                        })
+                      : '—';
+
                     return (
                       <tr
                         key={t.id}
@@ -941,6 +997,11 @@ export default function DashboardPage() {
                               </span>
                             )}
                           </div>
+                        </td>
+                        <td>
+                          <span style={{ fontSize: '0.82rem', color: 'var(--on-surface-variant)', whiteSpace: 'nowrap' }}>
+                            {postedFormatted}
+                          </span>
                         </td>
                         <td>
                           <div>
@@ -1271,15 +1332,33 @@ export default function DashboardPage() {
               {selectedTask.title}
             </h2>
 
-            <p style={{ color: 'var(--on-surface-variant)', fontSize: '0.88rem', marginBottom: selectedTask.progress_note ? 14 : 24 }}>
-              <strong>Due Date:</strong>{' '}
-              {selectedTask.due_date
-                ? new Date(selectedTask.due_date).toLocaleString('en-IN', {
-                    timeZone: 'Asia/Kolkata',
-                    dateStyle: 'full',
-                    timeStyle: 'short',
-                  })
-                : 'No explicit deadline specified'}
+            <p style={{ color: 'var(--on-surface-variant)', fontSize: '0.88rem', marginBottom: selectedTask.progress_note ? 14 : 24, display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'center' }}>
+              <span>
+                <strong>Due Date:</strong>{' '}
+                {selectedTask.due_date
+                  ? new Date(selectedTask.due_date).toLocaleString('en-IN', {
+                      timeZone: 'Asia/Kolkata',
+                      dateStyle: 'full',
+                      timeStyle: 'short',
+                    })
+                  : 'No explicit deadline specified'}
+              </span>
+              <span style={{ borderLeft: '1px solid var(--outline-variant)', paddingLeft: 16 }}>
+                <strong>Posted in Classroom:</strong>{' '}
+                {selectedTask.posted_date
+                  ? new Date(selectedTask.posted_date).toLocaleString('en-IN', {
+                      timeZone: 'Asia/Kolkata',
+                      dateStyle: 'medium',
+                      timeStyle: 'short',
+                    })
+                  : selectedTask.created_at
+                  ? new Date(selectedTask.created_at).toLocaleString('en-IN', {
+                      timeZone: 'Asia/Kolkata',
+                      dateStyle: 'medium',
+                      timeStyle: 'short',
+                    })
+                  : 'Not recorded'}
+              </span>
             </p>
 
             {selectedTask.progress_note && (

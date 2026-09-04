@@ -14,6 +14,7 @@ export async function GET(req: NextRequest) {
     const status = url.searchParams.get('status');
     const course = url.searchParams.get('course');
     const taskType = url.searchParams.get('task_type');
+    const sortBy = url.searchParams.get('sort_by') || 'posted_date_desc';
 
     let query = supabase
       .from('tasks')
@@ -21,8 +22,16 @@ export async function GET(req: NextRequest) {
         *,
         questions (*),
         deliverables (*)
-      `)
-      .order('due_date', { ascending: true, nullsFirst: false });
+      `);
+
+    if (sortBy === 'posted_date_asc') {
+      query = query.order('posted_date', { ascending: true, nullsFirst: false });
+    } else if (sortBy === 'due_date_asc') {
+      query = query.order('due_date', { ascending: true, nullsFirst: false });
+    } else {
+      // Default: posted_date_desc (Early / newest on top, old on bottom)
+      query = query.order('posted_date', { ascending: false, nullsFirst: false });
+    }
 
     if (!includeArchived) {
       query = query.eq('archived', false);
