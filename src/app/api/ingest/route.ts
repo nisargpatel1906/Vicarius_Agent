@@ -11,9 +11,14 @@ import { getGmailClient } from '@/lib/google-auth';
 
 export async function POST(req: NextRequest) {
   try {
-    const expectedToken = process.env.INGEST_SECRET_TOKEN;
-    if (!expectedToken) {
-      console.error('CRITICAL: INGEST_SECRET_TOKEN is not configured.');
+    const validTokens = [
+      process.env.INGEST_SECRET_TOKEN,
+      process.env.CRON_SECRET,
+      process.env.DASHBOARD_ACCESS_TOKEN,
+    ].filter(Boolean);
+
+    if (validTokens.length === 0) {
+      console.error('CRITICAL: No ingestion or cron token configured.');
       return NextResponse.json<ApiResponse>(
         { success: false, error: { code: 'CONFIG_ERROR', message: 'Server configuration error' } },
         { status: 500 }
@@ -22,7 +27,7 @@ export async function POST(req: NextRequest) {
     
     const authHeader = req.headers.get('authorization');
     const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
-    if (token !== expectedToken) {
+    if (!token || !validTokens.includes(token)) {
       return NextResponse.json<ApiResponse>(
         { success: false, error: { code: 'UNAUTHORIZED', message: 'Invalid or missing bearer token' } },
         { status: 401 }
