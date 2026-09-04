@@ -1,12 +1,16 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { VicariusLogo } from '@/components/VicariusLogo';
 
 export default function NotFound() {
   const [keyInput, setKeyInput] = useState('');
   const [showKeyField, setShowKeyField] = useState(false);
+
+  useEffect(() => {
+    document.title = '404 • Page Not Found';
+  }, []);
 
   const handleUnlock = (e: React.FormEvent) => {
     e.preventDefault();
