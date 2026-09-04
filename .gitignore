@@ -55,3 +55,9 @@ supabase/.temp/
 assets/medical_renders/
 exports/
 test_rag.ts
+tests/
+scripts/test_*
+scripts/inject_test_task.py
+scripts/send_test_email.ts
+docx/database_schema_visualization.pdf
+docx/pdf_preview/
