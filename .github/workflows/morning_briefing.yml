@@ -15,7 +15,7 @@ jobs:
           echo "Triggering Vicarius Morning Briefing..."
           TARGET_URL="${{ secrets.NEXT_PUBLIC_SITE_URL }}"
           if [ -z "$TARGET_URL" ]; then
-            TARGET_URL="https://your-domain.vercel.app"
+            TARGET_URL="https://your-deployment-domain.vercel.app"
           fi
           TOKEN="${{ secrets.CRON_SECRET }}"
           if [ -z "$TOKEN" ]; then

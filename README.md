@@ -3,7 +3,7 @@
 > **Autonomous Academic Intelligence Pipeline & Quiet Luxury Operations Command**  
 > *Engineered for Nisarg Patel — Academic Institution*
 
-[![Vercel Deployment](https://img.shields.io/badge/Deployment-Live%20on%20Vercel-success?style=for-the-badge&logo=vercel)](https://your-domain.vercel.app/)
+[![Deployment](https://img.shields.io/badge/Deployment-Private%20Cloud-blue?style=for-the-badge&logo=vercel)](#)
 [![Framework](https://img.shields.io/badge/Framework-Next.js%2015%20%7C%20LangGraph-blue?style=for-the-badge&logo=nextdotjs)](https://nextjs.org/)
 [![Database](https://img.shields.io/badge/Database-Supabase%20PostgreSQL-3ECF8E?style=for-the-badge&logo=supabase)](https://supabase.com/)
 [![Design System](https://img.shields.io/badge/Design-Cognitive%20Heritage-705728?style=for-the-badge)](./docx/DESIGN.md)
@@ -129,8 +129,8 @@ python -m worker.worker --daemon
 
 ---
 
-## 🌐 Live Production
+## 🌐 Production Architecture
 
-- **Dashboard**: [https://your-domain.vercel.app](https://your-domain.vercel.app)
+- **Dashboard**: Private deployment (protected behind operator passkey gate)
 - **Deployment Platform**: Vercel (Edge & Serverless Node.js runtime)
 - **Database**: Supabase PostgreSQL (Stockholm / eu-north-1)

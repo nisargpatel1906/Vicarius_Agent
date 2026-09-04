@@ -16,7 +16,7 @@ jobs:
           echo "Triggering Vicarius Ingestion pipeline..."
           TARGET_URL="${{ secrets.VERCEL_DEPLOYED_URL }}"
           if [ -z "$TARGET_URL" ]; then
-            TARGET_URL="https://your-domain.vercel.app"
+            TARGET_URL="https://your-deployment-domain.vercel.app"
           fi
           TOKEN="${{ secrets.INGEST_SECRET_TOKEN }}"
           if [ -z "$TOKEN" ]; then

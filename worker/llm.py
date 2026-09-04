@@ -138,7 +138,7 @@ def call_llm(
                 headers={
                     "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                     "Content-Type": "application/json",
-                    "HTTP-Referer": "https://your-domain.vercel.app",
+                    "HTTP-Referer": os.getenv("APP_URL", "https://github.com/nisargpatel1906/Vicarius_Agent"),
                     "X-Title": "Vicarius Academic Agent",
                 },
                 json={
