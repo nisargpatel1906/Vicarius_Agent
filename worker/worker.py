@@ -40,6 +40,9 @@ HEAVY_JOB_PREFERRED_START = os.getenv("HEAVY_JOB_PREFERRED_START", "23:00")
 HEAVY_JOB_PREFERRED_END = os.getenv("HEAVY_JOB_PREFERRED_END", "07:00")
 QUESTION_WAIT_TIMEOUT_MINUTES = int(os.getenv("QUESTION_WAIT_TIMEOUT_MINUTES", "20"))
 TIMEZONE_STR = os.getenv("TIMEZONE", "Asia/Kolkata")
+MAX_FIX_ATTEMPTS = max(1, int(os.getenv("MAX_FIX_ATTEMPTS", "4")))
+DEADLINE_SAFETY_BUFFER_MINUTES = int(os.getenv("DEADLINE_SAFETY_BUFFER_MINUTES", "20"))
+TELEGRAM_MAX_DOC_MB = int(os.getenv("TELEGRAM_MAX_DOC_MB", "50"))
 DRIVE_OUTPUT_FOLDER_ID = os.getenv("DRIVE_OUTPUT_FOLDER_ID")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_ALLOWED_CHAT_ID = os.getenv("TELEGRAM_ALLOWED_CHAT_ID")
@@ -201,6 +204,37 @@ def send_telegram_photo(photo_path: Path, caption: Optional[str] = None) -> bool
         return False
 
 
+def send_telegram_document(file_path: Path, caption: Optional[str] = None) -> bool:
+    """Send document deliverable to authorized Telegram chat ID (LOOP_ENGINEERING.md §3.5).
+    Caps at TELEGRAM_MAX_DOC_MB (default 50MB)."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_ALLOWED_CHAT_ID or not file_path.exists():
+        return False
+    try:
+        import requests
+        file_size_mb = file_path.stat().st_size / (1024 * 1024)
+        if file_size_mb > TELEGRAM_MAX_DOC_MB:
+            print(f"[Telegram-Doc] File {file_path.name} is {file_size_mb:.1f}MB, exceeds limit of {TELEGRAM_MAX_DOC_MB}MB. Skipping Telegram attachment.")
+            return False
+
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
+        with open(file_path, "rb") as f:
+            data = {"chat_id": TELEGRAM_ALLOWED_CHAT_ID}
+            if caption:
+                data["caption"] = caption[:1024]
+                data["parse_mode"] = "HTML"
+            resp = requests.post(url, data=data, files={"document": f}, timeout=30)
+            if resp.status_code == 200:
+                return True
+            # Fallback without parse_mode
+            f.seek(0)
+            data["parse_mode"] = ""
+            resp2 = requests.post(url, data=data, files={"document": f}, timeout=30)
+            return resp2.status_code == 200
+    except Exception as e:
+        print(f"[Telegram-Error] Failed to send document: {e}", file=sys.stderr)
+        return False
+
+
 def set_below_normal_priority() -> None:
     """Set worker process and future subprocesses to Below Normal OS priority (PRD 6.3 / 12.1)."""
     try:
@@ -304,6 +338,35 @@ def check_system_load_and_concurrency(due_date_str: Optional[str], weight: str =
             return False
 
     return True
+
+
+def timeout_minutes_for_weight(task: Dict[str, Any]) -> int:
+    """Returns the tiered timeout in minutes based on task weight (PRD 6.3.1 & Phase 18)."""
+    weight = task.get("weight", "light")
+    return (
+        HEAVY_TIMEOUT_MINUTES if weight == "heavy"
+        else (MEDIUM_TIMEOUT_MINUTES if weight == "medium" else LIGHT_TIMEOUT_MINUTES)
+    )
+
+
+def next_attempt_fits_before_deadline(task: Dict[str, Any]) -> bool:
+    """Decides in Asia/Kolkata whether the next attempt can finish before the deadline (LOOP_ENGINEERING.md §3.2)."""
+    due_str = task.get("due_date")
+    if not due_str:
+        return True  # No deadline known -> only the count cap applies
+    try:
+        from dateutil import parser as dt_parser
+        due_dt = dt_parser.isoparse(due_str)
+        if due_dt.tzinfo is None:
+            due_dt = pytz.utc.localize(due_dt)
+        due_ist = due_dt.astimezone(TARGET_TZ)
+        now_ist = datetime.datetime.now(datetime.timezone.utc).astimezone(TARGET_TZ)
+        est_minutes = timeout_minutes_for_weight(task)
+        total_needed_minutes = est_minutes + DEADLINE_SAFETY_BUFFER_MINUTES
+        return (now_ist + datetime.timedelta(minutes=total_needed_minutes)) <= due_ist
+    except Exception as e:
+        print(f"[Worker-Deadline] Error evaluating deadline fit: {e}")
+        return True
 
 
 def claim_next_task() -> Optional[Dict[str, Any]]:
@@ -1027,11 +1090,8 @@ def execute_build(task: Dict[str, Any], retry_count: int = 0, retry_note: str = 
     task_work_dir = BASE_WORK_DIR / task_id
     task_work_dir.mkdir(parents=True, exist_ok=True)
 
-    # Tiered Timeout Selection (PRD Section 6.3.1 & 9)
-    timeout_minutes = (
-        HEAVY_TIMEOUT_MINUTES if weight == "heavy"
-        else (MEDIUM_TIMEOUT_MINUTES if weight == "medium" else LIGHT_TIMEOUT_MINUTES)
-    )
+    # Tiered Timeout Selection (PRD Section 6.3.1 & Phase 18)
+    timeout_minutes = timeout_minutes_for_weight(task)
 
     build_spec = task.get("build_spec") or f"Complete academic task: {task.get('title')}"
     spec_additions: List[str] = []
@@ -1063,14 +1123,22 @@ def execute_build(task: Dict[str, Any], retry_count: int = 0, retry_note: str = 
         "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
     }).eq("id", task_id).execute()
 
-    start_msg = (
-        f"🚀 <b>Task Started:</b> {html_module.escape(task['title'])}\n"
-        f"<b>Course:</b> {html_module.escape(task.get('course') or 'General')}\n"
-        f"<b>Type:</b> <code>{task_type}</code> ({weight} lift)\n"
-        f"<b>Timeout:</b> {timeout_minutes}m\n\n"
-        f"<i>AI is generating your academic deliverables...</i>"
-    )
-    send_telegram_notification(start_msg)
+    if retry_count == 0:
+        start_msg = (
+            f"🚀 <b>Task Started:</b> {html_module.escape(task['title'])}\n"
+            f"<b>Course:</b> {html_module.escape(task.get('course') or 'General')}\n"
+            f"<b>Type:</b> <code>{task_type}</code> ({weight} lift)\n"
+            f"<b>Timeout:</b> {timeout_minutes}m\n\n"
+            f"<i>AI is generating your academic deliverables...</i>"
+        )
+        send_telegram_notification(start_msg)
+    else:
+        max_retries = MAX_FIX_ATTEMPTS - 1
+        note_short = (retry_note.strip() or "Refining output")[:140]
+        send_telegram_notification(
+            f"🔧 <b>Retry {retry_count}/{max_retries}</b> — applying fix: "
+            f"<i>{html_module.escape(note_short)}</i>"
+        )
 
     # Sleep Prevention during Heavy Lift (PRD Section 6.3.1)
     if weight == "heavy":
@@ -1804,14 +1872,15 @@ def diagnose_failure(
     produced_files: Optional[List[Path]] = None,
     verify_details: Optional[Dict[str, Any]] = None,
     post_retry: bool = False,
+    attempt_history: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """
-    Reflexion-style root-cause analysis of a build/verification failure.
+    Reflexion-style root-cause analysis of a build/verification failure (LOOP_ENGINEERING.md §3.3).
 
     Uses the worker LLM (OpenRouter -> Groq fallback, both timeout-bounded) to reason about
-    WHY the task failed rather than blindly retrying. The result (a) drives the single
-    informed retry via `retry_instructions`, and (b) becomes a clear, plain-language Telegram
-    flag a non-technical person can act on.
+    WHY the task failed rather than blindly retrying. When attempt_history is provided, it explicitly
+    instructs the LLM not to repeat previously failed fixes, and to declare agent_fixable=false if
+    a human must intervene.
 
     All error/stdout text is secret-sanitized before it reaches the LLM or any output, and the
     LLM's own text is sanitized again on the way out. Falls back to the rule-based
@@ -1844,10 +1913,25 @@ def diagnose_failure(
     if not (OPENROUTER_API_KEY or GROQ_API_KEY):
         return fallback
 
+    history_text = ""
+    if attempt_history:
+        lines = []
+        for att in attempt_history:
+            a_num = att.get("attempt", 1)
+            a_cat = _sanitize_for_report(str(att.get("category", "unknown")))
+            a_fix = _sanitize_for_report(str(att.get("fix_tried") or att.get("root_cause") or "generic retry"))
+            a_out = att.get("outcome", "failed")
+            lines.append(f"- Attempt #{a_num} [{a_cat}]: fix tried: '{a_fix}' -> outcome: {a_out}")
+        history_text = (
+            "\n\nPRIOR ATTEMPT HISTORY (FAILED FIXES):\n" + "\n".join(lines) +
+            "\n\nIMPORTANT: These fixes were already tried and FAILED. Do NOT repeat them. Propose a materially different approach, "
+            "or if nothing new is worth trying / the issue is truly unfixable by the agent, set 'agent_fixable': false."
+        )
+
     system_prompt = (
         "You are the self-diagnosis module of an autonomous academic-task build agent. "
         "A build just failed. Analyze the real root cause instead of guessing, and decide whether the "
-        "agent can fix it on its own single retry or whether a human must intervene. Be concrete and honest. "
+        "agent can fix it on its own retry or whether a human must intervene. Be concrete and honest. "
         "Distinguish transient/provider errors (a retry likely helps) from specification problems "
         "(the build instructions must change), capability limits (the agent literally cannot do it — e.g. a "
         "missing/expired credential, or an action only the human can perform), and environment issues.\n\n"
@@ -1858,7 +1942,7 @@ def diagnose_failure(
         '  "plain_explanation": "a direct, professional, and concise explanation of what went wrong. Do NOT use analogies, metaphors, or overly conversational language. Use your own technical logic.",\n'
         '  "category": "provider|spec|capability|environment|transient|unknown",\n'
         '  "agent_fixable": true or false,\n'
-        '  "retry_instructions": "concrete, specific instructions to append to the build prompt for ONE retry that fixes this",\n'
+        '  "retry_instructions": "concrete, specific instructions to append to the build prompt for a retry that fixes this",\n'
         '  "user_action": "what the student can do; if they can fix it by replying on Telegram, say exactly what to reply",\n'
         '  "confidence": 0.0 to 1.0\n'
         "}"
@@ -1873,6 +1957,7 @@ def diagnose_failure(
         f"ERROR / VERIFICATION REASON:\n{safe_error}\n\n"
         f"STDOUT TAIL:\n{safe_stdout or '(none)'}\n\n"
         f"This is {'the analysis AFTER an informed retry already failed' if post_retry else 'the first failure, before any retry'}."
+        f"{history_text}"
     )
 
     raw = call_llm_worker(
@@ -1934,10 +2019,16 @@ def _classify_error_message(error_message: str) -> str:
     return f"Build/verification error: {error_message[:200]}"
 
 
-def handle_task_failure(task: Dict[str, Any], error_message: str, diagnosis: Optional[Dict[str, Any]] = None, produced_files: Optional[List[Path]] = None) -> None:
-    """Flags a task after the single informed retry has failed, and sends a CLEAR, plain-language
-    Telegram report the student can act on — including a one-tap "just reply to fix it" path.
-    (PRD Section 6.3 / 6.4; CLAUDE.md: one retry, then flag.)
+def handle_task_failure(
+    task: Dict[str, Any],
+    error_message: str,
+    diagnosis: Optional[Dict[str, Any]] = None,
+    produced_files: Optional[List[Path]] = None,
+    attempt_log: Optional[List[Dict[str, Any]]] = None,
+) -> None:
+    """Flags a task after bounded self-correction attempts have failed or stopped early, and sends a CLEAR,
+    plain-language Telegram report the student can act on — including attached partial files and a one-tap
+    "just reply to fix it" path (LOOP_ENGINEERING.md §3.4; PRD Section 6.3 / 6.4).
 
     `diagnosis` is the AI root-cause analysis from diagnose_failure(); when absent (e.g. LLM
     offline) it degrades to the rule-based _classify_error_message."""
@@ -1966,7 +2057,12 @@ def handle_task_failure(task: Dict[str, Any], error_message: str, diagnosis: Opt
         confidence = 0.0
 
     # result_summary is surfaced in the dashboard + /details — keep it human-readable & secret-free.
-    summary_line = f"Flagged after 1 informed retry — {plain}"
+    if attempt_log is not None:
+        n_attempts = len(attempt_log)
+        summary_line = f"Flagged after {n_attempts} attempt{'s' if n_attempts != 1 else ''} — {plain}"
+    else:
+        summary_line = f"Flagged after 1 informed retry — {plain}"
+
     sb.table("tasks").update({
         "status": "flagged",
         "result_summary": summary_line[:1000],
@@ -1980,16 +2076,50 @@ def handle_task_failure(task: Dict[str, Any], error_message: str, diagnosis: Opt
         f"Task '{task.get('title')}' (ID: {task_id}) flagged [{category}, conf={confidence}, src={(diagnosis or {}).get('source', 'none')}]: {root_cause[:400]}",
     )
 
+    # Format 'What I already tried' section from attempt_log (LOOP_ENGINEERING.md §3.4)
+    if attempt_log:
+        tried_lines = []
+        for entry in attempt_log:
+            att_num = entry.get("attempt", "?")
+            outcome = entry.get("outcome", "failed")
+            if outcome == "stopped_early_deadline":
+                tried_lines.append("• <i>Stopped early: not enough time before the deadline for another attempt.</i>")
+            elif outcome == "unfixable":
+                tried_lines.append(f"• Attempt {att_num}: diagnosed as unfixable by AI agent — escalated to human.")
+            else:
+                cat = html.escape(_sanitize_for_report(str(entry.get("category") or "unknown")))
+                raw_fix = str(entry.get("fix_tried") or entry.get("root_cause") or "retried with adjusted instructions")
+                fix = html.escape(_sanitize_for_report(raw_fix))
+                if len(fix) > 120:
+                    fix = fix[:117] + "..."
+                tried_lines.append(f"• Attempt {att_num}: diagnosed <b>{cat}</b> — tried \"{fix}\" → still failed.")
+
+        if not task.get("due_date"):
+            tried_lines.append("• <i>(No deadline set — deadline safety guard did not apply)</i>")
+
+        if len(tried_lines) > 6:
+            hidden = len(tried_lines) - 5
+            tried_lines = tried_lines[:5] + [f"• <i>...and {hidden} earlier attempts</i>"]
+
+        what_i_tried_body = "\n".join(tried_lines)
+        what_i_tried_text = f"<b>What I already tried:</b>\n{what_i_tried_body}\n\n"
+    else:
+        what_i_tried_text = (
+            f"<b>What I already tried:</b>\n"
+            f"I diagnosed the problem and automatically retried once with a fix, but it still didn't work.\n\n"
+        )
+
     # Upload partial files to Drive if present
     drive_links = []
     if produced_files:
         creds = get_google_credentials()
         if creds and DRIVE_OUTPUT_FOLDER_ID:
             for f in produced_files:
-                if f.exists():
-                    link = upload_to_drive(creds, task.get("course") or "General", task_id, f)
+                p = Path(f) if f else None
+                if p and p.exists():
+                    link = upload_to_drive(creds, task.get("course") or "General", task_id, p)
                     if link:
-                        drive_links.append(f"<a href=\"{link}\">{html.escape(f.name)}</a>")
+                        drive_links.append(f"<a href=\"{link}\">{html.escape(p.name)}</a>")
     
     partial_files_text = f"📂 <b>Partial Outputs:</b> {', '.join(drive_links)}\n\n" if drive_links else ""
 
@@ -1998,7 +2128,7 @@ def handle_task_failure(task: Dict[str, Any], error_message: str, diagnosis: Opt
         f"📌 <b>Task:</b> {html.escape(task.get('title') or 'Academic task')}\n"
         f"📚 <b>Course:</b> {html.escape(task.get('course') or 'General')}\n\n"
         f"<b>What went wrong:</b>\n{html.escape(plain)}\n\n"
-        f"<b>What I already tried:</b>\nI diagnosed the problem and automatically retried once with a fix, but it still didn't work.\n\n"
+        f"{what_i_tried_text}"
         f"{partial_files_text}"
         f"<b>What you can do:</b>\n{html.escape(user_action)}\n\n"
         f"💬 <b>Easiest fix:</b> just <b>reply to this message</b> telling me what to change — for example "
@@ -2007,6 +2137,21 @@ def handle_task_failure(task: Dict[str, Any], error_message: str, diagnosis: Opt
         f"<i>Or use</i> <code>/retry {task_id}</code> <i>to rebuild as-is, or</i> <code>/fix {task_id} &lt;instructions&gt;</code>."
     )
     send_telegram_notification(alert_msg)
+
+    # Attach partial deliverable documents directly to Telegram (LOOP_ENGINEERING.md §3.4 / §3.5)
+    if produced_files:
+        for pf in produced_files:
+            try:
+                p = Path(pf) if pf else None
+                if p and p.exists() and p.is_file():
+                    size_mb = p.stat().st_size / (1024 * 1024)
+                    if size_mb <= TELEGRAM_MAX_DOC_MB:
+                        caption = _sanitize_for_report(f"Partial deliverable: {p.name}")
+                        send_telegram_document(p, caption=caption)
+                    else:
+                        print(f"[Worker] Skipping Telegram doc attachment for {p.name} ({size_mb:.1f}MB > {TELEGRAM_MAX_DOC_MB}MB limit); see Drive link.")
+            except Exception as doc_err:
+                print(f"[Worker] Non-fatal error attaching document {pf} to Telegram: {doc_err}")
 
 
 def recover_stalled_tasks() -> None:
@@ -2031,11 +2176,7 @@ def recover_stalled_tasks() -> None:
             except Exception:
                 continue
                 
-            weight = task.get("weight", "light")
-            timeout_mins = (
-                HEAVY_TIMEOUT_MINUTES if weight == "heavy" 
-                else (MEDIUM_TIMEOUT_MINUTES if weight == "medium" else LIGHT_TIMEOUT_MINUTES)
-            )
+            timeout_mins = timeout_minutes_for_weight(task)
             
             # Grace period of 15 minutes over the standard timeout
             elapsed_seconds = (now - updated_dt).total_seconds()
@@ -2079,62 +2220,97 @@ def run_worker_cycle() -> bool:
         }).eq("id", task["id"]).execute()
         return False
 
-    # Step 4: Execute build. On failure the agent DIAGNOSES the root cause (Reflexion) and does
-    # at most ONE informed retry — never a blind re-run. The `retries_used` gate ensures the build
-    # and verification phases together never exceed one retry (CLAUDE.md: one retry, then flag).
-    retries_used = 0
+    # Step 4: Execute build & verification bounded self-correction loop (LOOP_ENGINEERING.md §3.1)
+    attempt = 1
+    attempt_log: List[Dict[str, Any]] = []
     last_diagnosis: Optional[Dict[str, Any]] = None
+    success = False
+    stdout_output = ""
+    produced_files: List[Path] = []
+    verified = False
+    summary = ""
+    details: Dict[str, Any] = {}
 
+    # Attempt 1: Initial build
     success, stdout_output, produced_files = execute_build(task, retry_count=0)
+    if success and produced_files:
+        verified, summary, details = verify_build(task, stdout_output, produced_files)
 
-    if not success or len(produced_files) == 0:
-        print("[Worker] Initial build failed. Diagnosing root cause before the single informed retry (PRD 6.3)...")
+    while not (success and produced_files and verified) and attempt < MAX_FIX_ATTEMPTS:
+        # Deadline-aware budget check in Asia/Kolkata
+        if not next_attempt_fits_before_deadline(task):
+            print(f"[Worker] Stopping self-correction loop early: next attempt cannot fit before task deadline (Asia/Kolkata).")
+            attempt_log.append({
+                "attempt": attempt,
+                "outcome": "stopped_early_deadline",
+            })
+            break
+
+        phase = "build" if not (success and produced_files) else "verification"
+        fail_text = summary if phase == "verification" else f"Build produced no usable output. {stdout_output[:400]}"
+
         last_diagnosis = diagnose_failure(
-            task, "build",
-            f"Build produced no usable output. Output snippet: {stdout_output[:400]}",
-            stdout_output=stdout_output, produced_files=produced_files,
-        )
-        print(f"[Worker] Diagnosis [{last_diagnosis.get('category')}]: {last_diagnosis.get('root_cause')}")
-        time.sleep(2)
-        retries_used = 1
-        success, stdout_output, produced_files = execute_build(
-            task, retry_count=1, retry_note=last_diagnosis.get("retry_instructions", ""),
+            task,
+            phase,
+            fail_text,
+            stdout_output=stdout_output,
+            produced_files=produced_files,
+            verify_details=details,
+            post_retry=(attempt > 1),
+            attempt_history=attempt_log,
         )
 
-    if not success or len(produced_files) == 0:
-        handle_task_failure(task, "Build produced no usable output after one informed retry.", last_diagnosis, produced_files=produced_files)
-        return True
+        attempt_log.append({
+            "attempt": attempt,
+            "phase": phase,
+            "category": last_diagnosis.get("category"),
+            "root_cause": last_diagnosis.get("root_cause"),
+            "plain": last_diagnosis.get("plain_explanation"),
+            "fix_tried": last_diagnosis.get("retry_instructions"),
+            "outcome": "failed",
+        })
 
-    # Step 5: Verify build. Reuse the single retry budget only if it hasn't been spent already.
-    verified, summary, details = verify_build(task, stdout_output, produced_files)
-    if not verified and retries_used == 0:
-        print("[Worker] Verification failed. Diagnosing before the single informed retry...")
-        last_diagnosis = diagnose_failure(
-            task, "verification", summary,
-            stdout_output=stdout_output, produced_files=produced_files, verify_details=details,
-        )
-        print(f"[Worker] Diagnosis [{last_diagnosis.get('category')}]: {last_diagnosis.get('root_cause')}")
-        retries_used = 1
+        # Early stop if diagnoser declares the failure unfixable by the agent
+        if not last_diagnosis.get("agent_fixable", True):
+            print(f"[Worker] Diagnoser declared task unfixable by agent (agent_fixable=False). Stopping loop early.")
+            attempt_log[-1]["outcome"] = "unfixable"
+            break
+
+        attempt += 1
+        print(f"[Worker] Starting informed retry attempt {attempt}/{MAX_FIX_ATTEMPTS}...")
         success, stdout_output, produced_files = execute_build(
-            task, retry_count=1, retry_note=last_diagnosis.get("retry_instructions", ""),
+            task,
+            retry_count=attempt - 1,
+            retry_note=last_diagnosis.get("retry_instructions", ""),
         )
-        if success and len(produced_files) > 0:
+        verified, summary, details = (False, "", {})
+        if success and produced_files:
             verified, summary, details = verify_build(task, stdout_output, produced_files)
 
-    if not verified:
-        # Ensure the flag reflects the actual (verification) failure, re-diagnosing only if the
-        # diagnosis we hold is from the earlier build phase.
-        if last_diagnosis is None or last_diagnosis.get("_phase") != "verification":
-            last_diagnosis = diagnose_failure(
-                task, "verification", summary,
-                stdout_output=stdout_output, produced_files=produced_files,
-                verify_details=details, post_retry=(retries_used > 0),
-            )
-        handle_task_failure(task, summary, last_diagnosis, produced_files=produced_files)
-        return True
-
-    # Step 6: Deliver & Track
-    deliver_and_track(task, produced_files, summary)
+    if success and produced_files and verified:
+        # Step 6: Deliver & Track
+        deliver_and_track(task, produced_files, summary)
+    else:
+        # If the final attempt was not recorded in attempt_log (attempts exhausted):
+        if not attempt_log or attempt_log[-1].get("attempt") != attempt:
+            phase = "build" if not (success and produced_files) else "verification"
+            attempt_log.append({
+                "attempt": attempt,
+                "phase": phase,
+                "category": (last_diagnosis or {}).get("category", "unknown"),
+                "root_cause": (last_diagnosis or {}).get("root_cause", summary or "Build produced no usable output."),
+                "plain": (last_diagnosis or {}).get("plain_explanation", summary or "Build produced no usable output."),
+                "fix_tried": (last_diagnosis or {}).get("retry_instructions", "exhausted max fix attempts"),
+                "outcome": "failed",
+            })
+        fail_summary = summary or "Build produced no usable output."
+        handle_task_failure(
+            task,
+            fail_summary,
+            last_diagnosis,
+            produced_files=produced_files,
+            attempt_log=attempt_log,
+        )
     return True
 
 
