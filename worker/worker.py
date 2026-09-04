@@ -28,7 +28,9 @@ load_dotenv()
 # Configuration from Environment Variables (PRD Section 9)
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_WORKER_KEY") or os.getenv("SUPABASE_SERVICE_KEY")
-PINNED_AGY_VERSION = os.getenv("ANTIGRAVITY_PINNED_VERSION", "1.1.24")
+PINNED_AGY_VERSION = os.getenv("ANTIGRAVITY_PINNED_VERSION", "1.1.26")
+ANTIGRAVITY_MODEL = os.getenv("ANTIGRAVITY_MODEL", "gemini-3.8-flash-high")
+ANTIGRAVITY_EFFORT = os.getenv("ANTIGRAVITY_EFFORT", "high")
 JOB_TIMEOUT_MINUTES = int(os.getenv("JOB_TIMEOUT_MINUTES", "45"))
 LIGHT_TIMEOUT_MINUTES = int(os.getenv("LIGHT_TIMEOUT_MINUTES", "15"))
 MEDIUM_TIMEOUT_MINUTES = int(os.getenv("MEDIUM_TIMEOUT_MINUTES", "45"))
@@ -214,7 +216,8 @@ def set_below_normal_priority() -> None:
 def check_antigravity_cli_version() -> bool:
     """Verify installed agy CLI matches ANTIGRAVITY_PINNED_VERSION (PRD 6.3 / 7)."""
     try:
-        result = subprocess.run(["agy", "--version"], capture_output=True, text=True, timeout=10)
+        agy_bin = shutil.which("agy") or shutil.which("agy.exe") or "agy"
+        result = subprocess.run([agy_bin, "--version"], capture_output=True, text=True, timeout=10, shell=(sys.platform == "win32"))
         output = result.stdout.strip()
         version_match = re.search(r"(\d+\.\d+\.\d+)", output)
         installed_version = version_match.group(1) if version_match else output
@@ -943,7 +946,70 @@ def build_ml_training_from_ai_content(task: Dict[str, Any], ml_data: Dict, task_
         exp_path.write_text(f"# {task.get('title', 'ML Task')}\n\n{ml_data['explanation']}", encoding="utf-8")
         produced.append(exp_path)
 
-    return produced
+def run_agy_cli(task_work_dir: Path, task: Dict[str, Any], timeout_seconds: int = 300) -> Tuple[bool, str]:
+    """Runs Antigravity CLI (agy) using the configured model (gemini-3.8-flash-high) and effort (high)."""
+    agy_bin = shutil.which("agy") or shutil.which("agy.exe") or "agy"
+    model = os.getenv("ANTIGRAVITY_MODEL", "gemini-3.8-flash-high")
+    effort = os.getenv("ANTIGRAVITY_EFFORT", "high")
+
+    title = task.get("title", "Project")
+    course = task.get("course", "General")
+    requirements = task.get("extracted_requirements") or {}
+    req_body = ""
+    if isinstance(requirements, dict):
+        parts = []
+        if requirements.get("raw_body"):
+            parts.append(requirements["raw_body"])
+        if requirements.get("attachments"):
+            for att in requirements["attachments"]:
+                if att.get("extracted_text"):
+                    parts.append(f"--- Attachment {att.get('name', '')} ---\n{att['extracted_text']}")
+        req_body = "\n\n".join(parts)
+    elif isinstance(requirements, str):
+        req_body = requirements
+
+    prompt = (
+        f"You are building an academic code project for student Nisarg Patel (B.Tech CE-AIML 5th Sem, Academic Institution).\n"
+        f"Project Title: {title}\nCourse: {course}\n"
+        f"Assignment Requirements:\n{req_body or task.get('build_spec', '')}\n\n"
+        f"Generate all necessary runnable source files, layout files, build configs, and a comprehensive Report.md with setup instructions, architecture overview, and outcome analysis."
+    )
+
+    cmd = [
+        agy_bin,
+        "-p", prompt,
+        "--model", model,
+        "--effort", effort,
+        "--dangerously-skip-permissions",
+        "--output-format", "text"
+    ]
+    try:
+        print(f"[Worker-AGY] Executing agy CLI (model={model}, effort={effort})...")
+        send_telegram_notification(f"⚡ <b>Executing with Antigravity CLI</b> (<code>{model}</code>, effort: {effort})...")
+        proc = subprocess.run(
+            cmd,
+            cwd=str(task_work_dir),
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            shell=(sys.platform == "win32")
+        )
+        if proc.returncode == 0:
+            created = [f for f in task_work_dir.glob("**/*") if f.is_file() and not f.name.startswith(".")]
+            if created:
+                print(f"[Worker-AGY] agy produced {len(created)} files.")
+                return True, proc.stdout
+            return False, "agy finished but no files were written to workspace."
+        else:
+            err_snip = (proc.stderr or proc.stdout).strip()[:250]
+            print(f"[Worker-AGY] agy exited with code {proc.returncode}: {err_snip}")
+            return False, err_snip
+    except subprocess.TimeoutExpired:
+        print(f"[Worker-AGY] agy timed out after {timeout_seconds}s")
+        return False, f"agy timed out after {timeout_seconds}s"
+    except Exception as e:
+        print(f"[Worker-AGY] agy exception: {e}")
+        return False, str(e)
 
 
 def execute_build(task: Dict[str, Any], retry_count: int = 0, retry_note: str = "") -> Tuple[bool, str, List[Path]]:
@@ -1060,9 +1126,15 @@ def execute_build(task: Dict[str, Any], retry_count: int = 0, retry_note: str = 
                 stdout_log += f"Generated academic report: {doc_path.name}\n"
 
         elif task_type == "code_project":
-            code_files = build_code_project_from_ai_content(task, ai_content, task_work_dir)
-            produced_files.extend(code_files)
-            stdout_log += f"Generated code project with {len(code_files)} files.\n"
+            # Attempt execution via Antigravity CLI (agy) using gemini-3.8-flash-high
+            agy_success, agy_log = run_agy_cli(task_work_dir, task, timeout_seconds=min(timeout_minutes * 60, 300))
+            if agy_success:
+                stdout_log += f"Antigravity CLI ({ANTIGRAVITY_MODEL}) completed build successfully.\n{agy_log}\n"
+            else:
+                stdout_log += f"Antigravity CLI deferred/fallback ({agy_log[:100]}). Scaffolding via AI generation engine.\n"
+                code_files = build_code_project_from_ai_content(task, ai_content, task_work_dir)
+                produced_files.extend(code_files)
+                stdout_log += f"Generated code project with {len(code_files)} files.\n"
 
         elif task_type == "ml_training":
             ml_files = build_ml_training_from_ai_content(task, ai_content, task_work_dir)
