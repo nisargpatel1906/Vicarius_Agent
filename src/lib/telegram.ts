@@ -259,7 +259,14 @@ Extract the structured task details into strict JSON:
 
   await logSystemEvent('info', 'telegram', `New task created from Telegram: '${title}' (ID: ${taskId})`);
 
-  const displayDue = new Date(dueDate).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const displayDue = new Date(dueDate).toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 
   return (
     `✅ <b>Task Created & Queued!</b>\n\n` +
@@ -1342,7 +1349,7 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
     return { handled: true };
   }
 
-  // 3. Create Task Command: /task, /new, /add, /create
+  // 3. Create Task Command: /task, /new, /add, /create (or /task <uuid> to view task details)
   if (
     lower.startsWith('/task') ||
     lower.startsWith('/new') ||
@@ -1352,14 +1359,90 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
     const prompt = text.replace(/^\/(task|new|add|create)\s*/i, '').trim();
     if (!prompt) {
       await reply(
-        `📝 <b>How to create a task:</b>\n\n` +
-        `Type: <code>/task &lt;your assignment details&gt;</code>\n\n` +
+        `📝 <b>How to create or view a task:</b>\n\n` +
+        `• <b>Create:</b> <code>/task &lt;your assignment details&gt;</code>\n` +
+        `• <b>View Task:</b> <code>/task &lt;task_id&gt;</code>\n\n` +
         `<b>Examples:</b>\n` +
         `• <code>/task CE-401 Machine Learning: 5-page lab report on Adam vs SGD with loss curves due Friday</code>\n` +
-        `• <code>/task CE-502 Cloud: 10-slide presentation deck on Kubernetes Pod lifecycle</code>\n` +
-        `• <code>/task CE-403 Web Tech: Full-stack Next.js task dashboard with README and UI screenshot</code>`
+        `• <code>/task CE-502 Cloud: 10-slide presentation deck on Kubernetes Pod lifecycle</code>`
       );
       return { handled: true };
+    }
+
+    // Check if the argument is an existing Task ID or UUID
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(prompt);
+    if (isUuid) {
+      const { data: task } = await supabase
+        .from('tasks')
+        .select('*')
+        .eq('id', prompt)
+        .maybeSingle();
+
+      if (task) {
+        const dueFormatted = task.due_date
+          ? new Date(task.due_date).toLocaleString('en-IN', {
+              timeZone: 'Asia/Kolkata',
+              day: '2-digit',
+              month: 'short',
+              year: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+            })
+          : 'No deadline';
+
+        const { data: delivs } = await supabase
+          .from('deliverables')
+          .select('*')
+          .eq('task_id', task.id);
+
+        let dMsg = `📌 <b>Task Details:</b> ${escapeHtml(task.title)}\n\n` +
+          `📚 <b>Course:</b> ${escapeHtml(task.course || 'General')}\n` +
+          `🏷️ <b>Type:</b> <code>${task.task_type}</code>\n` +
+          `📊 <b>Status:</b> <code>${task.status.toUpperCase()}</code>\n` +
+          `⏰ <b>Due Date:</b> ${dueFormatted}\n\n`;
+
+        if (delivs && delivs.length > 0) {
+          dMsg += `<b>📦 Deliverables:</b>\n`;
+          delivs.forEach((d: any) => {
+            dMsg += `• ${escapeHtml(d.file_name)}: ${d.drive_link || 'Ready'}\n`;
+          });
+        } else {
+          dMsg += `<i>Status: ${task.status.toUpperCase()} — in progress.</i>`;
+        }
+        await reply(dMsg);
+        return { handled: true };
+      } else {
+        // UUID not found in active tasks
+        const { data: activeTasks } = await supabase
+          .from('tasks')
+          .select('id, title, course, due_date, status')
+          .eq('archived', false)
+          .order('posted_date', { ascending: false });
+
+        let notFoundMsg = `⚠️ <b>Task Not Found:</b> <code>${escapeHtml(prompt)}</code>\n\n` +
+          `<i>This task ID does not exist in the active database (it was cleared during the database reset).</i>\n\n` +
+          `<b>📋 Current Active Tasks:</b>\n`;
+
+        if (activeTasks && activeTasks.length > 0) {
+          activeTasks.forEach((at: any, i: number) => {
+            const dueStr = at.due_date
+              ? new Date(at.due_date).toLocaleString('en-IN', {
+                  timeZone: 'Asia/Kolkata',
+                  day: '2-digit',
+                  month: 'short',
+                  year: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })
+              : 'No deadline set';
+            notFoundMsg += `${i + 1}. <b>${escapeHtml(at.title)}</b>\n   📚 ${escapeHtml(at.course || 'General')}\n   ⏰ Due: ${dueStr}\n   🆔 <code>${at.id}</code>\n\n`;
+          });
+        } else {
+          notFoundMsg += `<i>No active tasks currently pending.</i>`;
+        }
+        await reply(notFoundMsg);
+        return { handled: true };
+      }
     }
 
     try {
@@ -1388,13 +1471,22 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
 
     let msg = `📋 <b>Active Academic Tasks (${tasks.length})</b>\n\n`;
     tasks.forEach((t, idx) => {
-      const dueStr = t.due_date ? new Date(t.due_date).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'No deadline';
+      const dueStr = t.due_date
+        ? new Date(t.due_date).toLocaleString('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+          })
+        : 'No deadline';
       const badge = t.status === 'done' ? '✅ DONE' : t.status === 'building' ? '🔨 BUILDING' : t.status === 'queued' ? '⏳ QUEUED' : `⚠️ ${t.status.toUpperCase()}`;
       msg += `${idx + 1}. <b>${escapeHtml(t.title)}</b>\n`;
       msg += `   📚 ${escapeHtml(t.course || 'General')} | 🏷️ <code>${t.task_type}</code> | [${badge}]\n`;
       msg += `   ⏰ Due: ${dueStr} | 🆔 <code>${t.id}</code>\n\n`;
     });
-    msg += `<i>Tip: Type <code>/details &lt;task_id&gt;</code> to view download links.</i>`;
+    msg += `<i>Tip: Type <code>/details &lt;task_id&gt;</code> or <code>/task &lt;task_id&gt;</code> to view details.</i>`;
     await reply(msg);
     return { handled: true };
   }
