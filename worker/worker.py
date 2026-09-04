@@ -380,7 +380,7 @@ def call_llm_worker(messages: List[Dict], temperature: float = 0.2, max_tokens: 
                 prompt_parts.append(f"{role_label}\n{m.get('content', '')}")
             full_prompt = "\n\n".join(prompt_parts)
 
-            gemini_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent"
+            gemini_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent"
             payload = {
                 "contents": [{"parts": [{"text": full_prompt}]}],
                 "generationConfig": {
@@ -510,8 +510,8 @@ def generate_content_with_ai(task: Dict[str, Any]) -> Dict[str, Any]:
         gemini_key = os.getenv("GEMINI_API_KEY")
         if gemini_key:
             print(f"[RAG] Fetching semantic context for course {course_id}...")
-            emb_url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={gemini_key}"
-            emb_resp = requests.post(emb_url, json={"model": "models/text-embedding-004", "content": {"parts": [{"text": title}]}})
+            emb_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key={gemini_key}"
+            emb_resp = requests.post(emb_url, json={"model": "models/gemini-embedding-001", "content": {"parts": [{"text": title}]}, "outputDimensionality": 768})
             if emb_resp.ok:
                 query_embedding = emb_resp.json().get("embedding", {}).get("values", [])
                 sb = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -532,24 +532,44 @@ def generate_content_with_ai(task: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as e:
         print(f"[RAG-Error] Could not fetch course context: {e}")
 
-    req_text = "\n".join(f"- {r}" for r in req_items) if req_items else build_spec[:500]
+    req_sections = []
+    if isinstance(requirements, dict):
+        if requirements.get("raw_body"):
+            req_sections.append(f"### ASSIGNMENT INSTRUCTIONS & GUIDELINES:\n{requirements['raw_body'].strip()}")
+        if requirements.get("attachments"):
+            for idx, att in enumerate(requirements["attachments"]):
+                att_name = att.get("name", f"Attachment {idx+1}")
+                att_text = (att.get("extracted_text") or "").strip()
+                if att_text:
+                    req_sections.append(f"### ATTACHMENT SPECIFICATION [{att_name}]:\n{att_text}")
+        if requirements.get("items"):
+            req_sections.append("### EXPLICIT DELIVERABLE ITEMS:\n" + "\n".join(f"- {r}" for r in requirements["items"]))
+    elif isinstance(requirements, str) and requirements.strip():
+        req_sections.append(f"### ASSIGNMENT REQUIREMENTS:\n{requirements.strip()}")
+
+    if build_spec and build_spec.strip():
+        req_sections.append(f"### BUILD SPECIFICATIONS:\n{build_spec.strip()}")
+
     if rag_context:
-        req_text += rag_context
+        req_sections.append(rag_context.strip())
+
+    req_text = "\n\n".join(req_sections) if req_sections else f"Topic: {title}\nCourse: {course}"
 
     send_telegram_notification("🧠 <b>AI Content Generation Started</b>\n<i>Analyzing requirements and generating academic content...</i>")
 
     if task_type == "presentation":
         system_msg = (
-            f"You are an expert academic presentation designer for a Computer Engineering / AI-ML student at Academic Institution, India.\n"
-            f"Generate a complete, detailed {slide_count}-slide PowerPoint presentation.\n"
+            f"You are an expert academic presentation designer for Nisarg Patel, a B.Tech Computer Engineering (AI & ML) student at Academic Institution, India.\n"
+            f"Generate a complete, detailed {slide_count}-slide PowerPoint presentation directly addressing every question in the assignment.\n"
             f"Return ONLY a valid JSON array (no markdown, no explanation) of exactly {slide_count} slide objects:\n"
             f'[{{"title": "Slide Title", "body": "• Point 1\\n• Point 2\\n• Point 3", "speaker_notes": "Detailed speaker script..."}}]\n'
             f"Requirements:\n"
-            f"- Each slide must have a clear academic title, 3-5 bullet points in body, and thorough speaker notes (50+ words).\n"
-            f"- Start with a title slide (topic overview, course, student name), end with conclusion + references slide.\n"
-            f"- Use professional academic language. Include real data, facts, and technical depth.\n"
+            f"- Each slide must have a clear academic title, 3-5 substantive bullet points in body, and thorough speaker notes (50+ words).\n"
+            f"- Start with a title slide (topic overview, course, student name: Nisarg Patel), end with conclusion + references slide.\n"
+            f"- Use professional academic language. Include real data, architectural diagrams descriptions, facts, and technical depth.\n"
+            f"- Apply Cognitive Heritage theme concepts (warm heritage aesthetic, elegant typography).\n"
             f"- Do NOT use AI filler phrases like 'in today's fast-paced world'.\n"
-            f"- Student: Nisarg Patel | Course: {course}"
+            f"- Student: Nisarg Patel (B.Tech CE-AIML, Sem 5, Academic Institution) | Course: {course}"
         )
         user_msg = f"Topic: {title}\n\nRequirements:\n{req_text}\n\nGenerate exactly {slide_count} slides."
         response = call_openrouter(
@@ -568,18 +588,19 @@ def generate_content_with_ai(task: Dict[str, Any]) -> Dict[str, Any]:
 
     elif task_type in ("document", "research", "handwritten"):
         system_msg = (
-            f"You are an expert academic researcher and writer for a Computer Engineering / AI-ML student at Academic Institution.\n"
-            f"Generate an extensive, rigorous academic {'research paper' if task_type == 'research' else 'technical report'} in JSON.\n"
-            f"Return ONLY valid JSON with this structure:\n"
+            f"You are an expert academic researcher, professor, and writer for Nisarg Patel, a B.Tech Computer Engineering (AI & ML) student at Academic Institution.\n"
+            f"Generate an extensive, rigorous academic {'research paper' if task_type == 'research' else 'technical report'} in JSON format.\n"
+            f"Return ONLY valid JSON with this exact structure:\n"
             f'{{"title": str, "abstract": str, "sections": [{{"heading": str, "content": str}}], "references": [str]}}\n'
             f"Requirements:\n"
+            f"- Solve, answer, and elaborate on EVERY problem statement, question, and rubric criteria in the requirements and attachments.\n"
             f"- Abstract: 150-250 words summarizing problem formulation, methodology, quantitative benchmarks, and conclusions.\n"
-            f"- Minimum 6 in-depth substantive sections (300+ words each) covering Mathematical Formulations, Architecture Details, Complexity/FLOPs analysis, Empirical Results, and Future Directions.\n"
+            f"- Minimum 6 in-depth substantive sections (350+ words each) covering Mathematical Formulations, Architecture Details, Algorithms, Step-by-Step Implementation, Complexity Analysis, Empirical Results, and Conclusion/Outcomes.\n"
             f"- References: 6+ legitimate IEEE/ACM academic citations.\n"
-            f"- Academic rigor: Include precise formulas, Big-O computational complexities, and benchmark comparison tables in text.\n"
-            f"- Student: Nisarg Patel | Course: {course}"
+            f"- Academic rigor: Include precise formulas, code snippets, Big-O computational complexities, and comparison tables in text.\n"
+            f"- Student: Nisarg Patel (B.Tech CE-AIML, Semester 5, Academic Institution) | Course: {course}"
         )
-        user_msg = f"Assignment: {title}\n\nRequirements:\n{req_text}"
+        user_msg = f"Assignment: {title}\n\nRequirements & Questions:\n{req_text}"
         response = call_openrouter(
             [{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
             temperature=0.3, max_tokens=8192
@@ -593,18 +614,20 @@ def generate_content_with_ai(task: Dict[str, Any]) -> Dict[str, Any]:
 
     elif task_type == "code_project":
         system_msg = (
-            f"You are an expert software engineer. Generate a complete, working code project as JSON.\n"
-            f"Return ONLY valid JSON (no markdown) with this structure:\n"
+            f"You are an expert software engineer and academic tutor for Nisarg Patel, a B.Tech Computer Engineering (AI & ML) student at Academic Institution.\n"
+            f"Generate a complete, production-grade, working code project as a single JSON object.\n"
+            f"Return ONLY valid JSON (no surrounding markdown, no backticks outside JSON) with this exact structure:\n"
             f'{{"project_name": str, "description": str, "files": [{{"filename": str, "content": str}}], "readme": str}}\n'
             f"Requirements:\n"
-            f"- Include all source files needed to run the project.\n"
-            f"- Include README.md in the files array with setup and run instructions.\n"
-            f"- For web apps: use vanilla HTML/CSS/JS or React as appropriate.\n"
-            f"- Apply Cognitive Heritage design tokens in any UI: bg #fff8f4, accent #705728, text #231a0f.\n"
-            f"- All code must be complete, syntactically correct, and runnable.\n"
-            f"- Student: Nisarg Patel | Course: {course}"
+            f"- Provide ALL source files needed to execute, test, and submit the project.\n"
+            f"- For Android Studio projects: Include all Java/Kotlin files (Activities, Fragments, Adapters, Interfaces), layout XML files (res/layout/...), AndroidManifest.xml, build.gradle, and strings.xml.\n"
+            f"- For Web projects: Include HTML, CSS, and JS/TS components applying Cognitive Heritage tokens: surface #fff8f4, primary #705728, on-surface #231a0f, fonts Noto Serif + Manrope.\n"
+            f"- Include a complete, submission-ready 'Report.md' document in the files array explaining the Aim, Architecture, Step-by-Step Code Walkthrough, How to Run, and Final Outcome.\n"
+            f"- Include a comprehensive README.md with setup, dependencies, and execution instructions.\n"
+            f"- All code must be complete, syntactically flawless, cleanly commented, and directly satisfy all professor instructions.\n"
+            f"- Student: Nisarg Patel (B.Tech CE-AIML, Semester 5, Academic Institution) | Course: {course}"
         )
-        user_msg = f"Project: {title}\n\nRequirements:\n{req_text}"
+        user_msg = f"Project: {title}\n\nRequirements & Instructions:\n{req_text}"
         response = call_openrouter(
             [{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
             temperature=0.2, max_tokens=8192
@@ -884,14 +907,11 @@ def build_code_project_from_ai_content(task: Dict[str, Any], project_data: Dict,
     for file_info in files:
         fname = file_info.get("filename", "output.txt")
         # Sanitize path traversal
-        safe_path = task_work_dir / Path(fname).name
-        # Allow one level of subdirectory
-        if "/" in fname or "\\" in fname:
-            parts = fname.replace("\\", "/").split("/")
-            if len(parts) == 2:
-                subdir = task_work_dir / parts[0]
-                subdir.mkdir(exist_ok=True)
-                safe_path = subdir / parts[1]
+        norm_parts = [p for p in fname.replace("\\", "/").split("/") if p and p not in ("..", ".")]
+        if not norm_parts:
+            norm_parts = ["output.txt"]
+        safe_path = task_work_dir.joinpath(*norm_parts)
+        safe_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             safe_path.write_text(file_info.get("content", ""), encoding="utf-8")
             produced.append(safe_path)
@@ -1180,7 +1200,16 @@ def run_llm_judge(task: Dict[str, Any], produced_files: List[Path], stdout_outpu
     checking completeness, technical correctness, and anti-AI filler phrasing.
     """
     reqs_data = task.get("extracted_requirements") or {}
-    req_items = reqs_data.get("items", []) if isinstance(reqs_data, dict) else []
+    req_items = []
+    if isinstance(reqs_data, dict):
+        if reqs_data.get("items"):
+            req_items.extend(reqs_data["items"])
+        if reqs_data.get("raw_body"):
+            req_items.append(f"Assignment instructions: {reqs_data['raw_body'][:600]}")
+        if reqs_data.get("attachments"):
+            for att in reqs_data["attachments"]:
+                if att.get("extracted_text"):
+                    req_items.append(f"Attachment '{att.get('name', '')}': {att['extracted_text'][:800]}")
     if not req_items:
         req_items = [task.get("title", "Complete assignment")]
 
