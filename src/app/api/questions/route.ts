@@ -5,8 +5,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin, logSystemEvent } from '@/lib/supabase';
 import { ApiResponse } from '@/lib/types';
+import { isRequestAuthorized } from '@/lib/auth';
 
 export async function POST(req: NextRequest) {
+  if (!isRequestAuthorized(req)) {
+    return NextResponse.json({ error: 'Not Found' }, { status: 404 });
+  }
+
   try {
     const supabase = getSupabaseAdmin();
     const body = await req.json();

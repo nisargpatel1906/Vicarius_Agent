@@ -1,6 +1,7 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { UserProfile } from '@/lib/types';
+import { isRequestAuthorized } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -8,7 +9,11 @@ export const dynamic = 'force-dynamic';
  * GET /api/profile
  * Retrieves the student profile / user info row.
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
+  if (!isRequestAuthorized(req)) {
+    return NextResponse.json({ error: 'Not Found' }, { status: 404 });
+  }
+
   try {
     const supabase = getSupabaseAdmin();
     const { data, error } = await supabase.from('profile').select('*').limit(1).maybeSingle();
@@ -52,7 +57,11 @@ export async function GET() {
  * POST /api/profile
  * Updates the student profile / user info row (PRD Section 5 & 6.6)
  */
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
+  if (!isRequestAuthorized(req)) {
+    return NextResponse.json({ error: 'Not Found' }, { status: 404 });
+  }
+
   try {
     const body = await req.json();
     const supabase = getSupabaseAdmin();

@@ -5,8 +5,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin, logSystemEvent } from '@/lib/supabase';
 import { ApiResponse, Task } from '@/lib/types';
+import { isRequestAuthorized } from '@/lib/auth';
 
 export async function GET(req: NextRequest) {
+  if (!isRequestAuthorized(req)) {
+    return NextResponse.json({ error: 'Not Found' }, { status: 404 });
+  }
+
   try {
     const supabase = getSupabaseAdmin();
     const url = new URL(req.url);
@@ -72,6 +77,10 @@ export async function GET(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
+  if (!isRequestAuthorized(req)) {
+    return NextResponse.json({ error: 'Not Found' }, { status: 404 });
+  }
+
   try {
     const supabase = getSupabaseAdmin();
     const body = await req.json();

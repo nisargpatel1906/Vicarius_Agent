@@ -12,8 +12,12 @@ function escapeHtml(str: string): string {
 export async function GET(request: Request) {
   const authHeader = request.headers.get("Authorization") || "";
   const cronSecret = process.env.CRON_SECRET || "";
-  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const dashboardToken = process.env.DASHBOARD_ACCESS_TOKEN || "";
+  const validSecrets = [cronSecret, dashboardToken].filter(Boolean);
+
+  const providedToken = authHeader.replace(/^Bearer\s+/i, "").trim();
+  if (validSecrets.length > 0 && !validSecrets.includes(providedToken)) {
+    return NextResponse.json({ error: "Not Found" }, { status: 404 });
   }
 
   try {

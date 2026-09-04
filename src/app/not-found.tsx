@@ -1,22 +1,12 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import Link from 'next/link';
+import React, { useEffect } from 'react';
 import { VicariusLogo } from '@/components/VicariusLogo';
 
 export default function NotFound() {
-  const [keyInput, setKeyInput] = useState('');
-  const [showKeyField, setShowKeyField] = useState(false);
-
   useEffect(() => {
     document.title = '404 • Page Not Found';
   }, []);
-
-  const handleUnlock = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!keyInput.trim()) return;
-    window.location.href = `/?token=${encodeURIComponent(keyInput.trim())}`;
-  };
 
   return (
     <div
@@ -88,58 +78,11 @@ export default function NotFound() {
             color: 'var(--on-surface-variant)',
             lineHeight: 1.6,
             maxWidth: 440,
-            margin: '0 auto 28px auto',
+            margin: '0 auto',
           }}
         >
           The requested document, terminal, or academic resource could not be located in the archival registry. It may have been relocated, classified, or restricted.
         </p>
-
-        {showKeyField ? (
-          <form
-            onSubmit={handleUnlock}
-            style={{
-              display: 'flex',
-              gap: 8,
-              maxWidth: 360,
-              margin: '0 auto',
-            }}
-          >
-            <input
-              type="password"
-              placeholder="Enter operator access key..."
-              value={keyInput}
-              onChange={(e) => setKeyInput(e.target.value)}
-              className="stationery-input"
-              style={{ flex: 1, fontSize: '0.88rem' }}
-              autoFocus
-            />
-            <button
-              type="submit"
-              className="btn-heritage-primary"
-              style={{ padding: '8px 16px', fontSize: '0.85rem' }}
-            >
-              Unlock
-            </button>
-          </form>
-        ) : (
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 14, flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              onClick={() => setShowKeyField(true)}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: 'var(--outline)',
-                fontSize: '0.82rem',
-                cursor: 'pointer',
-                textDecoration: 'underline',
-                padding: '6px 10px',
-              }}
-            >
-              Authorized Operator Access &rarr;
-            </button>
-          </div>
-        )}
       </div>
     </div>
   );

@@ -28,5 +28,5 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET() {
-  return NextResponse.json({ success: true, message: 'Vicarius Telegram Webhook endpoint active' });
+  return NextResponse.json({ error: 'Not Found' }, { status: 404 });
 }

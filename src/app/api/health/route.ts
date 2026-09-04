@@ -2,11 +2,16 @@
 // System Health & Free-tier Usage API Endpoint
 // Sourced from PRD_academic_task_agent.md (Section 6.6)
 
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { ApiResponse, SystemEvent } from '@/lib/types';
+import { isRequestAuthorized } from '@/lib/auth';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  if (!isRequestAuthorized(req)) {
+    return NextResponse.json({ error: 'Not Found' }, { status: 404 });
+  }
+
   try {
     const supabase = getSupabaseAdmin();
 
