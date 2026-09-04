@@ -52,3 +52,6 @@ supabase/.temp/
 .vercel
 .env*
 *.tsbuildinfo
+assets/medical_renders/
+exports/
+test_rag.ts
