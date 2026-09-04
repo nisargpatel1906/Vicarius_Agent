@@ -19,7 +19,8 @@ jobs:
           fi
           TOKEN="${{ secrets.CRON_SECRET }}"
           if [ -z "$TOKEN" ]; then
-            TOKEN="vicarius_cron_REDACTED"
+            echo "Error: CRON_SECRET is not configured in repository secrets."
+            exit 1
           fi
           curl -X GET "${TARGET_URL}/api/briefing" \
                -H "Authorization: Bearer ${TOKEN}" \

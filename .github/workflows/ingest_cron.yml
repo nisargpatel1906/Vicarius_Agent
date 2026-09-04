@@ -20,7 +20,8 @@ jobs:
           fi
           TOKEN="${{ secrets.INGEST_SECRET_TOKEN }}"
           if [ -z "$TOKEN" ]; then
-            TOKEN="vicarius_cron_REDACTED"
+            echo "Error: INGEST_SECRET_TOKEN is not configured in repository secrets."
+            exit 1
           fi
           RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST "${TARGET_URL}/api/ingest" \
             -H "Content-Type: application/json" \
