@@ -661,6 +661,11 @@ export async function processSingleItem(item: NormalizedRawItem, supabaseClient?
       return true; // Successfully saved to knowledge base
     }
 
+    // Ignore tasks whose due date has already passed
+    if (item.due_date && new Date(item.due_date).getTime() < Date.now()) {
+      return true; // Already past due; preserved in knowledge base but excluded from active tasks ledger
+    }
+
     // 2. Exact dedup by (source, external_id)
     const { data: existing } = await supabase
       .from('tasks')
