@@ -12,8 +12,9 @@ function escapeHtml(str: string): string {
 export async function GET(request: Request) {
   const authHeader = request.headers.get("Authorization") || "";
   const cronSecret = process.env.CRON_SECRET || "";
+  const ingestToken = process.env.INGEST_SECRET_TOKEN || "";
   const dashboardToken = process.env.DASHBOARD_ACCESS_TOKEN || "";
-  const validSecrets = [cronSecret, dashboardToken].filter(Boolean);
+  const validSecrets = [cronSecret, ingestToken, dashboardToken].filter(Boolean);
 
   const providedToken = authHeader.replace(/^Bearer\s+/i, "").trim();
   if (validSecrets.length > 0 && !validSecrets.includes(providedToken)) {
