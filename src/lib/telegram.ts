@@ -546,6 +546,12 @@ export async function getLatestClassroomMessages(limit: number = 5): Promise<str
       const preview = m.text.length > 280 ? m.text.slice(0, 280) + '...' : m.text;
       output += `   💬 ${escapeHtml(preview)}\n`;
 
+      const rawMatches: string[] = (m.text || '').match(/https?:\/\/[^\s<>)"]+/g) || [];
+      const urlMatches: string[] = Array.from(new Set<string>(rawMatches));
+      if (urlMatches.length > 0) {
+        output += `   🔗 <b>Links:</b> ${urlMatches.slice(0, 3).map((u: string) => `<a href="${u}">${escapeHtml(u)}</a>`).join(', ')}\n`;
+      }
+
       const kbItem: any = kbMap.get(m.id);
       const attachments = kbItem?.metadata?.attachments || [];
       if (attachments.length > 0) {
@@ -602,11 +608,43 @@ export function formatKnowledgeBaseItemDetails(item: any): string {
   }
   msg += `\n`;
 
+  // 1. Separate post body from any appended attachment text
+  const fullContent = (item.content || '').trim();
+  const attachmentSplit = fullContent.split(/\n+--- Attachment:\s+/i);
+  let mainBody = attachmentSplit[0].trim();
+
+  // Clean up repeated prefix if present
+  if (mainBody.startsWith('Announcement:')) {
+    mainBody = mainBody.replace(/^Announcement:\s*[^\n]+\n*/i, '').trim();
+  }
+
+  // 2. Extract and display all URLs prominently
+  const rawUrls: string[] = fullContent.match(/https?:\/\/[^\s<>)"]+/g) || [];
+  const allUrls: string[] = Array.from(new Set<string>(rawUrls));
+  if (allUrls.length > 0) {
+    msg += `🔗 <b>Links &amp; Registration URLs (${allUrls.length}):</b>\n`;
+    allUrls.forEach((url: string) => {
+      let label = url;
+      if (url.includes('forms.gle') || url.includes('google.com/forms')) {
+        label = `📝 Google Form: ${url}`;
+      } else if (url.includes('allevents.in')) {
+        label = `🎟️ Tickets / AllEvents: ${url}`;
+      } else if (url.includes('instagram.com')) {
+        label = `📸 Instagram: ${url}`;
+      } else if (url.includes('tedx')) {
+        label = `🌐 Website: ${url}`;
+      }
+      msg += `  • <a href="${url}">${escapeHtml(label)}</a>\n`;
+    });
+    msg += `\n`;
+  }
+
+  // 3. Attachments & Gemini Vision OCR
   const attachments = item.metadata?.attachments || [];
   if (attachments.length > 0) {
     msg += `📎 <b>Attachments (${attachments.length}):</b>\n`;
     attachments.forEach((att: any, i: number) => {
-      const link = att.drive_url ? `<a href="${att.drive_url}">${escapeHtml(att.name || 'View File')}</a>` : `<code>${escapeHtml(att.name || 'File')}</code>`;
+      const link = att.drive_url || att.url ? `<a href="${att.drive_url || att.url}">${escapeHtml(att.name || 'View File')}</a>` : `<code>${escapeHtml(att.name || 'File')}</code>`;
       msg += `  ${i + 1}. ${link}\n`;
       if (att.extracted_text) {
         const cleanOcr = att.extracted_text
@@ -619,12 +657,11 @@ export function formatKnowledgeBaseItemDetails(item: any): string {
     });
   }
 
-  const content = (item.content || '').trim();
-  const alreadyCoveredInOcr = attachments.some((att: any) => att.extracted_text && content.includes(att.extracted_text.slice(0, 50)));
-  if (content && !alreadyCoveredInOcr && content !== item.title) {
-    const previewContent = content.length > 2000 ? content.slice(0, 2000) + '...' : content;
-    msg += `📝 <b>Full Description:</b>\n<i>${escapeHtml(previewContent)}</i>\n`;
-  } else if (!attachments.length && (!content || content === item.title)) {
+  // 4. Main Body Text (if not empty)
+  if (mainBody && mainBody !== item.title) {
+    const previewContent = mainBody.length > 2500 ? mainBody.slice(0, 2500) + '... (truncated)' : mainBody;
+    msg += `📝 <b>Full Announcement Text:</b>\n<i>${escapeHtml(previewContent)}</i>\n`;
+  } else if (!attachments.length) {
     msg += `<i>No additional description was written in the post body.</i>\n`;
   }
 
@@ -931,7 +968,7 @@ CRITICAL RULES:
 6. If the student asks conceptual questions or converses, respond directly with rich technical depth and clarity.
 7. Format all text replies in clean, valid HTML (<b>bold</b>, <i>italic</i>, <code>code</code>, bullet points •). Do NOT use markdown asterisks.
 8. If the student gives a correction, feedback, rule, or grade for a specific course (e.g. "for CE-401 always use IEEE format", or "my teacher said to include loss curves"), YOU MUST CALL 'save_course_feedback' to remember it!
-9. If the student asks about an announcement, event, attached poster, image, document, or syllabus details (e.g. "what was in 1", "what is Kalpvruksh 2.0", "details of the attached poster"), YOU MUST CALL 'search_knowledge_base' with the keyword to retrieve the full extracted OCR details and attachments! NEVER claim that no description was provided without searching the knowledge base!`;
+9. If the student asks about an announcement, event, attached poster, image, document, registration link, ticket URL, form, website, or syllabus details (e.g. "what was in 1", "what is Kalpvruksh 2.0", "tell me more in TEDxSilverOakUniversity", "give me link to register", "how do I sign up?"), YOU MUST CALL 'search_knowledge_base' with the event or topic keyword! All original post bodies, registration URLs, forms, and poster OCR text are stored in the knowledge base. NEVER claim that no link or no description was provided without searching the knowledge base!`;
 
   const academicTools = [
     {
@@ -1031,7 +1068,7 @@ CRITICAL RULES:
       type: 'function',
       function: {
         name: 'search_knowledge_base',
-        description: 'Searches the student\'s academic knowledge base for announcements, coursework materials, syllabus, lecture notes, and full extracted text/OCR from attached posters, PDFs, and images.',
+        description: 'Searches the student\'s academic knowledge base for announcements, coursework materials, syllabus, registration links, ticket URLs, forms, websites, and full extracted text/OCR from attached posters, PDFs, and images.',
         parameters: {
           type: 'object',
           properties: {
@@ -1680,6 +1717,57 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
       { chat_id: incomingChatId, role: 'assistant', content: resolvedOrdinal },
     ]);
     return { handled: true };
+  }
+
+  // 3-topic. Direct Event / Topic Inquiry (e.g. "tell me more in TEDxSilverOakUniversity", "tell me more about Kalpvruksh")
+  const moreAboutMatch = text.match(/^(?:tell me (?:more )?(?:about|in)|details (?:of|about|on)|show(?: me)? (?:details of|about|more about)?|what is (?:the )?(?:details of|info on)?)\s+(.+)/i);
+  if (moreAboutMatch) {
+    const topic = moreAboutMatch[1].trim();
+    if (!/^[1-9]$/.test(topic)) {
+      const details = await getDetailedPostInformation(topic);
+      if (details && !details.startsWith('🔍 <b>No details found')) {
+        await reply(details);
+        await supabase.from('chat_messages').insert([
+          { chat_id: incomingChatId, role: 'user', content: text },
+          { chat_id: incomingChatId, role: 'assistant', content: details },
+        ]);
+        return { handled: true };
+      }
+    }
+  }
+
+  // 3-link. Direct Link / Registration Inquiry (e.g. "give me link to register", "what is the link", "registration link")
+  const isLinkInquiry = /^(?:give me|show me|send me|what is|where is)?\s*(?:the\s*)?(?:registration\s*link|register\s*link|ticket\s*link|tickets\s*link|form\s*link|registration\s*url|link\s*to\s*register|link\s*for\s*registration|links?\b)/i.test(text);
+  if (isLinkInquiry) {
+    const { data: recentMsgs } = await supabase
+      .from('chat_messages')
+      .select('content')
+      .eq('chat_id', incomingChatId)
+      .eq('role', 'assistant')
+      .order('created_at', { ascending: false })
+      .limit(3);
+
+    let eventQuery = '';
+    for (const rm of recentMsgs || []) {
+      const c = rm.content || '';
+      if (/tedx/i.test(c)) { eventQuery = 'TEDx'; break; }
+      if (/kalpvruksh/i.test(c)) { eventQuery = 'KALPVRUKSH'; break; }
+      if (/hackathon/i.test(c)) { eventQuery = 'Hackathon'; break; }
+      if (/model-2/i.test(c)) { eventQuery = 'MODEL-2'; break; }
+      if (/entangle/i.test(c)) { eventQuery = 'Entangle'; break; }
+    }
+
+    if (eventQuery) {
+      const details = await getDetailedPostInformation(eventQuery);
+      if (details && !details.startsWith('🔍 <b>No details found')) {
+        await reply(details);
+        await supabase.from('chat_messages').insert([
+          { chat_id: incomingChatId, role: 'user', content: text },
+          { chat_id: incomingChatId, role: 'assistant', content: details },
+        ]);
+        return { handled: true };
+      }
+    }
   }
 
   // 3a. Direct Google Classroom Query (Commands & Natural Language)
