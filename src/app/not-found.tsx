@@ -2,10 +2,11 @@
 
 import React, { useEffect } from 'react';
 import { VicariusLogo } from '@/components/VicariusLogo';
+import { ClassroomIcon, UserIcon, ExternalLinkIcon } from '@/components/Icons';
 
 export default function NotFound() {
   useEffect(() => {
-    document.title = '404 • Page Not Found';
+    document.title = '404 • Archival Manuscript Not Found | Vicarius Agent';
   }, []);
 
   return (
@@ -15,7 +16,8 @@ export default function NotFound() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: '32px 20px',
+        padding: '32px 16px',
+        width: '100%',
       }}
     >
       <div
@@ -23,7 +25,7 @@ export default function NotFound() {
         style={{
           maxWidth: 580,
           width: '100%',
-          padding: '48px 40px',
+          padding: '48px 32px',
           textAlign: 'center',
           position: 'relative',
           overflow: 'hidden',
@@ -74,15 +76,88 @@ export default function NotFound() {
 
         <p
           style={{
-            fontSize: '0.94rem',
+            fontSize: '0.92rem',
             color: 'var(--on-surface-variant)',
             lineHeight: 1.6,
             maxWidth: 440,
-            margin: '0 auto',
+            margin: '0 auto 28px auto',
           }}
         >
-          The requested document, terminal, or academic resource could not be located in the archival registry. It may have been relocated, classified, or restricted.
+          The requested document, terminal route, or academic record could not be located in the Vicarius archival registry. It may have been relocated, archived, or restricted.
         </p>
+
+        {/* Navigation Action Buttons to prevent dead-end navigation */}
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 12,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <a
+            href="/"
+            className="btn-heritage-primary"
+            style={{
+              textDecoration: 'none',
+              padding: '10px 24px',
+              fontSize: '0.92rem',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              justifyContent: 'center',
+              width: 'min(320px, 100%)',
+            }}
+          >
+            <ClassroomIcon size={16} color="#FFF9F6" />
+            <span>Return to Operations Command</span>
+          </a>
+
+          <div
+            style={{
+              display: 'flex',
+              gap: 10,
+              flexWrap: 'wrap',
+              justifyContent: 'center',
+              marginTop: 4,
+            }}
+          >
+            <a
+              href="/?tab=profile"
+              className="btn-heritage-secondary"
+              style={{
+                textDecoration: 'none',
+                fontSize: '0.82rem',
+                padding: '8px 14px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
+              <UserIcon size={14} color="var(--primary)" />
+              <span>Student Profile Vault</span>
+            </a>
+
+            <a
+              href="/api/health"
+              target="_blank"
+              rel="noreferrer"
+              className="btn-heritage-secondary"
+              style={{
+                textDecoration: 'none',
+                fontSize: '0.82rem',
+                padding: '8px 14px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
+              <ExternalLinkIcon size={13} color="var(--primary)" />
+              <span>System Health</span>
+            </a>
+          </div>
+        </div>
       </div>
     </div>
   );

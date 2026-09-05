@@ -1,15 +1,54 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { cookies } from 'next/headers';
 import './globals.css';
 import { VicariusLogo } from '@/components/VicariusLogo';
+import { DashboardHeader } from '@/components/DashboardHeader';
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 5,
+  themeColor: '#fff8f4',
+};
 
 export const metadata: Metadata = {
-  title: 'Vicarius Agent — Academic Intelligence Pipeline',
-  description: 'Personal AI agent pipeline watching Gmail & Google Classroom, producing deliverables, and tracking deadlines with Quiet Luxury precision.',
+  title: {
+    default: 'Vicarius Agent — Academic Intelligence Pipeline',
+    template: '%s | Vicarius Agent',
+  },
+  description:
+    'Personal autonomous AI agent pipeline watching Google Classroom & Gmail, producing verified academic deliverables with Cognitive Heritage precision.',
+  keywords: [
+    'Academic AI',
+    'Google Classroom Agent',
+    'Autonomous Pipeline',
+    'Vicarius Agent',
+    'Academic Institution',
+    'Antigravity Engine',
+  ],
+  authors: [{ name: 'Nisarg Patel' }],
+  creator: 'Nisarg Patel',
   icons: {
-    icon: '/icon.svg',
-    shortcut: '/icon.svg',
+    icon: [
+      { url: '/favicon.ico', sizes: '32x32' },
+      { url: '/icon.svg', type: 'image/svg+xml' },
+    ],
+    shortcut: '/favicon.ico',
     apple: '/icon.svg',
+  },
+  openGraph: {
+    title: 'Vicarius Agent — Academic Intelligence Pipeline',
+    description:
+      'Personal autonomous AI agent pipeline watching Google Classroom & Gmail, producing verified academic deliverables with Quiet Luxury precision.',
+    type: 'website',
+    locale: 'en_IN',
+    siteName: 'Vicarius Agent',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Vicarius Agent — Academic Intelligence Pipeline',
+    description:
+      'Personal autonomous AI agent pipeline watching Google Classroom & Gmail, producing verified academic deliverables.',
   },
 };
 
@@ -30,135 +69,18 @@ export default async function RootLayout({
   return (
     <html lang="en">
       <body>
-        <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
-          {isAuthorized && (
-            <header
-              style={{
-                borderBottom: '1px solid var(--outline-variant)',
-                background: 'rgba(255, 248, 244, 0.94)',
-                backdropFilter: 'blur(16px)',
-                WebkitBackdropFilter: 'blur(16px)',
-                position: 'sticky',
-                top: 0,
-                zIndex: 50,
-                padding: '14px 28px',
-                boxShadow: '0 2px 12px rgba(35, 26, 15, 0.03)',
-              }}
-            >
-              <div
-                style={{
-                  maxWidth: 1440,
-                  margin: '0 auto',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: 16,
-                  flexWrap: 'wrap',
-                }}
-              >
-                {/* Brand Crest & Title */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                  <VicariusLogo size={42} variant="crest" title="Vicarius Agent Crest" />
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <h1
-                        className="font-serif"
-                        style={{
-                          fontSize: '1.35rem',
-                          fontWeight: 700,
-                          letterSpacing: '-0.01em',
-                          color: 'var(--on-surface)',
-                          lineHeight: 1.2,
-                        }}
-                      >
-                        Vicarius Agent
-                      </h1>
-                      <span
-                        className="label-caps"
-                        style={{
-                          background: 'var(--primary-fixed)',
-                          color: 'var(--on-primary-fixed)',
-                          padding: '2px 8px',
-                          borderRadius: 4,
-                          fontSize: '10px',
-                          fontWeight: 700,
-                        }}
-                      >
-                        Triple Core v1.1
-                      </span>
-                    </div>
-                    <p
-                      style={{
-                        fontSize: '0.78rem',
-                        color: 'var(--on-surface-variant)',
-                        marginTop: 2,
-                      }}
-                    >
-                      Cognitive Heritage Pipeline • Academic Institution • Nisarg Patel
-                    </p>
-                  </div>
-                </div>
-
-                {/* Status Bar & Global Indicators */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-                  {/* Engine Version Badge */}
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 6,
-                      background: 'var(--surface-container-low)',
-                      padding: '6px 12px',
-                      borderRadius: 4,
-                      border: '1px solid var(--outline-variant)',
-                      fontSize: '0.78rem',
-                      color: 'var(--on-surface-variant)',
-                    }}
-                  >
-                    <VicariusLogo size={14} variant="mark" fill="var(--primary-container)" />
-                    <span>Antigravity Engine: <strong>v1.1.12</strong></span>
-                  </div>
-
-                  {/* System Status Pill */}
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      background: 'var(--surface-container-lowest)',
-                      padding: '6px 14px',
-                      borderRadius: 4,
-                      border: '1px solid var(--outline-variant)',
-                      fontSize: '0.8rem',
-                      boxShadow: 'var(--shadow-subtle)',
-                    }}
-                  >
-                    <span
-                      style={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: '50%',
-                        backgroundColor: '#2e7d32',
-                        boxShadow: '0 0 6px rgba(46, 125, 50, 0.6)',
-                      }}
-                    />
-                    <span style={{ fontWeight: 600, color: 'var(--on-surface)' }}>
-                      Autonomous System Active
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </header>
-          )}
+        <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', width: '100%', maxWidth: '100vw', overflowX: 'hidden' }}>
+          {isAuthorized && <DashboardHeader isAuthorized={isAuthorized} />}
 
           {/* Main Content Area */}
           <main
             style={{
               flex: 1,
-              padding: isAuthorized ? '32px 28px' : '0',
+              padding: isAuthorized ? 'var(--page-padding)' : '0',
               maxWidth: isAuthorized ? 1440 : '100%',
               margin: '0 auto',
               width: '100%',
+              boxSizing: 'border-box',
               display: isAuthorized ? 'block' : 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -171,11 +93,13 @@ export default async function RootLayout({
             <footer
               style={{
                 borderTop: '1px solid var(--outline-variant)',
-                background: 'rgba(255, 248, 244, 0.75)',
-                padding: '22px 28px',
+                background: 'rgba(255, 248, 244, 0.85)',
+                padding: '18px var(--page-padding)',
                 marginTop: 'auto',
                 fontSize: '0.8rem',
                 color: 'var(--on-surface-variant)',
+                boxSizing: 'border-box',
+                width: '100%',
               }}
             >
               <div
@@ -192,13 +116,29 @@ export default async function RootLayout({
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <VicariusLogo size={20} variant="mark" fill="var(--primary)" />
                   <span>
-                    <strong>Vicarius Academic Task Agent</strong> &copy; 2026 • Autonomous Pipeline for Academic Institution
+                    <strong>Vicarius Academic Task Agent</strong> &copy; 2026 &bull; Autonomous Pipeline for Academic Institution
                   </span>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-                  <span>Standard Baseline: Asia/Kolkata (IST)</span>
-                  <span>•</span>
-                  <span>Powered by Antigravity CLI & Supabase</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+                  <a
+                    href="/"
+                    style={{ color: 'inherit', textDecoration: 'none', fontWeight: 500 }}
+                    title="Operations Dashboard"
+                  >
+                    Operations Command
+                  </a>
+                  <span>&bull;</span>
+                  <a
+                    href="/api/health"
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ color: 'inherit', textDecoration: 'none', fontWeight: 500 }}
+                    title="Inspect System Telemetry & Quotas"
+                  >
+                    System Health
+                  </a>
+                  <span>&bull;</span>
+                  <span>Asia/Kolkata (IST)</span>
                 </div>
               </div>
             </footer>

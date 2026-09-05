@@ -19,7 +19,15 @@ import {
   SearchIcon,
   CloseIcon,
   SparklesIcon,
+  UserIcon,
 } from '@/components/Icons';
+
+interface Toast {
+  id: string;
+  type: 'success' | 'error' | 'info';
+  title: string;
+  message: string;
+}
 
 interface HealthData {
   lastIngestion: string | null;
@@ -56,6 +64,41 @@ export default function DashboardPage() {
   const [ingesting, setIngesting] = useState<boolean>(false);
   const [copiedSpec, setCopiedSpec] = useState<boolean>(false);
   const [currentTime, setCurrentTime] = useState<string>('');
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  // Toast Notification Dispatcher (Checklist Items 14 & 15)
+  const addToast = (type: 'success' | 'error' | 'info', title: string, message: string) => {
+    const id = Math.random().toString(36).substring(2, 9);
+    setToasts((prev) => [...prev, { id, type, title, message }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4500);
+  };
+
+  const removeToast = (id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  };
+
+  // Support deep links from navigation / mobile drawer (?tab=profile)
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('tab') === 'profile') {
+        setActiveTab('profile');
+      }
+    }
+  }, []);
+
+  // Dynamic Document Titles (Checklist Item 4)
+  useEffect(() => {
+    if (selectedTask) {
+      document.title = `${selectedTask.title} • Task Inspector | Vicarius Agent`;
+    } else if (activeTab === 'profile') {
+      document.title = 'Student Profile & Vault • Vicarius Agent';
+    } else {
+      document.title = 'Academic Operations Command • Vicarius Agent';
+    }
+  }, [activeTab, selectedTask]);
 
   // Live IST Clock
   useEffect(() => {
@@ -105,13 +148,13 @@ export default function DashboardPage() {
       if (profileData.success && profileData.data) {
         setProfile(profileData.data);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error fetching dashboard data:', err);
+      addToast('error', 'Sync Failed', 'Could not refresh academic data from server.');
     } finally {
       setLoading(false);
     }
   };
-
 
   useEffect(() => {
     fetchData();
@@ -119,17 +162,26 @@ export default function DashboardPage() {
     return () => clearInterval(interval);
   }, [showArchived, sortBy]);
 
-  // Trigger manual ingestion
+  // Trigger manual ingestion (PRD Section 6.6)
   const handleTriggerIngest = async () => {
     try {
       setIngesting(true);
+      addToast('info', 'Ingestion Initiated', 'Connecting to Google Classroom & Gmail listeners...');
       const res = await fetch('/api/ingest', { method: 'POST' });
       const data = await res.json();
       if (data.success) {
+        addToast(
+          'success',
+          'Ingestion Complete',
+          data.message || 'Coursework streams checked. Task ledger synchronized.'
+        );
         await fetchData();
+      } else {
+        addToast('error', 'Ingestion Failed', data.error || 'Unable to complete intake cycle.');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to trigger ingestion:', err);
+      addToast('error', 'Network Error', err.message || 'Could not connect to ingestion endpoint.');
     } finally {
       setIngesting(false);
     }
@@ -146,13 +198,17 @@ export default function DashboardPage() {
       });
       const data = await res.json();
       if (data.success) {
+        addToast('success', 'Task Requeued', 'Directive successfully returned to worker build queue.');
         await fetchData();
         if (selectedTask?.id === taskId) {
           setSelectedTask(data.data);
         }
+      } else {
+        addToast('error', 'Retry Failed', data.error || 'Could not requeue task.');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error retrying task:', err);
+      addToast('error', 'Retry Error', err.message || 'Failed to communicate retry request.');
     } finally {
       setActionLoading(false);
     }
@@ -170,6 +226,7 @@ export default function DashboardPage() {
       });
       const data = await res.json();
       if (data.success) {
+        addToast('success', 'Clarification Recorded', 'Directive unblocked. Agent resuming synthesis.');
         setReplyText('');
         await fetchData();
         // Refresh selected task
@@ -181,13 +238,26 @@ export default function DashboardPage() {
             if (found) setSelectedTask(found);
           }
         }
+      } else {
+        addToast('error', 'Submission Failed', data.error || 'Could not record answer.');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error answering question:', err);
+      addToast('error', 'Clarification Error', err.message || 'Failed to submit response.');
     } finally {
       setActionLoading(false);
     }
   };
+
+  // Reset all search and filter dropdowns (Checklist Item 11)
+  const handleResetFilters = () => {
+    setSearchQuery('');
+    setStatusFilter('all');
+    setCourseFilter('all');
+    setTypeFilter('all');
+    addToast('info', 'Filters Cleared', 'Displaying all academic tasks in the ledger.');
+  };
+
 
   // Distinct courses for filter dropdown
   const uniqueCourses = useMemo(() => {
@@ -550,8 +620,114 @@ export default function DashboardPage() {
       {activeTab === 'profile' ? (
         <ProfileEditor
           initialProfile={profile}
-          onProfileUpdated={(updated) => setProfile(updated)}
+          onProfileUpdated={(updated) => {
+            setProfile(updated);
+            addToast('success', 'Profile Updated', 'Student coordinates saved to Supabase.');
+          }}
         />
+      ) : tasks.length === 0 && !loading ? (
+        <div
+          className="heritage-card"
+          style={{
+            padding: 'clamp(32px, 6vw, 64px) clamp(20px, 5vw, 48px)',
+            textAlign: 'center',
+            position: 'relative',
+            overflow: 'hidden',
+            background: 'var(--surface-container-lowest)',
+          }}
+        >
+          <VicariusLogo
+            size={280}
+            variant="watermark"
+            fill="#8B6F3E"
+            style={{ right: '-50px', bottom: '-50px', opacity: 0.05 }}
+          />
+
+          <div style={{ display: 'inline-flex', marginBottom: 16 }}>
+            <VicariusLogo size={56} variant="crest" />
+          </div>
+
+          <div style={{ marginBottom: 12 }}>
+            <span
+              className="label-caps"
+              style={{
+                background: 'var(--primary-fixed)',
+                color: 'var(--on-primary-fixed)',
+                padding: '4px 12px',
+                borderRadius: 20,
+                fontSize: '11px',
+                fontWeight: 700,
+                border: '1px solid var(--outline-variant)',
+              }}
+            >
+              Autonomous Pipeline Idle &bull; Ledger Clear
+            </span>
+          </div>
+
+          <h2
+            className="heading-h1"
+            style={{
+              fontSize: 'clamp(1.5rem, 3vw, 2.2rem)',
+              color: 'var(--on-surface)',
+              marginBottom: 12,
+            }}
+          >
+            Academic Operations Ledger Clear
+          </h2>
+
+          <p
+            style={{
+              fontSize: '0.94rem',
+              color: 'var(--on-surface-variant)',
+              lineHeight: 1.6,
+              maxWidth: 560,
+              margin: '0 auto 32px auto',
+            }}
+          >
+            No coursework directives or academic deliverables are currently pending in the Supabase ledger. Autonomous listeners are periodically polling Google Classroom and Gmail, or you can trigger an on-demand intake poll immediately.
+          </p>
+
+          {/* Empty State Quick Actions (Checklist Item 11) */}
+          <div
+            style={{
+              display: 'flex',
+              gap: 14,
+              justifyContent: 'center',
+              flexWrap: 'wrap',
+              maxWidth: 620,
+              margin: '0 auto',
+            }}
+          >
+            <button
+              onClick={handleTriggerIngest}
+              disabled={ingesting}
+              className="btn-heritage-primary"
+              style={{ padding: '12px 24px', fontSize: '0.92rem' }}
+            >
+              <ZapIcon size={16} color="#FFF9F6" />
+              <span>{ingesting ? 'Polling Classroom & Gmail...' : 'Poll Classroom & Gmail Now'}</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('profile')}
+              className="btn-heritage-secondary"
+              style={{ padding: '12px 20px', fontSize: '0.92rem' }}
+            >
+              <UserIcon size={16} color="var(--primary)" />
+              <span>Configure Student Profile &amp; Vault</span>
+            </button>
+
+            <button
+              onClick={fetchData}
+              disabled={loading}
+              className="btn-heritage-secondary"
+              style={{ padding: '12px 18px', fontSize: '0.92rem' }}
+            >
+              <RefreshIcon size={15} color="var(--primary)" />
+              <span>Refresh Stream</span>
+            </button>
+          </div>
+        </div>
       ) : (
         <>
 
@@ -568,6 +744,7 @@ export default function DashboardPage() {
               className="label-caps"
               style={{
                 background: 'var(--primary-container)',
+
                 color: '#fff9f6',
                 padding: '1px 6px',
                 borderRadius: 3,
@@ -799,10 +976,10 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Main Content Split: Tasks Ledger (2fr) + Telemetry / Quotas (1fr) */}
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 24, alignItems: 'start' }}>
+      {/* Main Content Split: Tasks Ledger + Telemetry / Quotas (Responsive Grid) */}
+      <div className="dashboard-main-grid">
         {/* Left Column: Academic Task Ledger */}
-        <div className="heritage-card" style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 18 }}>
+        <div className="heritage-card" style={{ padding: 'clamp(16px, 3vw, 24px)', display: 'flex', flexDirection: 'column', gap: 18 }}>
           {/* Header & Filter Toolbar */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 14 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -847,7 +1024,7 @@ export default function DashboardPage() {
               />
               <input
                 type="text"
-                placeholder="Search title, course, or prompt..."
+                placeholder="Filter tasks by title, course, or prompt..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="stationery-input"
@@ -908,8 +1085,8 @@ export default function DashboardPage() {
             </select>
           </div>
 
-          {/* Academic Table View */}
-          <div style={{ overflowX: 'auto' }}>
+          {/* Desktop Table View (Checklist Item 1 & 12) */}
+          <div className="table-scroll-wrapper desktop-view-only">
             <table className="academic-table">
               <thead>
                 <tr>
@@ -934,9 +1111,20 @@ export default function DashboardPage() {
                         </div>
                         <p style={{ fontSize: '0.82rem', color: 'var(--outline)' }}>
                           {searchQuery || statusFilter !== 'all' || courseFilter !== 'all' || typeFilter !== 'all'
-                            ? 'Try resetting the search or filter dropdowns above.'
+                            ? 'Active search or filter criteria restricted all records.'
                             : 'Trigger a poll using the action button to ingest recent assignments.'}
                         </p>
+                        {(searchQuery || statusFilter !== 'all' || courseFilter !== 'all' || typeFilter !== 'all') && (
+                          <button
+                            type="button"
+                            onClick={handleResetFilters}
+                            className="btn-heritage-secondary"
+                            style={{ fontSize: '0.82rem', padding: '6px 16px', marginTop: 6 }}
+                          >
+                            <RefreshIcon size={13} color="var(--primary)" />
+                            <span>Reset All Filters</span>
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -1104,6 +1292,234 @@ export default function DashboardPage() {
                 )}
               </tbody>
             </table>
+          </div>
+
+          {/* Mobile Card View (Checklist Item 1, 10, 12, 13) */}
+          <div className="mobile-view-only" style={{ flexDirection: 'column', gap: 12 }}>
+            {filteredTasks.length === 0 ? (
+              <div className="heritage-card" style={{ padding: '36px 16px', textAlign: 'center' }}>
+                <VicariusLogo size={40} variant="mark" fill="var(--outline-variant)" />
+                <div className="font-serif" style={{ fontSize: '1.05rem', marginTop: 10, color: 'var(--on-surface)' }}>
+                  No tasks matching criteria
+                </div>
+                <p style={{ fontSize: '0.8rem', color: 'var(--outline)', marginTop: 4 }}>
+                  Reset filters to display all coursework records.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleResetFilters}
+                  className="btn-heritage-secondary"
+                  style={{ marginTop: 14, fontSize: '0.8rem', padding: '6px 14px' }}
+                >
+                  <RefreshIcon size={13} />
+                  <span>Reset All Filters</span>
+                </button>
+              </div>
+            ) : (
+              filteredTasks.map((t) => {
+                const deadline = getDeadlineInfo(t.due_date);
+                const postedFormatted = t.posted_date
+                  ? new Date(t.posted_date).toLocaleDateString('en-IN', {
+                      month: 'short',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      timeZone: 'Asia/Kolkata',
+                    })
+                  : t.created_at
+                  ? new Date(t.created_at).toLocaleDateString('en-IN', {
+                      month: 'short',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      timeZone: 'Asia/Kolkata',
+                    })
+                  : '—';
+
+                return (
+                  <div
+                    key={t.id}
+                    className="academic-mobile-card"
+                    onClick={() => setSelectedTask(t)}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    {/* Card Header: Source & Status */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span
+                        style={{
+                          fontSize: '0.75rem',
+                          color: 'var(--on-surface-variant)',
+                          background: 'var(--surface-container-high)',
+                          padding: '2px 8px',
+                          borderRadius: 4,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 5,
+                          fontWeight: 600,
+                        }}
+                      >
+                        {t.source === 'classroom' ? (
+                          <>
+                            <ClassroomIcon size={12} color="var(--primary)" />
+                            <span>Classroom</span>
+                          </>
+                        ) : (
+                          <>
+                            <MailIcon size={12} color="var(--primary-container)" />
+                            <span>Gmail</span>
+                          </>
+                        )}
+                      </span>
+                      {renderStatusBadge(t.status)}
+                    </div>
+
+                    {/* Title */}
+                    <div>
+                      <h4
+                        className="font-serif"
+                        style={{
+                          fontSize: '0.98rem',
+                          fontWeight: 600,
+                          color: 'var(--on-surface)',
+                          lineHeight: 1.35,
+                        }}
+                      >
+                        {t.title}
+                      </h4>
+                      {t.result_summary && (
+                        <p
+                          style={{
+                            fontSize: '0.78rem',
+                            color: 'var(--on-surface-variant)',
+                            marginTop: 4,
+                            lineHeight: 1.4,
+                            display: '-webkit-box',
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: 'vertical',
+                            overflow: 'hidden',
+                          }}
+                        >
+                          {t.result_summary}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Metadata chips */}
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                      <span
+                        style={{
+                          fontSize: '0.72rem',
+                          background: 'var(--surface-container-low)',
+                          border: '1px solid var(--outline-variant)',
+                          padding: '2px 8px',
+                          borderRadius: 4,
+                          color: 'var(--on-surface)',
+                          fontWeight: 600,
+                        }}
+                      >
+                        {t.course || 'General Academic'}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: '0.72rem',
+                          background: 'var(--surface-container-low)',
+                          border: '1px solid var(--outline-variant)',
+                          padding: '2px 8px',
+                          borderRadius: 4,
+                          color: 'var(--secondary)',
+                          textTransform: 'capitalize',
+                        }}
+                      >
+                        {t.task_type?.replace('_', ' ')}
+                      </span>
+                      {t.weight && (
+                        <span
+                          style={{
+                            fontSize: '0.66rem',
+                            fontWeight: 700,
+                            textTransform: 'uppercase',
+                            padding: '2px 6px',
+                            borderRadius: 4,
+                            background:
+                              t.weight === 'heavy'
+                                ? 'rgba(186, 26, 26, 0.12)'
+                                : t.weight === 'medium'
+                                ? 'rgba(139, 111, 62, 0.15)'
+                                : 'rgba(112, 87, 40, 0.08)',
+                            color:
+                              t.weight === 'heavy'
+                                ? 'var(--error)'
+                                : t.weight === 'medium'
+                                ? 'var(--primary-container)'
+                                : 'var(--primary)',
+                          }}
+                        >
+                          {t.weight}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Dates & Deadline */}
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        borderTop: '1px solid var(--outline-variant)',
+                        paddingTop: 8,
+                        fontSize: '0.75rem',
+                        color: 'var(--on-surface-variant)',
+                      }}
+                    >
+                      <div>Posted: {postedFormatted}</div>
+                      <div style={{ textAlign: 'right' }}>
+                        <span
+                          style={{
+                            fontWeight: deadline.isUrgent ? 700 : 500,
+                            color: deadline.isUrgent ? 'var(--error)' : 'var(--on-surface)',
+                          }}
+                        >
+                          {deadline.formatted}
+                        </span>
+                        <span style={{ marginLeft: 4, color: deadline.isUrgent ? 'var(--error)' : 'var(--outline)' }}>
+                          ({deadline.relative})
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Action Row */}
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+                      {['flagged', 'failed'].includes(t.status) && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleRetryTask(t.id);
+                          }}
+                          disabled={actionLoading}
+                          className="btn-heritage-primary"
+                          style={{ fontSize: '0.75rem', padding: '5px 12px' }}
+                        >
+                          <RefreshIcon size={12} color="#FFF9F6" />
+                          <span>Retry</span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedTask(t);
+                        }}
+                        className="btn-heritage-secondary"
+                        style={{ fontSize: '0.75rem', padding: '5px 12px' }}
+                      >
+                        Inspect Details &rarr;
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
 
@@ -1285,7 +1701,7 @@ export default function DashboardPage() {
             alignItems: 'center',
             justifyContent: 'center',
             zIndex: 100,
-            padding: 24,
+            padding: 'clamp(8px, 3vw, 24px)',
           }}
           onClick={() => setSelectedTask(null)}
         >
@@ -1294,12 +1710,13 @@ export default function DashboardPage() {
             style={{
               maxWidth: 840,
               width: '100%',
-              maxHeight: '90vh',
+              maxHeight: '92vh',
               overflowY: 'auto',
-              padding: 36,
+              padding: 'clamp(18px, 4vw, 36px)',
               position: 'relative',
               background: '#ffffff',
               boxShadow: 'var(--shadow-modal)',
+              boxSizing: 'border-box',
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -1311,8 +1728,8 @@ export default function DashboardPage() {
               onClick={() => setSelectedTask(null)}
               style={{
                 position: 'absolute',
-                top: 24,
-                right: 24,
+                top: 'clamp(12px, 3vw, 24px)',
+                right: 'clamp(12px, 3vw, 24px)',
                 background: 'transparent',
                 border: 'none',
                 color: 'var(--outline)',
@@ -1333,55 +1750,6 @@ export default function DashboardPage() {
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                   {renderStatusBadge(selectedTask.status)}
-                  {selectedTask.weight && (
-                    <span
-                      style={{
-                        fontSize: '0.72rem',
-                        fontWeight: 700,
-                        textTransform: 'uppercase',
-                        padding: '2px 8px',
-                        borderRadius: 4,
-                        background:
-                          selectedTask.weight === 'heavy'
-                            ? 'rgba(186, 26, 26, 0.12)'
-                            : selectedTask.weight === 'medium'
-                            ? 'rgba(139, 111, 62, 0.15)'
-                            : 'rgba(112, 87, 40, 0.08)',
-                        color:
-                          selectedTask.weight === 'heavy'
-                            ? 'var(--error)'
-                            : selectedTask.weight === 'medium'
-                            ? 'var(--primary-container)'
-                            : 'var(--primary)',
-                        border: '1px solid var(--outline-variant)',
-                      }}
-                    >
-                      {selectedTask.weight} lift
-                    </span>
-                  )}
-                  <span
-                    style={{
-                      fontSize: '0.78rem',
-                      background: 'var(--surface-container-high)',
-                      padding: '2px 8px',
-                      borderRadius: 4,
-                      color: 'var(--on-surface-variant)',
-                      fontWeight: 600,
-                    }}
-                  >
-                    {selectedTask.course || 'General'}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: '0.78rem',
-                      color: 'var(--outline)',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 4,
-                    }}
-                  >
-                    Source: {selectedTask.source === 'classroom' ? 'Google Classroom' : 'Gmail'}
-                  </span>
                 </div>
               </div>
             </div>
@@ -1389,7 +1757,7 @@ export default function DashboardPage() {
             <h2
               className="heading-h2"
               style={{
-                fontSize: '1.65rem',
+                fontSize: 'clamp(1.2rem, 3vw, 1.65rem)',
                 color: 'var(--on-surface)',
                 marginTop: 8,
                 marginBottom: 6,
@@ -1398,58 +1766,74 @@ export default function DashboardPage() {
               {selectedTask.title}
             </h2>
 
-            <p style={{ color: 'var(--on-surface-variant)', fontSize: '0.88rem', marginBottom: selectedTask.progress_note ? 14 : 24, display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'center' }}>
-              <span>
-                <strong>Due Date:</strong>{' '}
-                {selectedTask.due_date
-                  ? new Date(selectedTask.due_date).toLocaleString('en-IN', {
-                      timeZone: 'Asia/Kolkata',
-                      dateStyle: 'full',
-                      timeStyle: 'short',
-                    })
-                  : 'No explicit deadline specified'}
-              </span>
-              <span style={{ borderLeft: '1px solid var(--outline-variant)', paddingLeft: 16 }}>
-                <strong>Posted in Classroom:</strong>{' '}
-                {selectedTask.posted_date
-                  ? new Date(selectedTask.posted_date).toLocaleString('en-IN', {
-                      timeZone: 'Asia/Kolkata',
-                      dateStyle: 'medium',
-                      timeStyle: 'short',
-                    })
-                  : selectedTask.created_at
-                  ? new Date(selectedTask.created_at).toLocaleString('en-IN', {
-                      timeZone: 'Asia/Kolkata',
-                      dateStyle: 'medium',
-                      timeStyle: 'short',
-                    })
-                  : 'Not recorded'}
-              </span>
-            </p>
-
-            {selectedTask.progress_note && (
-              <div
-                style={{
-                  background: 'rgba(139, 111, 62, 0.08)',
-                  border: '1px solid var(--outline-variant)',
-                  borderRadius: 6,
-                  padding: '10px 14px',
-                  marginBottom: 18,
-                  fontSize: '0.85rem',
-                  color: 'var(--on-surface)',
-                }}
-              >
-                <div style={{ fontWeight: 600, color: 'var(--primary)', marginBottom: 2 }}>
-                  ⚡ Heavy Lift Progress Update:
-                </div>
-                <div>{selectedTask.progress_note}</div>
-                {selectedTask.last_progress_at && (
-                  <div style={{ fontSize: '0.72rem', color: 'var(--outline)', marginTop: 4 }}>
-                    Reported at: {new Date(selectedTask.last_progress_at).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })} IST
-                  </div>
-                )}
-              </div>
+            {(selectedTask as any).prompt && (
+              <p style={{ color: 'var(--on-surface-variant)', fontSize: '0.9rem', marginBottom: 20, lineHeight: 1.5 }}>
+                {(selectedTask as any).prompt}
+              </p>
             )}
+
+            {/* Quick Spec Pills */}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+                gap: 10,
+                background: 'var(--surface-container-low)',
+                padding: 14,
+                borderRadius: 6,
+                border: '1px solid var(--outline-variant)',
+                marginBottom: 20,
+              }}
+            >
+              <div>
+                <span className="label-caps" style={{ color: 'var(--outline)' }}>
+                  Due Date
+                </span>
+                <div style={{ fontWeight: 600, fontSize: '0.88rem', color: 'var(--on-surface)', marginTop: 2 }}>
+                  {getDeadlineInfo(selectedTask.due_date).formatted}
+                </div>
+              </div>
+              <div>
+                <span className="label-caps" style={{ color: 'var(--outline)' }}>
+                  Task Type
+                </span>
+                <div
+                  style={{
+                    fontWeight: 600,
+                    fontSize: '0.88rem',
+                    color: 'var(--on-surface)',
+                    textTransform: 'capitalize',
+                    marginTop: 2,
+                  }}
+                >
+                  {selectedTask.task_type?.replace('_', ' ')}
+                </div>
+              </div>
+              <div>
+                <span className="label-caps" style={{ color: 'var(--outline)' }}>
+                  Complexity
+                </span>
+                <div
+                  style={{
+                    fontWeight: 600,
+                    fontSize: '0.88rem',
+                    color: 'var(--on-surface)',
+                    textTransform: 'capitalize',
+                    marginTop: 2,
+                  }}
+                >
+                  {selectedTask.weight || 'Standard'}
+                </div>
+              </div>
+              <div>
+                <span className="label-caps" style={{ color: 'var(--outline)' }}>
+                  Course Code
+                </span>
+                <div style={{ fontWeight: 600, fontSize: '0.88rem', color: 'var(--on-surface)', marginTop: 2 }}>
+                  {selectedTask.course || 'General'}
+                </div>
+              </div>
+            </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 22, position: 'relative', zIndex: 1 }}>
               {/* Extracted Requirements Checklist */}
@@ -1557,6 +1941,7 @@ export default function DashboardPage() {
                         if (selectedTask.build_spec) {
                           navigator.clipboard.writeText(selectedTask.build_spec);
                           setCopiedSpec(true);
+                          addToast('success', 'Build Spec Copied', 'Antigravity CLI prompt copied to clipboard.');
                           setTimeout(() => setCopiedSpec(false), 2000);
                         }
                       }}
@@ -1603,7 +1988,7 @@ export default function DashboardPage() {
                     className="font-serif"
                     style={{ fontSize: '1rem', fontWeight: 600, marginBottom: 8, color: 'var(--on-surface)' }}
                   >
-                    Result Summary & Assumptions
+                    Result Summary &amp; Assumptions
                   </h4>
                   <div
                     style={{
@@ -1670,7 +2055,7 @@ export default function DashboardPage() {
                         <div style={{ marginTop: 12, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                           <input
                             type="text"
-                            placeholder="Type your clarification answer..."
+                            placeholder="Type specific clarification for the worker..."
                             value={replyText}
                             onChange={(e) => setReplyText(e.target.value)}
                             className="stationery-input"
@@ -1691,7 +2076,7 @@ export default function DashboardPage() {
                 </div>
               )}
 
-              {/* Deliverables List (PRD Section 6.6) */}
+              {/* Deliverables List (PRD Section 6.6 & Checklist Item 7) */}
               {(selectedTask as any).deliverables && (selectedTask as any).deliverables.length > 0 && (
                 <div>
                   <h4
@@ -1712,6 +2097,8 @@ export default function DashboardPage() {
                           padding: '10px 16px',
                           borderRadius: 6,
                           border: '1px solid var(--outline-variant)',
+                          flexWrap: 'wrap',
+                          gap: 8,
                         }}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1723,7 +2110,7 @@ export default function DashboardPage() {
                             </div>
                           </div>
                         </div>
-                        {d.drive_link && (
+                        {d.drive_link && d.drive_link.startsWith('http') ? (
                           <a
                             href={d.drive_link}
                             target="_blank"
@@ -1741,6 +2128,18 @@ export default function DashboardPage() {
                             <span>Open Drive Folder</span>
                             <ExternalLinkIcon size={12} color="#FFF9F6" />
                           </a>
+                        ) : (
+                          <span
+                            style={{
+                              fontSize: '0.75rem',
+                              color: 'var(--on-surface-variant)',
+                              background: 'var(--surface-container-high)',
+                              padding: '4px 10px',
+                              borderRadius: 4,
+                            }}
+                          >
+                            Archived Locally
+                          </span>
                         )}
                       </div>
                     ))}
@@ -1757,7 +2156,7 @@ export default function DashboardPage() {
                     className="btn-heritage-primary"
                   >
                     <RefreshIcon size={14} color="#FFF9F6" />
-                    <span>Requeue & Retry Task</span>
+                    <span>Requeue &amp; Retry Task</span>
                   </button>
                 )}
                 <button onClick={() => setSelectedTask(null)} className="btn-heritage-secondary">
@@ -1777,9 +2176,59 @@ export default function DashboardPage() {
           initialProfile={profile}
           isModal={true}
           onClose={() => setShowProfileModal(false)}
-          onProfileUpdated={(updated) => setProfile(updated)}
+          onProfileUpdated={(updated) => {
+            setProfile(updated);
+            addToast('success', 'Profile Updated', 'Student coordinates saved to Supabase.');
+          }}
         />
       )}
+
+      {/* Toast Notifications Container (Checklist Items 14 & 15) */}
+      <div className="toast-container" aria-live="polite">
+        {toasts.map((toast) => (
+          <div
+            key={toast.id}
+            className={`toast-item ${
+              toast.type === 'success'
+                ? 'toast-success'
+                : toast.type === 'error'
+                ? 'toast-error'
+                : 'toast-info'
+            }`}
+            role="alert"
+          >
+            <div style={{ marginTop: 2, flexShrink: 0 }}>
+              {toast.type === 'success' ? (
+                <CheckIcon size={16} color="#2e7d32" />
+              ) : toast.type === 'error' ? (
+                <AlertIcon size={16} color="#ba1a1a" />
+              ) : (
+                <SparklesIcon size={16} color="var(--primary)" />
+              )}
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700, fontSize: '0.86rem' }}>{toast.title}</div>
+              <div style={{ fontSize: '0.8rem', opacity: 0.9, marginTop: 2 }}>{toast.message}</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => removeToast(toast.id)}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'inherit',
+                opacity: 0.6,
+                cursor: 'pointer',
+                padding: 2,
+                marginLeft: 4,
+              }}
+              aria-label="Dismiss alert"
+            >
+              <CloseIcon size={14} />
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
