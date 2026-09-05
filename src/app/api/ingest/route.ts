@@ -4,6 +4,8 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { runIngestion, renewClassroomWatch } from '@/lib/ingest';
+
+export const maxDuration = 60;
 import { processNewTasks } from '@/lib/classify';
 import { logSystemEvent } from '@/lib/supabase';
 import { ApiResponse } from '@/lib/types';

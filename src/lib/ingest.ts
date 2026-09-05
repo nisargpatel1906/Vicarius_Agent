@@ -24,7 +24,7 @@ export async function pollGmail(): Promise<NormalizedRawItem[]> {
     const res = await gmail.users.messages.list({
       userId: 'me',
       q: 'newer_than:7d (assignment OR project OR homework OR submission OR "due date" OR classroom OR coursework)',
-      maxResults: 25,
+      maxResults: 10,
     });
 
     const messages = res.data.messages || [];
