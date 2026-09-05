@@ -912,22 +912,149 @@ export async function syncClassroomAndGmail(): Promise<string> {
 }
 
 /**
- * Automated RAG Retriever: Searches the Supabase knowledge base for any student inquiry
- * to ground the AI model with verbatim announcements, links, forms, and attachments.
+ * Date Range Extractor: Parses human-typed dates into ISO date ranges.
+ * Supports: "Sep 1", "1st September", "01/09", "yesterday", "today", "Sep 3", etc.
  */
-export async function retrieveRelevantKnowledge(userQuery: string, limit: number = 4): Promise<any[]> {
+export function extractDateRange(query: string): { start: string; end: string; label: string } | null {
+  const q = query.toLowerCase();
+  const months: Record<string, number> = {
+    jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3, apr: 4, april: 4,
+    may: 5, jun: 6, june: 6, jul: 7, july: 7, aug: 8, august: 8, sep: 9, sept: 9,
+    september: 9, oct: 10, october: 10, nov: 11, november: 11, dec: 12, december: 12,
+  };
+
+  // 1. "today"
+  if (/\btoday\b/i.test(q)) {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = (now.getMonth() + 1).toString().padStart(2, '0');
+    const d = now.getDate().toString().padStart(2, '0');
+    return {
+      start: `${y}-${m}-${d}T00:00:00.000Z`,
+      end: `${y}-${m}-${d}T23:59:59.999Z`,
+      label: `Today (${y}-${m}-${d})`
+    };
+  }
+
+  // 2. "yesterday"
+  if (/\byesterday\b/i.test(q)) {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    const y = d.getFullYear();
+    const m = (d.getMonth() + 1).toString().padStart(2, '0');
+    const day = d.getDate().toString().padStart(2, '0');
+    return {
+      start: `${y}-${m}-${day}T00:00:00.000Z`,
+      end: `${y}-${m}-${day}T23:59:59.999Z`,
+      label: `Yesterday (${y}-${m}-${day})`
+    };
+  }
+
+  // 3. Month Day: "Sep 1", "Sept 1st", "September 1", "Sep 01", "1 Sep", "1st September"
+  const monthNames = Object.keys(months).join('|');
+  const matchA = q.match(new RegExp(`\\b(${monthNames})\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b`, 'i'));
+  const matchB = q.match(new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(${monthNames})\\b`, 'i'));
+
+  let monthNum: number | null = null;
+  let dayNum: number | null = null;
+
+  if (matchA) {
+    monthNum = months[matchA[1].toLowerCase()];
+    dayNum = parseInt(matchA[2], 10);
+  } else if (matchB) {
+    monthNum = months[matchB[2].toLowerCase()];
+    dayNum = parseInt(matchB[1], 10);
+  }
+
+  const matchC = q.match(/\b(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?\b/);
+  if (!monthNum && matchC) {
+    dayNum = parseInt(matchC[1], 10);
+    monthNum = parseInt(matchC[2], 10);
+  }
+
+  if (monthNum && dayNum && dayNum >= 1 && dayNum <= 31) {
+    const year = 2026;
+    const mStr = monthNum.toString().padStart(2, '0');
+    const dStr = dayNum.toString().padStart(2, '0');
+    return {
+      start: `${year}-${mStr}-${dStr}T00:00:00.000Z`,
+      end: `${year}-${mStr}-${dStr}T23:59:59.999Z`,
+      label: `${year}-${mStr}-${dStr}`
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Intelligent Academic RAG Retriever: Searches the Supabase knowledge base for any student inquiry
+ * using temporal date filtering, full-text phrase matching, and vector semantic similarity.
+ */
+export async function retrieveRelevantKnowledge(userQuery: string, limit: number = 8): Promise<any[]> {
   const supabase = getSupabaseAdmin();
-  const cleanQuery = userQuery.replace(/[?!.,;:"'()\[\]{}]/g, ' ').trim();
   const results: any[] = [];
   const seenIds = new Set<string>();
 
-  // 1. Exact phrase match (e.g. "Red Hat Academy", "TEDx", "MODEL-2", "Kalpvruksh")
+  // 1. DATE-BASED TIMELINE RETRIEVAL:
+  // If the user specifies or asks about a date (e.g. "Sep 1", "September 1", "today", "yesterday", "Sep 3")
+  const dateRange = extractDateRange(userQuery);
+  if (dateRange) {
+    const { data: dateItems } = await supabase
+      .from('knowledge_base')
+      .select('id, title, course, content, metadata, posted_date, created_at')
+      .gte('posted_date', dateRange.start)
+      .lte('posted_date', dateRange.end)
+      .order('posted_date', { ascending: false })
+      .limit(15);
+
+    // Prioritize direct classroom announcements and materials over duplicate email summaries
+    const primaryItems = (dateItems || []).filter(item => 
+      item.title.startsWith('Announcement:') || item.title.startsWith('New material:') || !item.title.startsWith('New announcement:')
+    );
+    const itemsToUse = primaryItems.length > 0 ? primaryItems : (dateItems || []);
+
+    itemsToUse.forEach(item => {
+      if (!seenIds.has(item.id)) {
+        seenIds.add(item.id);
+        results.push(item);
+      }
+    });
+
+    if (results.length > 0) {
+      return results;
+    }
+  }
+
+  // 2. GENERAL ANNOUNCEMENT / FEED QUERY:
+  // If user asks for "announcements", "notices", "messages", "classroom updates" without a date
+  if (/announc|notice|message|feed|update|post|new in class/i.test(userQuery)) {
+    const { data: recentAnnouncements } = await supabase
+      .from('knowledge_base')
+      .select('id, title, course, content, metadata, posted_date, created_at')
+      .ilike('title', 'Announcement:%')
+      .order('posted_date', { ascending: false })
+      .limit(limit);
+
+    (recentAnnouncements || []).forEach(item => {
+      if (!seenIds.has(item.id)) {
+        seenIds.add(item.id);
+        results.push(item);
+      }
+    });
+  }
+
+  // 3. TYPO NORMALIZATION & PHRASE MATCHING:
+  const cleanQuery = userQuery
+    .replace(/annn+coument|annoucement|announcment/gi, 'announcement')
+    .replace(/[?!.,;:"'()\[\]{}]/g, ' ')
+    .trim();
+
   if (cleanQuery.length > 2) {
     const { data: phraseMatches } = await supabase
       .from('knowledge_base')
-      .select('id, title, course, content, metadata, created_at')
+      .select('id, title, course, content, metadata, posted_date, created_at')
       .or(`title.ilike.%${cleanQuery}%,content.ilike.%${cleanQuery}%`)
-      .order('created_at', { ascending: false })
+      .order('posted_date', { ascending: false })
       .limit(limit);
 
     (phraseMatches || []).forEach(item => {
@@ -938,13 +1065,13 @@ export async function retrieveRelevantKnowledge(userQuery: string, limit: number
     });
   }
 
-  // 2. If asking about lecture, join link, session, meeting, zoom, meet, exam, schedule, today
-  if (/lecture|invite|join|session|zoom|meet|class|link|schedule|exam|today/i.test(userQuery)) {
+  // 4. MEETING & REGISTRATION WORDS:
+  if (/lecture|invite|join|session|zoom|meet|class|link|schedule|exam/i.test(userQuery)) {
     const { data: meetingPosts } = await supabase
       .from('knowledge_base')
-      .select('id, title, course, content, metadata, created_at')
+      .select('id, title, course, content, metadata, posted_date, created_at')
       .or('content.ilike.%zoom.us%,content.ilike.%meet.google.com%,content.ilike.%forms.gle%')
-      .order('created_at', { ascending: false })
+      .order('posted_date', { ascending: false })
       .limit(limit);
 
     (meetingPosts || []).forEach(item => {
@@ -955,27 +1082,43 @@ export async function retrieveRelevantKnowledge(userQuery: string, limit: number
     });
   }
 
-  // 3. Significant word search if we have fewer than limit results
-  if (results.length < limit) {
-    const words = cleanQuery
-      .split(/\s+/)
-      .filter(w => w.length > 3 && !['give', 'what', 'tell', 'show', 'more', 'about', 'from', 'with', 'this', 'that', 'have', 'been', 'post', 'message', 'info'].includes(w.toLowerCase()));
+  // 5. INDIVIDUAL SIGNIFICANT KEYWORDS (2+ characters to include course codes and short tokens):
+  const stopWords = new Set(['the', 'this', 'that', 'with', 'from', 'done', 'been', 'tell', 'show', 'give', 'what', 'which', 'about', 'more', 'here', 'there', 'have', 'were', 'will']);
+  const words = cleanQuery
+    .split(/\s+/)
+    .filter(w => w.length >= 2 && !stopWords.has(w.toLowerCase()));
 
-    if (words.length > 0) {
-      const orFilters = words.map(w => `title.ilike.%${w}%,content.ilike.%${w}%`).join(',');
-      const { data: wordMatches } = await supabase
-        .from('knowledge_base')
-        .select('id, title, course, content, metadata, created_at')
-        .or(orFilters)
-        .order('created_at', { ascending: false })
-        .limit(limit - results.length);
+  if (words.length > 0 && results.length < limit) {
+    const orFilters = words.slice(0, 4).map(w => `title.ilike.%${w}%,content.ilike.%${w}%`).join(',');
+    const { data: wordMatches } = await supabase
+      .from('knowledge_base')
+      .select('id, title, course, content, metadata, posted_date, created_at')
+      .or(orFilters)
+      .order('posted_date', { ascending: false })
+      .limit(limit - results.length);
 
-      (wordMatches || []).forEach(item => {
+    (wordMatches || []).forEach(item => {
+      if (!seenIds.has(item.id)) {
+        seenIds.add(item.id);
+        results.push(item);
+      }
+    });
+  }
+
+  // 6. SEMANTIC VECTOR EMBEDDING SEARCH:
+  // If fewer than 2 results found, query pgvector with semantic embeddings
+  if (results.length < 2) {
+    try {
+      const { queryKnowledgeBase } = await import('./vector');
+      const vectorMatches = await queryKnowledgeBase(userQuery, null, limit);
+      (vectorMatches || []).forEach((item: any) => {
         if (!seenIds.has(item.id)) {
           seenIds.add(item.id);
           results.push(item);
         }
       });
+    } catch (ve) {
+      console.warn('[RAG] Vector similarity search fallback error:', ve);
     }
   }
 

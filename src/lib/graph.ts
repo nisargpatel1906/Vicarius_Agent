@@ -97,8 +97,8 @@ async function preRetrieveNode(state: typeof AcademicAgentState.State) {
     )
     .join('\n');
 
-  // 2. Query Knowledge Base with automated hybrid matching
-  const kbMatches = await retrieveRelevantKnowledge(prompt, 4);
+  // 2. Query Knowledge Base with automated hybrid matching & temporal date filtering
+  const kbMatches = await retrieveRelevantKnowledge(prompt, 10);
   let groundedRecords = '';
   if (kbMatches.length > 0) {
     groundedRecords =
@@ -109,7 +109,8 @@ async function preRetrieveNode(state: typeof AcademicAgentState.State) {
           const rawUrls: string[] = full.match(/https?:\/\/[^\s<>)"]+/g) || [];
           const urls = Array.from(new Set<string>(rawUrls));
           const urlStr = urls.length > 0 ? `\nExtracted Clickable Links: ${urls.join(', ')}` : '';
-          return `[RECORD ${idx + 1}] Title: ${item.title} | Course: ${item.course || 'General'}\nContent:\n${full}${urlStr}`;
+          const postedDate = item.posted_date ? ` | Posted Date: ${item.posted_date}` : '';
+          return `[RECORD ${idx + 1}] Title: ${item.title} | Course: ${item.course || 'General'}${postedDate}\nContent:\n${full}${urlStr}`;
         })
         .join('\n\n-----------------------------------------\n\n');
   }
@@ -142,9 +143,9 @@ async function actionRouterNode(state: typeof AcademicAgentState.State) {
     };
   }
 
-  // 2. Specific request for classroom feed
+  // 2. Specific request for classroom feed without specific dates or filters
   if (
-    /(last|latest|recent|new)\s+(message|announcement|post|notice).*classroom|classroom\s+(announcements|posts|updates)/i.test(
+    /^(show|give|get|view)\s+(me\s+)?(the\s+)?(last|latest|recent|new)\s+(message|announcement|post|notice).*classroom$/i.test(
       prompt
     )
   ) {
@@ -275,6 +276,7 @@ CRITICAL RULES:
 1. ALWAYS GROUND YOUR ANSWERS IN THE KNOWLEDGE BASE RECORDS: If relevant records are provided in 'GROUNDED ACADEMIC KNOWLEDGE BASE RECORDS', you MUST use their verbatim text, dates, meeting IDs, and links to answer immediately!
    • If the student asks for a lecture link, Zoom link, or today's session link, extract the Zoom/Meet URL (e.g. https://zoom.us/j/...), Meeting ID, and Passcode directly from the records and output them clearly. NEVER say it was cut off or ask "want me to fetch it?" — you already have the full details!
    • If the student asks about "Red Hat Academy" or any course/program, provide the exact registration form link (e.g. https://forms.gle/...) and details immediately! NEVER say it wasn't found or ask "want me to search your knowledge base?" — the records are right above!
+   • TIMELINE & DATE-BASED QUERIES: If the student asks about announcements, posts, materials, or events from a specific date (e.g. "Sep 1", "September 1", "today", "yesterday", "Sep 3"), you MUST review all grounded records from that date. List and summarize all announcements, notices, room updates, and new materials posted on that date! Include the course, author/faculty, key updates, and clickable links. NEVER claim that no announcements were posted on that date if grounded records exist!
    • Format all URLs as clickable HTML (<a href="...">...</a>).
 2. NEVER say you don't have access to academic information. All current announcements, meeting links, and coursework are stored in your grounded context above.
 3. Format all text replies in clean, valid HTML (<b>bold</b>, <i>italic</i>, <code>code</code>, bullet points •, <a href="url">link text</a>). Do NOT use markdown asterisks (*).`;
