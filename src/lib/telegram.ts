@@ -454,6 +454,7 @@ export async function getLatestClassroomMessages(limit: number = 5): Promise<str
     }
 
     const messages: Array<{
+      id?: string;
       course: string;
       type: string;
       time: string;
@@ -475,6 +476,7 @@ export async function getLatestClassroomMessages(limit: number = 5): Promise<str
         });
         for (const ann of annRes.data.announcements || []) {
           messages.push({
+            id: `ann_${ann.id}`,
             course: courseName,
             type: 'Announcement',
             time: ann.creationTime || '',
@@ -494,6 +496,7 @@ export async function getLatestClassroomMessages(limit: number = 5): Promise<str
         });
         for (const cw of cwRes.data.courseWork || []) {
           messages.push({
+            id: `cw_${cw.id}`,
             course: courseName,
             type: 'Assignment',
             time: cw.creationTime || '',
@@ -514,9 +517,18 @@ export async function getLatestClassroomMessages(limit: number = 5): Promise<str
     }
 
     const top = messages.slice(0, limit);
+    const topIds = top.map((m: any) => m.id).filter(Boolean);
+    const supabase = getSupabaseAdmin();
+    const { data: kbItems } = await supabase
+      .from('knowledge_base')
+      .select('external_id, title, content, metadata')
+      .in('external_id', topIds);
+
+    const kbMap = new Map((kbItems || []).map((k: any) => [k.external_id, k]));
+
     let output = `📢 <b>Latest Google Classroom Posts (${top.length}):</b>\n\n`;
 
-    top.forEach((m, idx) => {
+    top.forEach((m: any, idx) => {
       const dateStr = m.time
         ? new Date(m.time).toLocaleString('en-IN', {
             timeZone: 'Asia/Kolkata',
@@ -533,8 +545,28 @@ export async function getLatestClassroomMessages(limit: number = 5): Promise<str
       }
       const preview = m.text.length > 280 ? m.text.slice(0, 280) + '...' : m.text;
       output += `   💬 ${escapeHtml(preview)}\n`;
+
+      const kbItem: any = kbMap.get(m.id);
+      const attachments = kbItem?.metadata?.attachments || [];
+      if (attachments.length > 0) {
+        attachments.forEach((att: any) => {
+          output += `   📎 <b>Attached:</b> <code>${escapeHtml(att.name || 'File')}</code>\n`;
+          const rawOcr = (att.extracted_text || '')
+            .replace(/```markdown\s*/g, '')
+            .replace(/```/g, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+          if (rawOcr) {
+            const previewOcr = rawOcr.length > 180 ? rawOcr.slice(0, 180) + '...' : rawOcr;
+            output += `   🖼️ <b>Extracted Details:</b> <i>${escapeHtml(previewOcr)}</i>\n`;
+          }
+        });
+      }
+
       output += `   🕒 <i>${dateStr} IST</i>\n\n`;
     });
+
+    output += `<i>💡 Tip: Reply with <b>"what was in 1"</b> or <b>/details 1</b> to see full extracted poster text, attachments & links.</i>`;
 
     return output;
   } catch (err: any) {
@@ -542,6 +574,242 @@ export async function getLatestClassroomMessages(limit: number = 5): Promise<str
     return `❌ Could not fetch Google Classroom messages: ${escapeHtml(err.message)}`;
   }
 }
+
+/**
+ * Formats a Knowledge Base item with full attachments, drive links, and OCR text
+ */
+export function formatKnowledgeBaseItemDetails(item: any): string {
+  const dateStr = item.created_at
+    ? new Date(item.created_at).toLocaleString('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    : 'Recent';
+
+  let msg = `📌 <b>${escapeHtml(item.title || 'Academic Post Details')}</b>\n\n` +
+    `📚 <b>Course:</b> ${escapeHtml(item.course || 'General')}\n` +
+    `🕒 <b>Posted:</b> <i>${dateStr} IST</i>\n`;
+
+  if (item.metadata?.author) {
+    msg += `👤 <b>Author:</b> ${escapeHtml(item.metadata.author)}\n`;
+  }
+  if (item.metadata?.alternateLink) {
+    msg += `🔗 <b>Classroom:</b> <a href="${item.metadata.alternateLink}">Open in Classroom</a>\n`;
+  }
+  msg += `\n`;
+
+  const attachments = item.metadata?.attachments || [];
+  if (attachments.length > 0) {
+    msg += `📎 <b>Attachments (${attachments.length}):</b>\n`;
+    attachments.forEach((att: any, i: number) => {
+      const link = att.drive_url ? `<a href="${att.drive_url}">${escapeHtml(att.name || 'View File')}</a>` : `<code>${escapeHtml(att.name || 'File')}</code>`;
+      msg += `  ${i + 1}. ${link}\n`;
+      if (att.extracted_text) {
+        const cleanOcr = att.extracted_text
+          .replace(/```markdown\s*/gi, '')
+          .replace(/```/g, '')
+          .trim();
+        const truncatedOcr = cleanOcr.length > 2500 ? cleanOcr.slice(0, 2500) + '... (truncated)' : cleanOcr;
+        msg += `\n🖼️ <b>Extracted Poster / Document Content (Gemini Vision):</b>\n<i>${escapeHtml(truncatedOcr)}</i>\n\n`;
+      }
+    });
+  }
+
+  const content = (item.content || '').trim();
+  const alreadyCoveredInOcr = attachments.some((att: any) => att.extracted_text && content.includes(att.extracted_text.slice(0, 50)));
+  if (content && !alreadyCoveredInOcr && content !== item.title) {
+    const previewContent = content.length > 2000 ? content.slice(0, 2000) + '...' : content;
+    msg += `📝 <b>Full Description:</b>\n<i>${escapeHtml(previewContent)}</i>\n`;
+  } else if (!attachments.length && (!content || content === item.title)) {
+    msg += `<i>No additional description was written in the post body.</i>\n`;
+  }
+
+  return msg;
+}
+
+/**
+ * Searches and retrieves detailed post information and attachments from knowledge_base
+ */
+export async function getDetailedPostInformation(query: string, course?: string): Promise<string> {
+  const supabase = getSupabaseAdmin();
+
+  // 1. Try finding by exact external_id
+  let { data: items } = await supabase
+    .from('knowledge_base')
+    .select('*')
+    .eq('external_id', query)
+    .limit(1);
+
+  // 2. If not found by external_id, search by title or content
+  if (!items || items.length === 0) {
+    let q = supabase
+      .from('knowledge_base')
+      .select('*')
+      .or(`title.ilike.%${query}%,content.ilike.%${query}%`);
+
+    if (course) {
+      q = q.ilike('course', `%${course.split(' ')[0]}%`);
+    }
+
+    const res = await q.order('created_at', { ascending: false }).limit(2);
+    items = res.data;
+  }
+
+  // 3. Fallback: search anywhere in title or content without course filter
+  if (!items || items.length === 0) {
+    const { data: fallbackItems } = await supabase
+      .from('knowledge_base')
+      .select('*')
+      .or(`title.ilike.%${query}%,content.ilike.%${query}%`)
+      .order('created_at', { ascending: false })
+      .limit(2);
+    items = fallbackItems;
+  }
+
+  if (!items || items.length === 0) {
+    return `🔍 <b>No details found matching:</b> "${escapeHtml(query)}".\n\n<i>Try typing <code>/classroom</code> to see the latest list of posts!</i>`;
+  }
+
+  return items.map(formatKnowledgeBaseItemDetails).join('\n───────────────\n\n');
+}
+
+/**
+ * Resolves an ordinal reference like "1", "what was in 1", "#2" against the previous assistant message.
+ */
+export async function resolveOrdinalReference(
+  text: string,
+  chatId: string
+): Promise<string | null> {
+  const ordinalMatch = text.match(
+    /^(?:what(?:'?s| was)? in|tell me (?:more )?(?:about|in)|show(?: me)?(?: details of)?|details of|expand on|about|info on|view)?\s*(?:item|announcement|post|assignment|task|#)?\s*([1-9])(?:\b|\?|$)/i
+  );
+  if (!ordinalMatch) return null;
+
+  const targetIdx = parseInt(ordinalMatch[1], 10);
+  const supabase = getSupabaseAdmin();
+
+  const { data: lastMsgs } = await supabase
+    .from('chat_messages')
+    .select('content')
+    .eq('chat_id', chatId)
+    .eq('role', 'assistant')
+    .order('created_at', { ascending: false })
+    .limit(3);
+
+  if (!lastMsgs || lastMsgs.length === 0) return null;
+
+  for (const m of lastMsgs) {
+    const content = m.content || '';
+
+    // Check for Classroom posts list
+    if (content.includes('Google Classroom Posts') || content.includes('[ANNOUNCEMENT]') || content.includes('[ASSIGNMENT]')) {
+      const itemRegex = new RegExp(
+        `(?:^|\\n)${targetIdx}\\.\\s*\\[(ANNOUNCEMENT|ASSIGNMENT)\\]\\s*(?:<b>)?([^\\n<]+)(?:<\\/b>)?([\\s\\S]*?)(?=(?:\\n\\d+\\.\\s*\\[)|$)`,
+        'i'
+      );
+      const match = content.match(itemRegex);
+      if (match) {
+        const course = match[2].trim();
+        const bodyBlock = match[3];
+
+        const titleMatch = bodyBlock.match(/📌\s*(?:<b>)?([^<\n]+)(?:<\/b>)?/i);
+        const textMatch = bodyBlock.match(/💬\s*([^\n]+)/i);
+        const attMatch = bodyBlock.match(/<code>([^<]+)<\/code>/i);
+
+        const candidateTitle = (titleMatch ? titleMatch[1] : (textMatch ? textMatch[1] : '')).trim();
+        const candidateAtt = attMatch ? attMatch[1].trim() : '';
+
+        // Query knowledge_base for this item
+        let kbQuery = supabase
+          .from('knowledge_base')
+          .select('*')
+          .ilike('course', `%${course.split(' ')[0]}%`);
+
+        if (candidateTitle && candidateTitle !== '(No text)') {
+          kbQuery = kbQuery.or(`title.ilike.%${candidateTitle}%,content.ilike.%${candidateTitle}%`);
+        } else if (candidateAtt) {
+          kbQuery = kbQuery.or(`title.ilike.%${candidateAtt}%,content.ilike.%${candidateAtt}%`);
+        }
+
+        const { data: kbResults } = await kbQuery.order('created_at', { ascending: false }).limit(1);
+        if (kbResults && kbResults.length > 0) {
+          return formatKnowledgeBaseItemDetails(kbResults[0]);
+        }
+
+        if (candidateTitle && candidateTitle !== '(No text)') {
+          const { data: globalKb } = await supabase
+            .from('knowledge_base')
+            .select('*')
+            .or(`title.ilike.%${candidateTitle}%,content.ilike.%${candidateTitle}%`)
+            .order('created_at', { ascending: false })
+            .limit(1);
+
+          if (globalKb && globalKb.length > 0) {
+            return formatKnowledgeBaseItemDetails(globalKb[0]);
+          }
+        }
+
+        return `📌 <b>Item #${targetIdx} from Google Classroom</b>\n\n` +
+          `📚 <b>Course:</b> ${escapeHtml(course)}\n` +
+          `${bodyBlock.trim()}`;
+      }
+    }
+
+    // Check for Active Academic Tasks list
+    if (content.includes('Active Academic Tasks') || content.includes('Current Active Tasks')) {
+      const taskRegex = new RegExp(
+        `(?:^|\\n)${targetIdx}\\.\\s*(?:<b>)?([^<\\n]+)(?:<\\/b>)?[\\s\\S]*?🆔\\s*<code>([0-9a-f-]+)<\\/code>`,
+        'i'
+      );
+      const match = content.match(taskRegex);
+      if (match) {
+        const taskId = match[2];
+        const { data: task } = await supabase
+          .from('tasks')
+          .select('*')
+          .eq('id', taskId)
+          .maybeSingle();
+
+        if (task) {
+          const { data: delivs } = await supabase
+            .from('deliverables')
+            .select('*')
+            .eq('task_id', task.id);
+
+          let dMsg = `📌 <b>Task Details (#${targetIdx}):</b> ${escapeHtml(task.title)}\n\n` +
+            `📚 <b>Course:</b> ${escapeHtml(task.course || 'General')}\n` +
+            `🏷️ <b>Type:</b> <code>${task.task_type}</code>\n` +
+            `📊 <b>Status:</b> <code>${task.status.toUpperCase()}</code>\n` +
+            `⏰ <b>Due:</b> ${task.due_date ? new Date(task.due_date).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : 'N/A'}\n\n`;
+
+          if (task.result_summary) {
+            dMsg += `📝 <b>Summary:</b> ${escapeHtml(task.result_summary)}\n\n`;
+          }
+
+          if (delivs && delivs.length > 0) {
+            dMsg += `📁 <b>Deliverables:</b>\n`;
+            delivs.forEach((d: any) => {
+              if (d.drive_link) {
+                dMsg += `• <a href="${d.drive_link}">${escapeHtml(d.file_name)}</a>\n`;
+              } else {
+                dMsg += `• <code>${escapeHtml(d.file_name)}</code>\n`;
+              }
+            });
+          }
+
+          return dMsg;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
 
 /**
  * Fetches recent academic emails from Gmail
@@ -662,7 +930,8 @@ CRITICAL RULES:
 5. If the student asks for status or lists of tasks, call 'get_system_status' or 'list_active_tasks'.
 6. If the student asks conceptual questions or converses, respond directly with rich technical depth and clarity.
 7. Format all text replies in clean, valid HTML (<b>bold</b>, <i>italic</i>, <code>code</code>, bullet points •). Do NOT use markdown asterisks.
-8. If the student gives a correction, feedback, rule, or grade for a specific course (e.g. "for CE-401 always use IEEE format", or "my teacher said to include loss curves"), YOU MUST CALL 'save_course_feedback' to remember it!`;
+8. If the student gives a correction, feedback, rule, or grade for a specific course (e.g. "for CE-401 always use IEEE format", or "my teacher said to include loss curves"), YOU MUST CALL 'save_course_feedback' to remember it!
+9. If the student asks about an announcement, event, attached poster, image, document, or syllabus details (e.g. "what was in 1", "what is Kalpvruksh 2.0", "details of the attached poster"), YOU MUST CALL 'search_knowledge_base' with the keyword to retrieve the full extracted OCR details and attachments! NEVER claim that no description was provided without searching the knowledge base!`;
 
   const academicTools = [
     {
@@ -755,6 +1024,21 @@ CRITICAL RULES:
             feedback: { type: 'string', description: 'The exact feedback, correction, or rule to remember.' }
           },
           required: ['course', 'feedback']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'search_knowledge_base',
+        description: 'Searches the student\'s academic knowledge base for announcements, coursework materials, syllabus, lecture notes, and full extracted text/OCR from attached posters, PDFs, and images.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'Search term or title (e.g. "KALPVRUKSH", "conclave", "exam schedule", "assignment")' },
+            course: { type: 'string', description: 'Optional course filter (e.g. "5CE-AIML", "Cloud Computing")' }
+          },
+          required: ['query']
         }
       }
     }
@@ -1022,6 +1306,18 @@ Instructions:
           });
           
           return resultMsg;
+        }
+
+        if (funcName === 'search_knowledge_base') {
+          const query = args.query || '';
+          const course = args.course || '';
+          const details = await getDetailedPostInformation(query, course);
+          await supabase.from('chat_messages').insert({
+            chat_id: chatId,
+            role: 'assistant',
+            content: details,
+          });
+          return details;
         }
       }
 
@@ -1375,6 +1671,17 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
 
   const lower = text.toLowerCase();
 
+  // 3-ordinal. Check if user is referencing an item number from a recent list (e.g., "what was in 1", "tell me about 1", "details of #2")
+  const resolvedOrdinal = await resolveOrdinalReference(text, incomingChatId);
+  if (resolvedOrdinal) {
+    await reply(resolvedOrdinal);
+    await supabase.from('chat_messages').insert([
+      { chat_id: incomingChatId, role: 'user', content: text },
+      { chat_id: incomingChatId, role: 'assistant', content: resolvedOrdinal },
+    ]);
+    return { handled: true };
+  }
+
   // 3a. Direct Google Classroom Query (Commands & Natural Language)
   const isClassroomQuery =
     lower.startsWith('/classroom') ||
@@ -1577,10 +1884,25 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
   if (lower.startsWith('/details') || lower.startsWith('/info')) {
     const parts = text.split(/\s+/);
     if (parts.length < 2) {
-      await reply('Usage: <code>/details &lt;task_id&gt;</code>');
+      await reply('Usage: <code>/details &lt;task_id or item_number&gt;</code>');
       return { handled: true };
     }
-    const taskId = parts[1].trim();
+    const arg = parts[1].trim();
+
+    // Check if argument is a single digit item number (e.g., /details 1)
+    if (/^[1-9]$/.test(arg)) {
+      const ordinalResult = await resolveOrdinalReference(arg, incomingChatId);
+      if (ordinalResult) {
+        await reply(ordinalResult);
+        await supabase.from('chat_messages').insert([
+          { chat_id: incomingChatId, role: 'user', content: text },
+          { chat_id: incomingChatId, role: 'assistant', content: ordinalResult },
+        ]);
+        return { handled: true };
+      }
+    }
+
+    const taskId = arg;
     const { data: task } = await supabase
       .from('tasks')
       .select('*')
