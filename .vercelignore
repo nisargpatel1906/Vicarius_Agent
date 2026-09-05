@@ -1,0 +1,17 @@
+.env*
+.venv/
+venv/
+work_dirs/
+tasks_temp/
+scratch/
+videos/
+notebooks/
+worker/
+docx/
+exports/
+tests/
+*.docx
+*.pptx
+*.pdf
+*.zip
+*.ipynb
