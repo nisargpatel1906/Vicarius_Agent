@@ -1,16 +1,40 @@
 """
 Vicarius Agent - Verifier Node
-Executes mechanical deliverable checks, anti-AI tone inspection, and the
-rubric-based LLM Judge quality evaluation.
+Executes mechanical deliverable checks, actual code execution,
+anti-AI tone inspection, and the rubric-based LLM Judge quality evaluation.
+
+New: Actually runs Python files and checks their exit code to verify correctness.
 """
 
 import re
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Dict, Any, List, Tuple
 
 from worker.state import AgentState
 from worker.llm import call_llm, safe_parse_json
+
+def _detect_python_exe() -> str:
+    if os.getenv("AGENT_PYTHON_EXE") and Path(os.environ["AGENT_PYTHON_EXE"]).exists():
+        return os.environ["AGENT_PYTHON_EXE"]
+    # 1. Prefer Python 3.12 (standard student ML & CUDA environment)
+    py312 = Path(r"python.exe")
+    if py312.exists():
+        return str(py312)
+    # 2. Check local workspace .venv
+    local_venv = Path(__file__).resolve().parent.parent.parent / ".venv" / "Scripts" / "python.exe"
+    if local_venv.exists():
+        return str(local_venv)
+    # 3. Check current runtime python
+    if sys.executable and Path(sys.executable).exists():
+        return sys.executable
+    # 4. Fallback
+    return r"python.exe"
+
+PYTHON_EXE = _detect_python_exe()
 
 
 def contains_banned_ai_filler(text: str) -> Tuple[bool, str]:
@@ -31,7 +55,52 @@ def contains_banned_ai_filler(text: str) -> Tuple[bool, str]:
     return False, ""
 
 
-def run_llm_judge(task: Dict[str, Any], produced_files: List[Path], stdout_output: str) -> Tuple[bool, float, str]:
+def run_python_file_check(filepath: Path, timeout: int = 60) -> Tuple[bool, str]:
+    """
+    Actually runs a Python file in a subprocess and returns (success, output).
+    This gives real pass/fail based on exit code, not just LLM opinion.
+    """
+    try:
+        result = subprocess.run(
+            [PYTHON_EXE, str(filepath)],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=str(filepath.parent),
+            env={**os.environ, "PYTHONPATH": str(filepath.parent)},
+        )
+        output = ""
+        if result.stdout.strip():
+            output += f"STDOUT: {result.stdout.strip()[:1000]}"
+        if result.stderr.strip():
+            output += f"\nSTDERR: {result.stderr.strip()[:500]}"
+        return result.returncode == 0, output
+    except subprocess.TimeoutExpired:
+        return False, f"Execution timed out after {timeout}s"
+    except Exception as e:
+        return False, f"Could not run file: {e}"
+
+
+def validate_notebook(filepath: Path) -> Tuple[bool, str]:
+    """
+    Validates that a .ipynb file is a proper Jupyter notebook with real cells.
+    Also tracks executed output counts for quality verification.
+    """
+    try:
+        raw = filepath.read_text(encoding="utf-8", errors="ignore")
+        data = json.loads(raw)
+        if isinstance(data, dict) and "cells" in data and "nbformat" in data:
+            cells = data.get("cells", [])
+            n_code = sum(1 for c in cells if c.get("cell_type") == "code")
+            n_md = sum(1 for c in cells if c.get("cell_type") == "markdown")
+            n_outputs = sum(1 for c in cells if c.get("cell_type") == "code" and len(c.get("outputs", [])) > 0)
+            return True, f"Valid notebook: {len(cells)} cells ({n_code} code, {n_md} markdown, {n_outputs} with executed outputs)"
+        return False, "File is not in valid Jupyter Notebook v4 format"
+    except Exception as e:
+        return False, f"Invalid notebook: {e}"
+
+
+def run_llm_judge(task: Dict[str, Any], produced_files: List[Path], stdout_output: str, execution_results: str) -> Tuple[bool, float, str]:
     """Rubric-based LLM evaluation of produced deliverable quality and requirement completeness."""
     reqs_data = task.get("extracted_requirements") or {}
     req_items = []
@@ -64,6 +133,9 @@ def run_llm_judge(task: Dict[str, Any], produced_files: List[Path], stdout_outpu
                 samples.append(f"=== File: {f.name} (Word Document) ===\n{txt}")
             except Exception:
                 pass
+        elif ext == ".ipynb":
+            valid, validation_msg = validate_notebook(f)
+            samples.append(f"=== File: {f.name} (Jupyter Notebook) ===\nValidation: {validation_msg}")
 
     content_preview = "\n\n".join(samples)
     if not content_preview:
@@ -73,6 +145,8 @@ def run_llm_judge(task: Dict[str, Any], produced_files: List[Path], stdout_outpu
         f"- {f.name} ({f.stat().st_size} bytes)" for f in produced_files
     )
 
+    exec_block = f"\n\nCode Execution Results:\n{execution_results}" if execution_results else ""
+
     sys_prompt = (
         "You are the verification judge for an academic coursework submission by an autonomous agent for a university student.\n"
         "Your role: read the assignment requirements, success criteria, and produced deliverable content, "
@@ -80,10 +154,12 @@ def run_llm_judge(task: Dict[str, Any], produced_files: List[Path], stdout_outpu
         "Rubric:\n"
         "1. Completeness: are ALL listed requirements addressed? If any requirement is missing or only superficially mentioned, fail.\n"
         "2. Correctness: does the deliverable show obvious technical errors, contradictions, or invented facts?\n"
-        "3. Anti-AI tone: does the text use banned filler phrases ('in today\\'s fast-paced world', 'delve into', reflexive 'in conclusion') or feel machine-written?\n"
-        "4. Scope & Length: did it hit requested lengths/slide counts?\n"
-        "5. Android / Software Projects: When evaluating Android or mobile software assignments, verify completeness based on source code (Activities, layout XMLs, AndroidManifest.xml, build.gradle), formal report.docx, smoke test, UI preview screenshot, and packaged project.zip / app-debug.apk. If source code properly implements the functionality and settings logic, and report.docx provides the setup, permission model, and proof, mark completeness as passed (score >= 0.85).\n\n"
-        "Output strict JSON with keys:\n"
+        "3. Anti-AI tone: does the text use banned filler phrases ('in today\\'s fast-paced world', 'delve into') or feel machine-written?\n"
+        "4. Scope & Length: did it hit requested lengths/slide counts/file counts?\n"
+        "5. Code Quality: if code files exist, did execution succeed? Check the Code Execution Results field.\n"
+        "6. Notebook Quality: if .ipynb files exist, are they valid notebooks with proper cells, not empty stubs?\n"
+        "7. Android / Software Projects: verify completeness based on source code, formal report.docx, smoke test, UI preview screenshot, and packaged zip.\n\n"
+        "Output strict JSON:\n"
         '{\n  "passed": boolean,\n  "score": number (0.0 to 1.0),\n  "feedback": string\n}\n'
         "Return ONLY valid JSON."
     )
@@ -93,7 +169,7 @@ def run_llm_judge(task: Dict[str, Any], produced_files: List[Path], stdout_outpu
         f"Course: {task.get('course', 'General')}\n\n"
         f"Requirements:\n{formatted_reqs}\n\n"
         f"Success criteria:\n{success_criteria}\n\n"
-        f"{inventory}\n\n"
+        f"{inventory}{exec_block}\n\n"
         f"Deliverable Content Preview:\n{content_preview[:12000]}"
     )
 
@@ -115,7 +191,7 @@ def run_llm_judge(task: Dict[str, Any], produced_files: List[Path], stdout_outpu
 def verifier_node(state: AgentState) -> Dict[str, Any]:
     """
     LangGraph Node: Verifier
-    Validates deliverable existence, tone, and technical correctness.
+    Validates deliverable existence, tone, actual code execution, and technical correctness.
     """
     task = state.get("task", {})
     title = state.get("title", task.get("title", "Assignment"))
@@ -141,7 +217,7 @@ def verifier_node(state: AgentState) -> Dict[str, Any]:
             "verification_details": details or {},
         }
 
-    # 1. Output files existence
+    # 1. Output files existence check
     if not produced_paths:
         return {
             "verification_passed": False,
@@ -150,7 +226,7 @@ def verifier_node(state: AgentState) -> Dict[str, Any]:
             "verification_details": {"error": "no_files"},
         }
 
-    # 2. Anti-AI tone check on deliverables
+    # 2. Anti-AI tone check on text deliverables
     for f in produced_paths:
         if f.suffix.lower() in {".txt", ".md", ".py"}:
             try:
@@ -166,8 +242,73 @@ def verifier_node(state: AgentState) -> Dict[str, Any]:
             except Exception:
                 pass
 
-    # 3. LLM Judge Quality Review
-    passed, score, feedback = run_llm_judge(task, produced_paths, stdout_output)
+    # 3. Validate Jupyter notebooks & ensure code cells are executed
+    notebook_issues = []
+    for f in produced_paths:
+        if f.suffix.lower() == ".ipynb" and f.exists():
+            valid, msg = validate_notebook(f)
+            if valid and "0 with executed outputs" in msg:
+                # Check if an executed sibling already exists
+                sibling_executed = f.with_name(f.stem + "_executed.ipynb")
+                if sibling_executed.exists():
+                    s_valid, s_msg = validate_notebook(sibling_executed)
+                    if s_valid and "0 with executed outputs" not in s_msg:
+                        print(f"[LangGraph:Verifier] Notebook '{f.name}' is clean template copy (executed sibling '{sibling_executed.name}' exists with outputs). OK.")
+                        continue
+
+                # Attempt automatic headless execution with nbclient
+                print(f"[LangGraph:Verifier] Notebook '{f.name}' has unexecuted code cells. Auto-executing with nbclient...")
+                try:
+                    from worker.tools.agent_tools import tool_execute_notebook
+                    res = tool_execute_notebook(f.parent, f.name)
+                    print(f"  └─ {res}")
+                    if "ERROR" in res:
+                        notebook_issues.append(f"{f.name}: Headless execution failed: {res}")
+                    else:
+                        valid, msg = validate_notebook(f)
+                except Exception as ex:
+                    notebook_issues.append(f"{f.name}: Execution exception: {ex}")
+
+            if not valid:
+                notebook_issues.append(f"{f.name}: {msg}")
+            else:
+                print(f"[LangGraph:Verifier] Notebook OK: {f.name} — {msg}")
+
+    if notebook_issues:
+        return {
+            "verification_passed": False,
+            "verification_score": 0.35,
+            "verification_feedback": f"Invalid notebook(s): {'; '.join(notebook_issues)}",
+            "verification_details": {"notebook_errors": notebook_issues},
+        }
+
+    # 4. Actually run Python files to check they work
+    execution_results = []
+    for f in produced_paths:
+        if f.suffix.lower() == ".py" and f.exists() and f.name in {"smoke_test.py", "main.py", "app.py"}:
+            print(f"[LangGraph:Verifier] Running: {f.name}...")
+            success, output = run_python_file_check(f, timeout=60)
+            status = "PASS" if success else "FAIL"
+            execution_results.append(f"[{status}] {f.name}: {output[:300]}")
+            if not success:
+                print(f"  └─ FAIL: {output[:200]}")
+            else:
+                print(f"  └─ PASS: {output[:100]}")
+
+    exec_summary = "\n".join(execution_results)
+
+    # Check if any smoke test failed
+    if any("[FAIL]" in r for r in execution_results):
+        fail_details = [r for r in execution_results if "[FAIL]" in r]
+        return {
+            "verification_passed": False,
+            "verification_score": 0.4,
+            "verification_feedback": f"Code execution failed: {fail_details[0][:300]}",
+            "verification_details": {"execution_errors": fail_details},
+        }
+
+    # 5. LLM Judge Quality Review
+    passed, score, feedback = run_llm_judge(task, produced_paths, stdout_output, exec_summary)
     print(f"[LangGraph:Verifier] Judge result: passed={passed}, score={score:.2f}, feedback: {feedback[:120]}")
 
     summary = f"Produced {len(produced_paths)} deliverable file(s): {', '.join([f.name for f in produced_paths])}."
@@ -176,5 +317,5 @@ def verifier_node(state: AgentState) -> Dict[str, Any]:
         "verification_score": score,
         "verification_feedback": feedback,
         "result_summary": summary,
-        "verification_details": {"judge_score": score, "judge_feedback": feedback},
+        "verification_details": {"judge_score": score, "judge_feedback": feedback, "execution_results": execution_results},
     }

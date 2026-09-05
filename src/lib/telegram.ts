@@ -157,7 +157,7 @@ export async function sendTelegramAlert(text: string, isUrgent: boolean = false)
 /**
  * Creates and queues a new academic task directly from a Telegram prompt
  */
-export async function createTaskFromTelegram(promptText: string): Promise<string> {
+export async function createTaskFromTelegram(promptText: string, attachmentMeta?: any): Promise<string> {
   const supabase = getSupabaseAdmin();
   const rawBody = promptText.trim();
 
@@ -167,8 +167,9 @@ export async function createTaskFromTelegram(promptText: string): Promise<string
 Extract the structured task details into strict JSON:
 {
   "title": string (concise, descriptive academic title),
-  "course": string (e.g. "CE-401 Machine Learning", "CE-502 Cloud Computing", "CE-403 Web Technologies", "CE-505 Information Security", or "General"),
+  "course": string (e.g. "CE-401 Machine Learning", "CE-502 Cloud Computing", "CE-403 Web Technologies", "CE-505 Information Security", "DLCV 2026", or "General"),
   "task_type": "document" | "presentation" | "code_project" | "ml_training" | "research" | "handwritten",
+  "weight": "light" | "medium" | "heavy",
   "due_date": string in ISO 8601 with Asia/Kolkata timezone offset (+05:30) (e.g. "2026-09-10T18:00:00+05:30". If not specified, default to 3 days from now at 18:00:00+05:30),
   "requirements": string[] (list of key instructions),
   "success_criteria": string (verification criteria),
@@ -233,25 +234,36 @@ Extract the structured task details into strict JSON:
     }
   }
 
-  const title = parsed.title || rawBody.slice(0, 50) || 'Academic Assignment';
-  const course = parsed.course || 'General';
+  const title = parsed.title || rawBody.slice(0, 80) || 'Academic Assignment';
+  const course = parsed.course || (rawBody.toLowerCase().includes('dlcv') ? 'Deep Learning with Computer Vision (DLCV 2026)' : 'General');
   
   let taskType: TaskType = parsed.task_type || 'document';
   const lower = rawBody.toLowerCase();
   
-  // Explicit format declarations take top precedence
-  if (lower.includes('type: document') || lower.includes('type:document') || lower.includes('report') || lower.includes('essay') || lower.includes('paper') || lower.includes('document')) {
+  // Explicit format declarations and domain-aware detection
+  if (lower.includes('type: document') || lower.includes('type:document') || lower.includes('report') || lower.includes('essay') || lower.includes('paper')) {
     taskType = 'document';
   } else if (lower.includes('presentation') || lower.includes('slide') || lower.includes('deck') || lower.includes('.pptx')) {
     taskType = 'presentation';
-  } else if (lower.includes('code') || lower.includes('react') || lower.includes('next.js') || lower.includes('python script') || lower.includes('web app') || lower.includes('gui')) {
+  } else if (lower.includes('code') || lower.includes('react') || lower.includes('next.js') || lower.includes('python script') || lower.includes('web app') || lower.includes('gui') || lower.includes('opencv') || lower.includes('jupyter') || lower.includes('.ipynb')) {
     taskType = 'code_project';
-  } else if (lower.includes('train') || lower.includes('epoch') || lower.includes('accuracy target') || lower.includes('val_acc')) {
+  } else if (lower.includes('train') || lower.includes('epoch') || lower.includes('accuracy target') || lower.includes('val_acc') || lower.includes('dlcv') || lower.includes('deep learning') || lower.includes('fnn') || lower.includes('neural network') || lower.includes('cat and dog') || lower.includes('cat vs dog')) {
     taskType = 'ml_training';
   } else if (lower.includes('research') || lower.includes('citation') || lower.includes('literature review') || lower.includes('ieee') || lower.includes('survey')) {
     taskType = 'research';
   } else if (lower.includes('handwritten') || lower.includes('by hand') || lower.includes('copy-ready')) {
     taskType = 'handwritten';
+  }
+
+  // Weight Classification
+  let weight: 'light' | 'medium' | 'heavy' = 'light';
+  const isHeavy = /dlcv|deep\s+learning|computer\s+vision|neural\s+network|feed-?forward|mlp|cnn|fnn|opencv|model\s+weights|epochs?|cat\s*(?:and|vs)\s*dog|full-?stack|microservice|distributed|pipeline|large\s+dataset/i.test(rawBody) || /dlcv|deep\s+learning|computer\s+vision|neural|fnn|mlp|opencv/i.test(title);
+  const isMedium = /jupyter\s+notebook|\.ipynb|research|citation|data\s+analysis|algorithm/i.test(rawBody);
+
+  if (isHeavy || taskType === 'ml_training') {
+    weight = 'heavy';
+  } else if (isMedium || taskType === 'research' || taskType === 'code_project') {
+    weight = 'medium';
   }
 
   let slideCount: number | null = null;
@@ -274,11 +286,13 @@ Extract the structured task details into strict JSON:
     course: course,
     title: title,
     task_type: taskType,
+    weight: weight,
     extracted_requirements: {
       summary: title,
       items: parsed.requirements || [rawBody],
       raw_text: rawBody,
       slide_count: slideCount,
+      attachment: attachmentMeta || null,
     },
     success_criteria: parsed.success_criteria || (slideCount ? `Produce a verified ${slideCount}-slide presentation deck (.pptx).` : 'Produce complete academic deliverables matching requirements.'),
     build_spec: parsed.build_spec || rawBody,
@@ -293,7 +307,7 @@ Extract the structured task details into strict JSON:
     throw new Error(`Database error: ${error.message}`);
   }
 
-  await logSystemEvent('info', 'telegram', `New task created from Telegram: '${title}' (ID: ${taskId})`);
+  await logSystemEvent('info', 'telegram', `New task created from Telegram: '${title}' (ID: ${taskId}, Weight: ${weight})`);
 
   const displayDue = new Date(dueDate).toLocaleString('en-IN', {
     timeZone: 'Asia/Kolkata',
@@ -309,6 +323,7 @@ Extract the structured task details into strict JSON:
     `📌 <b>Title:</b> ${escapeHtml(title)}\n` +
     `📚 <b>Course:</b> ${escapeHtml(course)}\n` +
     `🏷️ <b>Type:</b> <code>${taskType}</code>\n` +
+    `⚖️ <b>Weight:</b> <code>${weight}</code>\n` +
     `⏰ <b>Due:</b> ${displayDue}\n\n` +
     `<i>The background daemon worker will pick this up automatically.</i>`
   );
@@ -1234,69 +1249,101 @@ async function extractTaskFromImage(fileId: string, mimeType?: string): Promise<
             console.warn('[PDF] Fast-path extractPdfText failed, falling back to Gemini:', fastErr);
           }
 
-          // Multimodal AI path: Gemini 2.5 Flash
+          // Multimodal AI path: Gemini 2.0 Flash / 1.5 Flash (supports native PDF processing)
           const geminiKey = process.env.GEMINI_API_KEY;
           if (geminiKey) {
-            const { GoogleGenerativeAI } = await import('@google/generative-ai');
-            const genAI = new GoogleGenerativeAI(geminiKey);
-            const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-            const aiRes = await model.generateContent([
-              {
-                inlineData: {
-                  mimeType: 'application/pdf',
-                  data: buf.toString('base64'),
-                },
-              },
-              {
-                text: 'Extract all assignment requirements, course title, due date, submission links, and all specific tasks from this PDF document. Provide a comprehensive summary.',
-              },
-            ]);
-            const text = aiRes.response.text();
-            if (text && text.trim().length > 10) {
-              return text.trim();
+            try {
+              const { GoogleGenerativeAI } = await import('@google/generative-ai');
+              const genAI = new GoogleGenerativeAI(geminiKey);
+              let aiRes: any = null;
+              for (const modelName of ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro']) {
+                try {
+                  const model = genAI.getGenerativeModel({ model: modelName });
+                  aiRes = await model.generateContent([
+                    {
+                      inlineData: {
+                        mimeType: 'application/pdf',
+                        data: buf.toString('base64'),
+                      },
+                    },
+                    {
+                      text: 'Extract ALL assignment requirements, course title, due date, submission links, constraints, and all specific tasks from this PDF document verbatim. Return the complete, unabridged assignment text with all questions, instructions, and constraints.',
+                    },
+                  ]);
+                  if (aiRes && aiRes.response) break;
+                } catch (mErr) {
+                  console.warn(`[PDF] Gemini model ${modelName} failed:`, mErr);
+                }
+              }
+              const text = aiRes?.response?.text();
+              if (text && text.trim().length > 10) {
+                return text.trim();
+              }
+            } catch (geminiErr) {
+              console.warn('[PDF] Gemini multimodal extraction failed:', geminiErr);
             }
           }
         }
       } catch (pdfErr) {
         console.warn('[PDF] Error extracting PDF text:', pdfErr);
       }
+      // If direct PDF extraction failed, do not forward PDF to image_url vision endpoint (which fails on PDFs)
+      return '';
     }
 
     const openRouterKey = process.env.OPENROUTER_API_KEY;
     if (!openRouterKey) return '';
-    const visionRes = await fetch(OPENROUTER_API_URL, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${openRouterKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: OPENROUTER_MODEL,
-        messages: [
-          {
-            role: 'user',
-            content: [
+
+    const visionModels = [
+      process.env.OPENROUTER_VISION_MODEL || 'google/gemma-3-27b-it',
+      'google/gemini-2.0-flash-001',
+      'qwen/qwen-2.5-vl-72b-instruct:free',
+      'meta-llama/llama-3.2-11b-vision-instruct:free',
+    ];
+
+    for (const visionModel of visionModels) {
+      try {
+        const visionRes = await fetch(OPENROUTER_API_URL, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${openRouterKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: visionModel,
+            messages: [
               {
-                type: 'image_url',
-                image_url: { url: fileUrl },
-              },
-              {
-                type: 'text',
-                text: 'Extract all assignment requirements from this image/document. List: the assignment title, course name, due date, and all specific instructions or requirements. Return as plain text, structured clearly.',
+                role: 'user',
+                content: [
+                  {
+                    type: 'image_url',
+                    image_url: { url: fileUrl },
+                  },
+                  {
+                    type: 'text',
+                    text: 'Extract all assignment requirements from this image/document. List: the assignment title, course name, due date, and all specific instructions or requirements. Return as plain text, structured clearly.',
+                  },
+                ],
               },
             ],
-          },
-        ],
-        temperature: 0.1,
-      }),
-    });
+            temperature: 0.1,
+          }),
+        });
 
-    if (!visionRes.ok) {
-      console.warn(`[Vision] OCR request failed: ${visionRes.status}`);
-      return '';
+        if (visionRes.ok) {
+          const visionData = await visionRes.json();
+          const content = visionData.choices?.[0]?.message?.content;
+          if (content && content.trim().length > 10) {
+            return content.trim();
+          }
+        } else {
+          console.warn(`[Vision] Model ${visionModel} failed with status ${visionRes.status}. Trying next...`);
+        }
+      } catch (vErr) {
+        console.warn(`[Vision] Model ${visionModel} error:`, vErr);
+      }
     }
-    const visionData = await visionRes.json();
-    return visionData.choices?.[0]?.message?.content || '';
+    return '';
   } catch (err: any) {
     console.error('[Vision] Image extraction error:', err?.message);
     return '';
@@ -1368,21 +1415,27 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
     // Phase 2B: PDF extraction
     if (doc.mime_type === 'application/pdf' || (doc.file_name && doc.file_name.toLowerCase().endsWith('.pdf'))) {
       await reply('📄 <i>PDF received — extracting assignment requirements...</i>');
+      const attachmentMeta = {
+        file_id: doc.file_id,
+        file_name: doc.file_name,
+        file_size: doc.file_size,
+        mime_type: doc.mime_type,
+      };
       const extracted = await extractTaskFromImage(doc.file_id, 'application/pdf');
-      if (extracted) {
-        const prompt = `Assignment from PDF "${doc.file_name || 'document'}": ${caption}\n\nExtracted content:\n${extracted}`;
+      if (extracted && extracted.trim().length > 20) {
+        const prompt = `Assignment from PDF "${doc.file_name || 'document'}": ${caption}\n\n=== VERBATIM EXTRACTED PDF CONTENT ===\n${extracted}`;
         await reply(`📋 <b>Extracted from PDF:</b>\n${escapeHtml(extracted.slice(0, 400))}...\n\n<i>Creating task...</i>`);
         try {
-          const confirmation = await createTaskFromTelegram(prompt);
+          const confirmation = await createTaskFromTelegram(prompt, attachmentMeta);
           await reply(confirmation);
         } catch (taskErr: any) {
           const aiResponse = await askAiAssistant(prompt, incomingChatId);
           await reply(aiResponse);
         }
       } else {
-        const prompt = `Attached PDF: ${doc.file_name || 'document'}\nInstructions: ${caption}`;
+        const prompt = `Attached PDF: ${doc.file_name || 'document'}\nInstructions: ${caption}\n[NOTE: Full PDF text will be extracted automatically by LangGraph worker from workspace/Telegram.]`;
         try {
-          const confirmation = await createTaskFromTelegram(prompt);
+          const confirmation = await createTaskFromTelegram(prompt, attachmentMeta);
           await reply(confirmation);
         } catch (err: any) {
           await reply(`❌ Failed to create task: ${escapeHtml(err.message)}`);

@@ -17,8 +17,6 @@ from worker.tools.delivery_tools import (
     upload_to_drive,
     create_calendar_deadline_event,
     send_telegram_notification,
-    send_telegram_document,
-    send_telegram_photo,
 )
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -91,24 +89,26 @@ def deliver_node(state: AgentState) -> Dict[str, Any]:
     if creds:
         create_calendar_deadline_event(creds, task)
 
-    # 3. Telegram Completion Notification
+    # 3. Telegram Completion Notification (Google Drive Links Only - No Document Attachments)
     if TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_CHAT_ID:
-        links_text = "\n".join(html_links) if html_links else "Saved locally."
+        primary_exts = {".zip", ".pptx", ".docx", ".pdf"}
+        primary_links = [l for l, f in zip(html_links, produced_files) if f.suffix.lower() in primary_exts or "_executed" in f.name]
+        displayed_links = (primary_links or html_links)[:15]
+        links_text = "\n".join(displayed_links)
+
+        folder_link_html = ""
+        if DRIVE_OUTPUT_FOLDER_ID:
+            folder_link_html = f"📁 <a href=\"https://drive.google.com/drive/folders/{DRIVE_OUTPUT_FOLDER_ID}\"><b>Open Complete Google Drive Folder</b></a>\n\n"
+
         msg = (
             f"🎉 <b>Task Completed:</b> {html.escape(title)}\n"
-            f"<b>Course:</b> {html.escape(course)}\n"
-            f"<b>Output Files:</b> {html.escape(', '.join([f.name for f in produced_files]))}\n\n"
-            f"<b>Drive Links:</b>\n{links_text}\n\n"
-            f"<b>Summary:</b> {html.escape(result_summary)}\n\n"
-            f"✅ <i>Deliverables are verified and ready for manual submission.</i>"
+            f"<b>Course:</b> {html.escape(course)}\n\n"
+            f"{folder_link_html}"
+            f"<b>Google Drive Deliverables:</b>\n{links_text}\n\n"
+            f"<b>Summary:</b> {html.escape(result_summary[:600])}\n\n"
+            f"✅ <i>All deliverables uploaded to Google Drive and ready for submission.</i>"
         )
         send_telegram_notification(TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_CHAT_ID, msg)
-
-        # Note: Physical document files are hosted on Google Drive; links are included in the message above.
-
-        # Send photo
-        if screenshot_path and screenshot_path.exists():
-            send_telegram_photo(TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_CHAT_ID, screenshot_path, caption=f"📸 <b>UI Preview:</b> {html.escape(title)}")
 
     # 4. Mark done in Supabase
     if sb and task_id:

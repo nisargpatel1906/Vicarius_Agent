@@ -283,16 +283,25 @@ CRITICAL RULES:
 
   let responseContent = '';
 
-  // Attempt 1: ChatGoogleGenerativeAI (gemini-3.6-flash)
+  // Attempt 1: ChatGoogleGenerativeAI (gemini-2.0-flash / gemini-1.5-flash)
   try {
     const geminiKey = process.env.GEMINI_API_KEY;
     if (!geminiKey) throw new Error('GEMINI_API_KEY is not configured');
 
-    const model = new ChatGoogleGenerativeAI({
-      model: 'gemini-3.6-flash',
-      apiKey: geminiKey,
-      temperature: 0.2,
-    });
+    let model: ChatGoogleGenerativeAI;
+    try {
+      model = new ChatGoogleGenerativeAI({
+        model: 'gemini-2.0-flash',
+        apiKey: geminiKey,
+        temperature: 0.2,
+      });
+    } catch {
+      model = new ChatGoogleGenerativeAI({
+        model: 'gemini-1.5-flash',
+        apiKey: geminiKey,
+        temperature: 0.2,
+      });
+    }
 
     const messages: BaseMessage[] = [
       new SystemMessage(systemInstruction),
@@ -303,7 +312,7 @@ CRITICAL RULES:
     const result = await model.invoke(messages);
     responseContent = typeof result.content === 'string' ? result.content : JSON.stringify(result.content);
   } catch (geminiError: any) {
-    console.warn('[LangGraph] Gemini 3.6 Flash failed or hit quota, attempting Groq fallback:', geminiError?.message);
+    console.warn('[LangGraph] Gemini failed, attempting Groq fallback:', geminiError?.message);
 
     // Attempt 2: Groq Fallback (llama-3.3-70b-versatile)
     const groqKey = process.env.GROQ_API_KEY;

@@ -7,6 +7,7 @@ from typing import Literal
 from langgraph.graph import StateGraph, START, END
 
 from worker.state import AgentState
+from worker.nodes.extractor import extractor_node
 from worker.nodes.planner import planner_node
 from worker.nodes.coder import coder_node
 from worker.nodes.verifier import verifier_node
@@ -46,6 +47,7 @@ def build_vicarius_graph() -> StateGraph:
     workflow = StateGraph(AgentState)
 
     # 1. Register Nodes
+    workflow.add_node("extractor", extractor_node)
     workflow.add_node("planner", planner_node)
     workflow.add_node("coder", coder_node)
     workflow.add_node("verifier", verifier_node)
@@ -54,7 +56,8 @@ def build_vicarius_graph() -> StateGraph:
     workflow.add_node("escalator", escalate_node)
 
     # 2. Linear Pipeline Edges
-    workflow.add_edge(START, "planner")
+    workflow.add_edge(START, "extractor")
+    workflow.add_edge("extractor", "planner")
     workflow.add_edge("planner", "coder")
 
     # 3. Coder Routing (proceed to verifier only if build produced files)

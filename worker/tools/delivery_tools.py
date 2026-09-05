@@ -119,9 +119,10 @@ def send_telegram_notification(bot_token: str, chat_id: str, message_html: str) 
         return False
     import requests
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    text = message_html[:4000] if len(message_html) > 4000 else message_html
     payload = {
         "chat_id": chat_id,
-        "text": message_html,
+        "text": text,
         "parse_mode": "HTML",
         "disable_web_page_preview": True,
     }

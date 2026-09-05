@@ -16,7 +16,6 @@ from worker.tools.delivery_tools import (
     get_google_credentials,
     upload_to_drive,
     send_telegram_notification,
-    send_telegram_document,
 )
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")

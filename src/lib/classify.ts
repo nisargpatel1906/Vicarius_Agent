@@ -436,6 +436,11 @@ ${courseNotes.join('\n')}
   const isHandwritten = /handwritten|write by hand|copy-ready|written assignment/i.test(rawBody) || /handwritten|write by hand/i.test(task.title);
   if (isHandwritten) {
     taskType = 'handwritten';
+  } else {
+    const isMLOrVision = /dlcv|deep\s+learning|computer\s+vision|opencv|neural\s+network|feed-?forward|mlp|cnn|fnn|model\s+weights|epochs?|cat\s*(?:and|vs)\s*dog/i.test(rawBody) || /dlcv|deep\s+learning|computer\s+vision|opencv|neural/i.test(task.title);
+    if (isMLOrVision && taskType === 'document') {
+      taskType = 'code_project';
+    }
   }
 
   const rawRequirements = Array.isArray(parsed.requirements) ? parsed.requirements : [task.title];
@@ -535,12 +540,11 @@ ${courseNotes.join('\n')}
 
   // 10. Weight Classification (PRD Section 6.3.1 / micro_upgradeV3)
   let weight: TaskWeight = 'light';
-  if (taskType === 'ml_training') {
+  const isHeavyMLOrCode = /dlcv|deep\s+learning|computer\s+vision|neural\s+network|feed-?forward|mlp|cnn|fnn|opencv|model\s+weights|epochs?|cat\s*(?:and|vs)\s*dog|full-stack|microservice|distributed|pipeline|large dataset|multi-container|kubernetes/i.test(rawBody) || /dlcv|deep\s+learning|computer\s+vision|neural|fnn|mlp|opencv|full-stack|microservice|distributed/i.test(task.title);
+
+  if (taskType === 'ml_training' || isHeavyMLOrCode) {
     weight = 'heavy';
-  } else if (taskType === 'code_project') {
-    const isHeavyCode = /full-stack|microservice|distributed|pipeline|large dataset|multi-container|kubernetes/i.test(rawBody) || /full-stack|microservice|distributed/i.test(task.title);
-    weight = isHeavyCode ? 'heavy' : 'medium';
-  } else if (taskType === 'research') {
+  } else if (taskType === 'code_project' || taskType === 'research') {
     weight = 'medium';
   } else {
     weight = 'light';

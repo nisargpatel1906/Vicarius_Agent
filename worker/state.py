@@ -25,6 +25,9 @@ class AgentState(TypedDict, total=False):
     produced_files: List[str]
     stdout_log: str
 
+    # Agent Tool Call Audit Log
+    tool_call_history: List[Dict[str, Any]]  # [{step, tool, args_summary, result_preview}]
+
     # Self-Correction & Loop Engineering
     attempt: int
     max_attempts: int
@@ -61,6 +64,7 @@ def create_initial_state(task: Dict[str, Any], max_attempts: int = 4, base_work_
         "plan": {},
         "produced_files": [],
         "stdout_log": "",
+        "tool_call_history": [],
         "attempt": 1,
         "max_attempts": max_attempts,
         "attempt_history": [],
@@ -74,4 +78,3 @@ def create_initial_state(task: Dict[str, Any], max_attempts: int = 4, base_work_
         "error_message": None,
         "status": "queued",
     }
-

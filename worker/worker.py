@@ -302,7 +302,8 @@ def check_system_load_and_concurrency(due_date_str: Optional[str], weight: str =
             pass
 
     # Preferred Scheduling Window check for Heavy-Lift Tasks (PRD Section 6.3.1)
-    if weight == "heavy" and hours_left > 24.0:
+    ignore_window = os.getenv("IGNORE_HEAVY_WINDOW", "false").lower() in ("true", "1", "yes")
+    if weight == "heavy" and hours_left > 24.0 and not ignore_window:
         now_ist = datetime.datetime.now(TARGET_TZ).time()
         start_h, start_m = map(int, HEAVY_JOB_PREFERRED_START.split(":"))
         end_h, end_m = map(int, HEAVY_JOB_PREFERRED_END.split(":"))
@@ -321,18 +322,20 @@ def check_system_load_and_concurrency(due_date_str: Optional[str], weight: str =
             return False
 
     # Check foreground agy sessions (excluding this worker)
-    active_agy_sessions = 0
-    for proc in psutil.process_iter(['name', 'pid']):
-        try:
-            if 'agy' in proc.info['name'].lower() and proc.info['pid'] != os.getpid():
-                active_agy_sessions += 1
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
+    allow_concurrent_agy = os.getenv("ALLOW_CONCURRENT_AGY", "true").lower() == "true"
+    if not allow_concurrent_agy:
+        active_agy_sessions = 0
+        for proc in psutil.process_iter(['name', 'pid']):
+            try:
+                if 'agy' in proc.info['name'].lower() and proc.info['pid'] != os.getpid():
+                    active_agy_sessions += 1
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
 
-    if active_agy_sessions > 0:
-        if not is_deadline_close:
-            print(f"[Worker] Foreground Antigravity session active. Deferring to next cycle.")
-            return False
+        if active_agy_sessions > 0:
+            if not is_deadline_close:
+                print(f"[Worker] Foreground Antigravity session active. Deferring to next cycle.")
+                return False
 
     if cpu_percent > 85.0:
         if not is_deadline_close:
@@ -453,12 +456,13 @@ def package_code_project(task_work_dir: Path) -> Optional[Path]:
 
 def run_agy_cli(task_work_dir: Path, task: Dict[str, Any], timeout_seconds: int = 2400) -> Tuple[bool, str]:
     """Runs Antigravity CLI locally if available."""
-    agy_bin = shutil.which("agy") or "agy"
+    agy_bin = shutil.which("agy") or os.path.expandvars(r"%LOCALAPPDATA%\agy\agy.EXE") or "agy"
     model = os.getenv("ANTIGRAVITY_MODEL", "gemini-3.8-flash-high")
     effort = os.getenv("ANTIGRAVITY_EFFORT", "high")
     title = task.get("title", "Project")
     course = task.get("course", "General")
     build_spec = task.get("build_spec", "")
+    timeout_str = f"{max(5, timeout_seconds // 60)}m0s"
 
     prompt = (
         f"You are building an academic code project for student Nisarg Patel (B.Tech CE-AIML, Academic Institution).\n"
@@ -467,13 +471,46 @@ def run_agy_cli(task_work_dir: Path, task: Dict[str, Any], timeout_seconds: int 
     )
 
     cmd = [
-        agy_bin, "-p", prompt, "--model", model, "--effort", effort,
-        "--dangerously-skip-permissions", "--output-format", "text"
+        str(agy_bin),
+        "--model", model,
+        "--effort", effort,
+        "--dangerously-skip-permissions",
+        "--output-format", "text",
+        "--print-timeout", timeout_str,
+        "--add-dir", str(task_work_dir.resolve()),
+        "-p", prompt,
     ]
+    print(f"\n[Worker] Invoking Antigravity CLI (agy -p ... --model {model} --effort {effort}) in {task_work_dir.name}...")
+    print(f"================== LIVE AGY TERMINAL STREAM START ==================")
+    sys.stdout.flush()
     try:
-        proc = subprocess.run(cmd, cwd=str(task_work_dir), capture_output=True, text=True, timeout=timeout_seconds, shell=(sys.platform == "win32"))
-        return proc.returncode == 0, proc.stdout or proc.stderr
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(task_work_dir),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            shell=(sys.platform == "win32"),
+        )
+        combined_lines = []
+        if proc.stdout:
+            for line in iter(proc.stdout.readline, ""):
+                sys.stdout.write(line)
+                sys.stdout.flush()
+                combined_lines.append(line)
+            proc.stdout.close()
+        proc.wait(timeout=timeout_seconds)
+        print(f"\n=================== LIVE AGY TERMINAL STREAM END ===================")
+        sys.stdout.flush()
+        combined = "".join(combined_lines)
+        return proc.returncode == 0, combined
+    except subprocess.TimeoutExpired:
+        print(f"\n[Worker] Antigravity CLI timed out after {timeout_seconds}s.")
+        proc.kill()
+        return False, f"CLI execution timed out after {timeout_seconds}s."
     except Exception as e:
+        print(f"\n[Worker] Antigravity CLI error: {e}")
         return False, str(e)
 
 
