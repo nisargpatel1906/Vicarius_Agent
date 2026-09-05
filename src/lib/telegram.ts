@@ -1216,6 +1216,24 @@ async function extractTaskFromImage(fileId: string, mimeType?: string): Promise<
     if (!filePath) return '';
     const fileUrl = `${TELEGRAM_FILE_BASE}${token}/${filePath}`;
 
+    // Phase 2A: Direct PDF parsing if mimeType is application/pdf or file path is .pdf
+    if (mimeType === 'application/pdf' || filePath.toLowerCase().endsWith('.pdf')) {
+      try {
+        const pdfRes = await fetch(fileUrl);
+        if (pdfRes.ok) {
+          const arrayBuf = await pdfRes.arrayBuffer();
+          const buf = Buffer.from(arrayBuf);
+          const { extractPdfText } = await import('./vector');
+          const pdfText = await extractPdfText(buf);
+          if (pdfText && pdfText.trim().length > 10) {
+            return pdfText.trim();
+          }
+        }
+      } catch (pdfErr) {
+        console.warn('[PDF] Error extracting PDF text:', pdfErr);
+      }
+    }
+
     // Step 2: Send to OpenRouter vision model for OCR + extraction
     const visionRes = await fetch(OPENROUTER_API_URL, {
       method: 'POST',
@@ -1318,15 +1336,20 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
     const doc = update.message.document;
     const caption = text || doc.file_name || 'Academic Assignment Document';
     
-    // Phase 2B: PDF vision extraction
-    if (doc.mime_type === 'application/pdf') {
-      await reply('📄 <i>PDF received — extracting assignment requirements with AI vision...</i>');
-      const extracted = await extractTaskFromImage(doc.file_id, doc.mime_type);
+    // Phase 2B: PDF extraction
+    if (doc.mime_type === 'application/pdf' || (doc.file_name && doc.file_name.toLowerCase().endsWith('.pdf'))) {
+      await reply('📄 <i>PDF received — extracting assignment requirements...</i>');
+      const extracted = await extractTaskFromImage(doc.file_id, 'application/pdf');
       if (extracted) {
         const prompt = `Assignment from PDF "${doc.file_name || 'document'}": ${caption}\n\nExtracted content:\n${extracted}`;
         await reply(`📋 <b>Extracted from PDF:</b>\n${escapeHtml(extracted.slice(0, 400))}...\n\n<i>Creating task...</i>`);
-        const aiResponse = await askAiAssistant(prompt, incomingChatId);
-        await reply(aiResponse);
+        try {
+          const confirmation = await createTaskFromTelegram(prompt);
+          await reply(confirmation);
+        } catch (taskErr: any) {
+          const aiResponse = await askAiAssistant(prompt, incomingChatId);
+          await reply(aiResponse);
+        }
       } else {
         const prompt = `Attached PDF: ${doc.file_name || 'document'}\nInstructions: ${caption}`;
         try {
