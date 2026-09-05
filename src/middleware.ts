@@ -33,7 +33,8 @@ export function middleware(req: NextRequest) {
   // 3. Resolve configured authorization secret tokens
   const primaryToken = process.env.DASHBOARD_ACCESS_TOKEN?.trim();
   const ingestToken = process.env.INGEST_SECRET_TOKEN?.trim();
-  const validTokens = [primaryToken, ingestToken].filter(Boolean) as string[];
+  const cronSecret = process.env.CRON_SECRET?.trim();
+  const validTokens = [primaryToken, ingestToken, cronSecret].filter(Boolean) as string[];
 
   // FAIL-CLOSED: If environment has no security token configured, deny ALL access with 404
   if (validTokens.length === 0) {
