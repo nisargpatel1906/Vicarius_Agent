@@ -1,0 +1,13 @@
+# DLCV 2026 Submission 1 - Project Dependencies
+scikit-learn>=1.5.0
+torch>=2.0.0
+torchvision>=0.15.0
+opencv-python>=4.8.0
+numpy>=1.24.0
+matplotlib>=3.7.0
+nbformat>=5.9.0
+nbclient>=0.8.0
+ipykernel>=6.25.0
+python-docx>=1.1.2
+python-pptx>=1.0.2
+reportlab>=4.3.1
