@@ -141,6 +141,7 @@ export async function pollGoogleClassroom(): Promise<NormalizedRawItem[]> {
         const workRes = await classroom.courses.courseWork.list({
           courseId: course.id,
           courseWorkStates: ['PUBLISHED'],
+          pageSize: 20,
         });
         const courseWorkList = workRes.data.courseWork || [];
 
@@ -180,6 +181,7 @@ export async function pollGoogleClassroom(): Promise<NormalizedRawItem[]> {
         const cwmRes = await classroom.courses.courseWorkMaterials.list({
           courseId: course.id,
           courseWorkMaterialStates: ['PUBLISHED'],
+          pageSize: 20,
         });
         const cwmList = cwmRes.data.courseWorkMaterial || [];
 
@@ -206,6 +208,7 @@ export async function pollGoogleClassroom(): Promise<NormalizedRawItem[]> {
         const annRes = await classroom.courses.announcements.list({
           courseId: course.id,
           announcementStates: ['PUBLISHED'],
+          pageSize: 20,
         });
         const announcements = annRes.data.announcements || [];
 
@@ -325,8 +328,25 @@ export async function runIngestion(): Promise<IngestionResult> {
 
   const supabase = getSupabaseAdmin();
 
-  // Upsert items into tasks table using (source, external_id) and fuzzy cross-source dedup
-  for (const item of rawItems) {
+  // Batch-fetch already stored items to skip expensive reprocessing
+  const externalIds = rawItems.map((i) => i.external_id);
+  const [{ data: existingTasks }, { data: existingKb }] = await Promise.all([
+    supabase.from('tasks').select('external_id').in('external_id', externalIds),
+    supabase.from('knowledge_base').select('external_id').in('external_id', externalIds),
+  ]);
+
+  const knownTasks = new Set((existingTasks || []).map((t: any) => t.external_id));
+  const knownKb = new Set((existingKb || []).map((k: any) => k.external_id));
+
+  // Only items that are genuinely new need full processing and vector embeddings
+  const pendingItems = rawItems.filter((item) => {
+    const needsKb = !knownKb.has(item.external_id);
+    const isActionable = item.source === 'classroom' || !!item.due_date;
+    const needsTask = isActionable && !knownTasks.has(item.external_id);
+    return needsKb || needsTask;
+  });
+
+  for (const item of pendingItems) {
     const success = await processSingleItem(item, supabase);
     if (success) result.upsertedCount++;
   }
