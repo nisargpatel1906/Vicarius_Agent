@@ -1205,8 +1205,7 @@ async function transcribeVoiceMessage(fileId: string): Promise<string> {
  */
 async function extractTaskFromImage(fileId: string, mimeType?: string): Promise<string> {
   const token = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
-  const openRouterKey = process.env.OPENROUTER_API_KEY;
-  if (!openRouterKey) return '';
+  if (!token) return '';
 
   try {
     // Step 1: Get file download URL
@@ -1223,10 +1222,39 @@ async function extractTaskFromImage(fileId: string, mimeType?: string): Promise<
         if (pdfRes.ok) {
           const arrayBuf = await pdfRes.arrayBuffer();
           const buf = Buffer.from(arrayBuf);
-          const { extractPdfText } = await import('./vector');
-          const pdfText = await extractPdfText(buf);
-          if (pdfText && pdfText.trim().length > 10) {
-            return pdfText.trim();
+          
+          // Fast-path: local pdf-parse
+          try {
+            const { extractPdfText } = await import('./vector');
+            const pdfText = await extractPdfText(buf);
+            if (pdfText && pdfText.trim().length > 10) {
+              return pdfText.trim();
+            }
+          } catch (fastErr) {
+            console.warn('[PDF] Fast-path extractPdfText failed, falling back to Gemini:', fastErr);
+          }
+
+          // Multimodal AI path: Gemini 2.5 Flash
+          const geminiKey = process.env.GEMINI_API_KEY;
+          if (geminiKey) {
+            const { GoogleGenerativeAI } = await import('@google/generative-ai');
+            const genAI = new GoogleGenerativeAI(geminiKey);
+            const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+            const aiRes = await model.generateContent([
+              {
+                inlineData: {
+                  mimeType: 'application/pdf',
+                  data: buf.toString('base64'),
+                },
+              },
+              {
+                text: 'Extract all assignment requirements, course title, due date, submission links, and all specific tasks from this PDF document. Provide a comprehensive summary.',
+              },
+            ]);
+            const text = aiRes.response.text();
+            if (text && text.trim().length > 10) {
+              return text.trim();
+            }
           }
         }
       } catch (pdfErr) {
@@ -1234,7 +1262,8 @@ async function extractTaskFromImage(fileId: string, mimeType?: string): Promise<
       }
     }
 
-    // Step 2: Send to OpenRouter vision model for OCR + extraction
+    const openRouterKey = process.env.OPENROUTER_API_KEY;
+    if (!openRouterKey) return '';
     const visionRes = await fetch(OPENROUTER_API_URL, {
       method: 'POST',
       headers: {
