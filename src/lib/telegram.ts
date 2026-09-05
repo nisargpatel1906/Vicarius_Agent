@@ -912,6 +912,77 @@ export async function syncClassroomAndGmail(): Promise<string> {
 }
 
 /**
+ * Automated RAG Retriever: Searches the Supabase knowledge base for any student inquiry
+ * to ground the AI model with verbatim announcements, links, forms, and attachments.
+ */
+export async function retrieveRelevantKnowledge(userQuery: string, limit: number = 4): Promise<any[]> {
+  const supabase = getSupabaseAdmin();
+  const cleanQuery = userQuery.replace(/[?!.,;:"'()\[\]{}]/g, ' ').trim();
+  const results: any[] = [];
+  const seenIds = new Set<string>();
+
+  // 1. Exact phrase match (e.g. "Red Hat Academy", "TEDx", "MODEL-2", "Kalpvruksh")
+  if (cleanQuery.length > 2) {
+    const { data: phraseMatches } = await supabase
+      .from('knowledge_base')
+      .select('id, title, course, content, metadata, created_at')
+      .or(`title.ilike.%${cleanQuery}%,content.ilike.%${cleanQuery}%`)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    (phraseMatches || []).forEach(item => {
+      if (!seenIds.has(item.id)) {
+        seenIds.add(item.id);
+        results.push(item);
+      }
+    });
+  }
+
+  // 2. If asking about lecture, join link, session, meeting, zoom, meet, exam, schedule, today
+  if (/lecture|invite|join|session|zoom|meet|class|link|schedule|exam|today/i.test(userQuery)) {
+    const { data: meetingPosts } = await supabase
+      .from('knowledge_base')
+      .select('id, title, course, content, metadata, created_at')
+      .or('content.ilike.%zoom.us%,content.ilike.%meet.google.com%,content.ilike.%forms.gle%')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    (meetingPosts || []).forEach(item => {
+      if (!seenIds.has(item.id)) {
+        seenIds.add(item.id);
+        results.push(item);
+      }
+    });
+  }
+
+  // 3. Significant word search if we have fewer than limit results
+  if (results.length < limit) {
+    const words = cleanQuery
+      .split(/\s+/)
+      .filter(w => w.length > 3 && !['give', 'what', 'tell', 'show', 'more', 'about', 'from', 'with', 'this', 'that', 'have', 'been', 'post', 'message', 'info'].includes(w.toLowerCase()));
+
+    if (words.length > 0) {
+      const orFilters = words.map(w => `title.ilike.%${w}%,content.ilike.%${w}%`).join(',');
+      const { data: wordMatches } = await supabase
+        .from('knowledge_base')
+        .select('id, title, course, content, metadata, created_at')
+        .or(orFilters)
+        .order('created_at', { ascending: false })
+        .limit(limit - results.length);
+
+      (wordMatches || []).forEach(item => {
+        if (!seenIds.has(item.id)) {
+          seenIds.add(item.id);
+          results.push(item);
+        }
+      });
+    }
+  }
+
+  return results;
+}
+
+/**
  * Intelligent Academic AI Assistant Chat on Telegram
  */
 export async function askAiAssistant(userPrompt: string, chatId: string): Promise<string> {
@@ -936,6 +1007,20 @@ export async function askAiAssistant(userPrompt: string, chatId: string): Promis
     `- [${t.status.toUpperCase()}] ${t.title} (${t.course || 'General'}, Due: ${t.due_date || 'N/A'}, ID: ${t.id})`
   ).join('\n');
 
+  // Automated Pre-Retrieval RAG: Query Supabase Knowledge Base directly for relevant records
+  const kbMatches = await retrieveRelevantKnowledge(userPrompt, 4);
+  let kbContext = '';
+  if (kbMatches.length > 0) {
+    kbContext = `\n\nGROUNDED ACADEMIC KNOWLEDGE BASE RECORDS (Retrieved automatically from your Supabase Knowledge Base):\n` +
+      kbMatches.map((item, idx) => {
+        const full = (item.content || '').trim();
+        const rawUrls: string[] = full.match(/https?:\/\/[^\s<>)"]+/g) || [];
+        const urls = Array.from(new Set<string>(rawUrls));
+        const urlStr = urls.length > 0 ? `\nExtracted Clickable Links: ${urls.join(', ')}` : '';
+        return `[RECORD ${idx + 1}] Title: ${item.title} | Course: ${item.course || 'General'}\nContent:\n${full}${urlStr}`;
+      }).join('\n\n-----------------------------------------\n\n');
+  }
+
   // Fetch recent conversation history
   const { data: history } = await supabase
     .from('chat_messages')
@@ -958,17 +1043,22 @@ You HAVE LIVE CONNECTIVITY to ${STUDENT_NAME}'s academic tools via Google OAuth 
 
 Current Active Tasks in System:
 ${taskContext || 'No active tasks.'}
+${kbContext}
 
 CRITICAL RULES:
-1. NEVER EVER say you don't have access to Google Classroom, Gmail, or coursework! You DO have live access via authorized Google API tools.
-2. If the student asks about messages, announcements, or posts from Classroom (e.g. "Tell me last message of my classroom", "What did the teacher post?", "Check classroom notices"), YOU MUST CALL 'get_classroom_latest_messages'!
-3. If the student asks about emails, call 'get_recent_emails'!
-4. When the student asks you to do, create, build, generate, write, or train an assignment/project, or says "use this and make a ppt" / "make slides", you MUST IMMEDIATELY call the 'create_academic_task' tool! Do NOT just print the text outline or ask them to type /task.
-5. If the student asks for status or lists of tasks, call 'get_system_status' or 'list_active_tasks'.
-6. If the student asks conceptual questions or converses, respond directly with rich technical depth and clarity.
-7. Format all text replies in clean, valid HTML (<b>bold</b>, <i>italic</i>, <code>code</code>, bullet points •). Do NOT use markdown asterisks.
-8. If the student gives a correction, feedback, rule, or grade for a specific course (e.g. "for CE-401 always use IEEE format", or "my teacher said to include loss curves"), YOU MUST CALL 'save_course_feedback' to remember it!
-9. If the student asks about an announcement, event, attached poster, image, document, registration link, ticket URL, form, website, or syllabus details (e.g. "what was in 1", "what is Kalpvruksh 2.0", "tell me more in TEDxSilverOakUniversity", "give me link to register", "how do I sign up?"), YOU MUST CALL 'search_knowledge_base' with the event or topic keyword! All original post bodies, registration URLs, forms, and poster OCR text are stored in the knowledge base. NEVER claim that no link or no description was provided without searching the knowledge base!`;
+1. ALWAYS GROUND YOUR ANSWERS IN THE KNOWLEDGE BASE RECORDS: If relevant records are provided above in 'GROUNDED ACADEMIC KNOWLEDGE BASE RECORDS', you MUST use their verbatim text, dates, meeting IDs, and links to answer immediately!
+   • If the student asks for a lecture link, Zoom link, or today's session link, extract the Zoom/Meet URL (e.g. https://zoom.us/j/...), Meeting ID, and Passcode directly from the records and output them clearly. NEVER say it was cut off or ask "want me to fetch it?" — you already have the full details!
+   • If the student asks about "Red Hat Academy" or any course/program, provide the exact registration form link (e.g. https://forms.gle/...) and details immediately! NEVER say it wasn't found or ask "want me to search your knowledge base?" — the records are right above!
+   • Format all URLs as clickable HTML (<a href="...">...</a>).
+2. NEVER EVER say you don't have access to Google Classroom, Gmail, or coursework! You DO have live access via authorized Google API tools.
+3. If the student asks about messages, announcements, or posts from Classroom (e.g. "Tell me last message of my classroom", "What did the teacher post?", "Check classroom notices"), YOU MUST CALL 'get_classroom_latest_messages'!
+4. If the student asks about emails, call 'get_recent_emails'!
+5. When the student asks you to do, create, build, generate, write, or train an assignment/project, or says "use this and make a ppt" / "make slides", you MUST IMMEDIATELY call the 'create_academic_task' tool! Do NOT just print the text outline or ask them to type /task.
+6. If the student asks for status or lists of tasks, call 'get_system_status' or 'list_active_tasks'.
+7. If the student asks conceptual questions or converses, respond directly with rich technical depth and clarity.
+8. Format all text replies in clean, valid HTML (<b>bold</b>, <i>italic</i>, <code>code</code>, bullet points •). Do NOT use markdown asterisks.
+9. If the student gives a correction, feedback, rule, or grade for a specific course (e.g. "for CE-401 always use IEEE format", or "my teacher said to include loss curves"), YOU MUST CALL 'save_course_feedback' to remember it!
+10. If the student asks about an announcement, event, attached poster, image, document, registration link, ticket URL, form, website, or syllabus details (e.g. "what was in 1", "what is Kalpvruksh 2.0", "tell me more in TEDxSilverOakUniversity", "give me link to register", "how do I sign up?"), YOU MUST CALL 'search_knowledge_base' with the event or topic keyword if not already answered by the grounded records above! All original post bodies, registration URLs, forms, and poster OCR text are stored in the knowledge base. NEVER claim that no link or no description was provided!`;
 
   const academicTools = [
     {
