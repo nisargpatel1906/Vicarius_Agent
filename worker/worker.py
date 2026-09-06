@@ -574,6 +574,13 @@ def execute_build(task: Dict[str, Any], retry_count: int = 0, retry_note: str = 
         plan_state = planner_node(state)
         state.update(plan_state)
 
+        # Step 1.5: Thinker (Pre-Prompt Reasoning)
+        # Reasons about the task deeply using Claude Sonnet before prompt generation.
+        # Produces agy_execution_plan which is injected into the AGY CLI prompt header.
+        from worker.nodes.thinker import thinker_node
+        thinker_state = thinker_node(state)
+        state.update(thinker_state)
+
         # Step 2: Dynamic LangGraph Coder
         coder_state = coder_node(state)
         state.update(coder_state)

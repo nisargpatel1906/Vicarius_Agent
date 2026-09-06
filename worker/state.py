@@ -21,6 +21,10 @@ class AgentState(TypedDict, total=False):
     # Execution Planning
     plan: Dict[str, Any]
 
+    # Thinker / Pre-Prompt Reasoning
+    thought_process: str        # Raw inner reasoning from thinker_node
+    agy_execution_plan: str     # Structured plan injected into AGY CLI prompt
+
     # Artifacts & Outputs
     produced_files: List[str]
     stdout_log: str
@@ -62,6 +66,8 @@ def create_initial_state(task: Dict[str, Any], max_attempts: int = 4, base_work_
         "build_spec": task.get("build_spec", ""),
         "work_dir": work_dir,
         "plan": {},
+        "thought_process": "",
+        "agy_execution_plan": "",
         "produced_files": [],
         "stdout_log": "",
         "tool_call_history": [],

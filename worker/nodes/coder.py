@@ -41,6 +41,7 @@ def _build_agy_prompt(
     retry_instructions: str,
     attempt: int,
     work_dir: Path,
+    agy_execution_plan: str = "",
 ) -> str:
     """Builds the comprehensive execution prompt for the Antigravity CLI."""
     plan_files = plan.get("files", []) if plan else []
@@ -63,6 +64,16 @@ def _build_agy_prompt(
     local_pdfs = list(work_dir.glob("*.pdf"))
     pdf_section = f"\nReference Documents in Workspace:\n" + "\n".join([f"- `{p.name}`" for p in local_pdfs]) + "\n" if local_pdfs else ""
 
+    # PRE-REASONED EXECUTION PLAN block — injected at the top of the prompt
+    # so AGY receives concrete, risk-aware instructions as its very first directive.
+    thinker_plan_block = (
+        f"\n{'='*80}\n"
+        f"PRE-REASONED EXECUTION PLAN (HIGHEST PRIORITY — FOLLOW VERBATIM):\n"
+        f"{'='*80}\n"
+        f"{agy_execution_plan}\n"
+        f"{'='*80}\n"
+    ) if agy_execution_plan else ""
+
     return (
         f"================================================================================\n"
         f"CRITICAL EXECUTION DIRECTIVE:\n"
@@ -72,7 +83,8 @@ def _build_agy_prompt(
         f"You MUST IMMEDIATELY use your tools (write_to_file, run_command, etc.) to generate\n"
         f"ALL required deliverables directly in the current working directory (`{work_dir.resolve()}`).\n"
         f"Then execute all code/notebooks so they run and produce real outputs and plots.\n"
-        f"================================================================================\n\n"
+        f"================================================================================\n"
+        f"{thinker_plan_block}\n"
         f"You are an expert autonomous academic AI agent acting on behalf of {student_name} "
         f"(Enrollment No: {student_enrollment}), a {student_program} student at {student_uni}.\n\n"
         f"Your mission: Complete this academic assignment by generating all required deliverables "
@@ -457,6 +469,7 @@ def coder_node(state: AgentState) -> Dict[str, Any]:
                 retry_instructions=current_retry_notes,
                 attempt=attempt,
                 work_dir=work_dir,
+                agy_execution_plan=state.get("agy_execution_plan", ""),
             )
 
             success, agy_out = _run_agy_cli(work_dir, agy_prompt, timeout_seconds=agy_timeout)
