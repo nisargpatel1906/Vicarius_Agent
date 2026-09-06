@@ -1650,49 +1650,103 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
   // Runs BEFORE the pending-question handler so fix instructions are never captured as question answers.
   // Detection is deliberately strict: the replied-to message must carry a task UUID AND flag markers,
   // AND the task must actually be flagged/failed — so replies to questions or confirmations fall through.
+  // 2. Reply-to-fix: user is replying to a task alert, completed message, or flagged alert with an instruction.
+  // Runs BEFORE the pending-question handler so fix instructions are never captured as question answers.
   const fixReplyTo = update.message?.reply_to_message;
   if (fixReplyTo?.text && text && !text.startsWith('/')) {
     const uuidMatch = fixReplyTo.text.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
     const looksLikeFlag = fixReplyTo.text.includes('⚠️')
       || fixReplyTo.text.includes('Review Required')
       || /couldn.?t finish|what went wrong|what i already tried|flagged|review required|auto-delivered/i.test(fixReplyTo.text);
-    if (uuidMatch && looksLikeFlag) {
-      const flaggedId = uuidMatch[1];
-      const { data: flaggedTask } = await supabase
+    const looksLikeCompleted = /Task Completed:|Deliverables:|Google Drive/i.test(fixReplyTo.text);
+    const looksLikeInstruction = text.length > 10 && /\b(?:add|append|fix|change|update|remove|include|more|slides?|section|page|modify|redo|rebuild|retry|extend|insert|adjust)\b/i.test(text);
+
+    let targetTaskId: string | null = null;
+    let targetTaskTitle: string | null = null;
+
+    if (uuidMatch) {
+      targetTaskId = uuidMatch[1];
+    } else if (looksLikeCompleted || looksLikeFlag || looksLikeInstruction) {
+      // Try to extract title from message like "Task Completed: <Title>" or "Title: <Title>"
+      const titleMatch = fixReplyTo.text.match(/(?:Task Completed:|📌 Title:|Title:)\s*([^\n\r]+)/i);
+      if (titleMatch && titleMatch[1]) {
+        const queryTitle = titleMatch[1].replace(/<\/?[^>]+(>|$)/g, '').trim();
+        const { data: matchedTask } = await supabase
+          .from('tasks')
+          .select('id, title, status')
+          .ilike('title', `%${queryTitle.slice(0, 30)}%`)
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (matchedTask) {
+          targetTaskId = matchedTask.id;
+          targetTaskTitle = matchedTask.title;
+        }
+      }
+      // If still not found, pick the most recent task if the user message clearly looks like an instruction
+      if (!targetTaskId && looksLikeInstruction) {
+        const { data: latestTask } = await supabase
+          .from('tasks')
+          .select('id, title, status')
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (latestTask) {
+          targetTaskId = latestTask.id;
+          targetTaskTitle = latestTask.title;
+        }
+      }
+    }
+
+    if (targetTaskId && (looksLikeFlag || looksLikeCompleted || looksLikeInstruction)) {
+      const { data: targetTask } = await supabase
         .from('tasks')
-        .select('id, status')
-        .eq('id', flaggedId)
+        .select('id, title, status')
+        .eq('id', targetTaskId)
         .maybeSingle();
-      if (flaggedTask && (flaggedTask.status === 'flagged' || flaggedTask.status === 'failed' || flaggedTask.status === 'done')) {
-        await reply('🔧 <i>Understood — applying your fix and rebuilding...</i>');
-        const fixMsg = await applyFixAndRequeue(flaggedId, text);
+      if (targetTask) {
+        await reply(`🔧 <i>Understood — applying your instruction to "<b>${escapeHtml(targetTask.title)}</b>" and rebuilding...</i>`);
+        const fixMsg = await applyFixAndRequeue(targetTaskId, text);
         await reply(fixMsg);
-        return { handled: true, responseText: 'Fix applied and task re-queued' };
+        return { handled: true, responseText: 'Fix applied and task re-queued via reply' };
       }
     }
   }
 
-  // 2b. Free-text fallback for flagged tasks: user typed an instruction WITHOUT using the Telegram
-  // "Reply" button. We still apply the instruction to whichever task is currently flagged.
-  // This resolves the common case where the user just types their request in the chat and expects
-  // the agent to pick it up — it now does, as long as a flagged task exists in Supabase.
+  // 2b. Free-text fallback: user typed an instruction WITHOUT using the Telegram "Reply" button.
+  // We apply the instruction to whichever task is currently flagged/failed, or the most recent task
+  // if the instruction clearly asks to extend/modify deliverables.
   if (text && !text.startsWith('/') && !fixReplyTo) {
-    const { data: activeFlaggedTask } = await supabase
-      .from('tasks')
-      .select('id, title, status')
-      .in('status', ['flagged', 'failed'])
-      .order('updated_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (activeFlaggedTask) {
-      // Exclude very short messages (like greetings or 1-word status queries) — those should
-      // fall through to the AI assistant so we don't accidentally re-queue on casual chat.
-      const looksLikeInstruction = text.length > 15 || /\b(?:add|fix|change|update|remove|include|append|more|slides?|topic|section|make|create|redo|rebuild|retry)\b/i.test(text);
-      if (looksLikeInstruction) {
-        await reply(`🔧 <i>Found a flagged task "<b>${escapeHtml(activeFlaggedTask.title)}</b>" — applying your instruction and rebuilding...</i>`);
-        const fixMsg = await applyFixAndRequeue(activeFlaggedTask.id, text);
+    const looksLikeInstruction = text.length > 15 && /\b(?:add|fix|change|update|remove|include|append|more|slides?|topic|section|make|create|redo|rebuild|retry)\b/i.test(text);
+    if (looksLikeInstruction) {
+      // First check flagged/failed tasks
+      const { data: activeFlaggedTask } = await supabase
+        .from('tasks')
+        .select('id, title, status')
+        .in('status', ['flagged', 'failed'])
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      
+      const targetTask = activeFlaggedTask || (await (async () => {
+        // If append/extend slides or sections is requested, grab the most recent task
+        if (/\b(?:add|append|more|additional|extra)\b.{0,30}\b(?:slide|slides|page|section)\b/i.test(text)) {
+          const { data: recentTask } = await supabase
+            .from('tasks')
+            .select('id, title, status')
+            .order('updated_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          return recentTask;
+        }
+        return null;
+      })());
+
+      if (targetTask) {
+        await reply(`🔧 <i>Applying your instruction to "<b>${escapeHtml(targetTask.title)}</b>" and rebuilding...</i>`);
+        const fixMsg = await applyFixAndRequeue(targetTask.id, text);
         await reply(fixMsg);
-        return { handled: true, responseText: 'Fix applied to flagged task via free-text' };
+        return { handled: true, responseText: 'Fix applied to task via free-text' };
       }
     }
   }
