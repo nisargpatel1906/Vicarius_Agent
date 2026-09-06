@@ -640,3 +640,120 @@ input:checked + .analysis-toggle-slider:before {
   border-color: var(--primary-container);
   color: var(--on-surface);
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Agent Campus & City Simulation Visualizer Animations
+   Cognitive Heritage Design Directives (docx/DESIGN.md)
+   ───────────────────────────────────────────────────────────────────────────── */
+
+@keyframes agentWalkBob {
+  0% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  25% {
+    transform: translateY(-5px) rotate(2deg);
+  }
+  50% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  75% {
+    transform: translateY(-5px) rotate(-2deg);
+  }
+  100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+}
+
+@keyframes agentLegSwingLeft {
+  0% {
+    transform: rotate(-15deg);
+  }
+  50% {
+    transform: rotate(15deg);
+  }
+  100% {
+    transform: rotate(-15deg);
+  }
+}
+
+@keyframes agentLegSwingRight {
+  0% {
+    transform: rotate(15deg);
+  }
+  50% {
+    transform: rotate(-15deg);
+  }
+  100% {
+    transform: rotate(15deg);
+  }
+}
+
+@keyframes agentIdleBreathing {
+  0%, 100% {
+    transform: translateY(0px) scale(1);
+  }
+  50% {
+    transform: translateY(-2px) scale(1.01);
+  }
+}
+
+@keyframes thoughtBubbleFloat {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes waypointDashFlow {
+  from {
+    stroke-dashoffset: 24;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes landmarkPulseAura {
+  0%, 100% {
+    opacity: 0.4;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(1.03);
+  }
+}
+
+@keyframes terminalBlink {
+  0%, 49% {
+    opacity: 1;
+  }
+  50%, 100% {
+    opacity: 0;
+  }
+}
+
+.agent-walking {
+  animation: agentWalkBob 0.6s infinite ease-in-out;
+}
+
+.agent-idle {
+  animation: agentIdleBreathing 2.4s infinite ease-in-out;
+}
+
+.agent-thought-bubble {
+  animation: thoughtBubbleFloat 3s infinite ease-in-out;
+}
+
+.waypoint-active-path {
+  stroke-dasharray: 6 6;
+  animation: waypointDashFlow 1s linear infinite;
+}
+
+.landmark-active-aura {
+  animation: landmarkPulseAura 2s ease-in-out infinite;
+  transform-origin: center;
+}
+

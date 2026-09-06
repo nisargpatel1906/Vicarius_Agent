@@ -4,6 +4,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { Task, Question, Deliverable, SystemEvent, UserProfile } from '@/lib/types';
 import { VicariusLogo } from '@/components/VicariusLogo';
 import { ProfileEditor } from '@/components/ProfileEditor';
+import { AgentWorld } from '@/components/AgentWorld';
 import {
   ClockIcon,
   RefreshIcon,
@@ -49,7 +50,8 @@ export default function DashboardPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [health, setHealth] = useState<HealthData | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [activeTab, setActiveTab] = useState<'pipeline' | 'profile'>('pipeline');
+  const [activeTab, setActiveTab] = useState<'pipeline' | 'campus' | 'profile'>('pipeline');
+  const [showCampusHero, setShowCampusHero] = useState<boolean>(true);
   const [showProfileModal, setShowProfileModal] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -79,12 +81,14 @@ export default function DashboardPage() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // Support deep links from navigation / mobile drawer (?tab=profile)
+  // Support deep links from navigation / mobile drawer (?tab=profile or ?tab=campus)
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       if (params.get('tab') === 'profile') {
         setActiveTab('profile');
+      } else if (params.get('tab') === 'campus') {
+        setActiveTab('campus');
       }
     }
   }, []);
@@ -95,6 +99,8 @@ export default function DashboardPage() {
       document.title = `${selectedTask.title} • Task Inspector | Vicarius Agent`;
     } else if (activeTab === 'profile') {
       document.title = 'Student Profile & Vault • Vicarius Agent';
+    } else if (activeTab === 'campus') {
+      document.title = 'Agent Campus & City Simulation • Vicarius Agent';
     } else {
       document.title = 'Academic Operations Command • Vicarius Agent';
     }
@@ -544,6 +550,7 @@ export default function DashboardPage() {
           background: 'var(--surface-container-low)',
           padding: '6px 12px 0 12px',
           borderRadius: '8px 8px 0 0',
+          flexWrap: 'wrap',
         }}
       >
         <button
@@ -578,6 +585,42 @@ export default function DashboardPage() {
             }}
           >
             {tasks.length}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('campus')}
+          style={{
+            padding: '10px 18px',
+            background: activeTab === 'campus' ? 'var(--surface)' : 'transparent',
+            border: 'none',
+            borderBottom: activeTab === 'campus' ? '3px solid var(--primary)' : '3px solid transparent',
+            color: activeTab === 'campus' ? 'var(--primary)' : 'var(--on-surface-variant)',
+            fontWeight: activeTab === 'campus' ? 700 : 500,
+            fontSize: '0.92rem',
+            cursor: 'pointer',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+            borderRadius: '6px 6px 0 0',
+            transition: 'all 0.15s ease',
+          }}
+        >
+          <span style={{ fontSize: '1.05rem' }}>🏰</span>
+          <span>Agent Campus & City Simulation</span>
+          <span
+            style={{
+              fontSize: '11px',
+              padding: '2px 7px',
+              borderRadius: 10,
+              background: activeTab === 'campus' ? 'var(--primary)' : '#fdebd9',
+              color: activeTab === 'campus' ? '#fff' : 'var(--primary)',
+              fontWeight: 700,
+              border: '1px solid currentColor',
+            }}
+          >
+            Live Tour
           </span>
         </button>
 
@@ -625,6 +668,14 @@ export default function DashboardPage() {
             addToast('success', 'Profile Updated', 'Student coordinates saved to Supabase.');
           }}
         />
+      ) : activeTab === 'campus' ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+          <AgentWorld
+            tasks={tasks}
+            selectedTask={selectedTask}
+            onSelectTask={(task) => setSelectedTask(task)}
+          />
+        </div>
       ) : tasks.length === 0 && !loading ? (
         <div
           className="heritage-card"
@@ -730,8 +781,79 @@ export default function DashboardPage() {
         </div>
       ) : (
         <>
+          {/* Collapsible Campus Visualizer Hero in Pipeline View */}
+          <div style={{ marginBottom: 16 }}>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: 8,
+                padding: '0 4px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: '1.05rem' }}>🏰</span>
+                <span
+                  style={{
+                    fontWeight: 700,
+                    fontSize: '0.88rem',
+                    color: 'var(--on-surface)',
+                    fontFamily: "'Noto Serif', serif",
+                  }}
+                >
+                  Living Agent Campus Quickview
+                </span>
+                <span
+                  style={{
+                    fontSize: '10px',
+                    padding: '1px 6px',
+                    borderRadius: 10,
+                    background: '#e2f0d9',
+                    color: '#276a3c',
+                    fontWeight: 700,
+                  }}
+                >
+                  Live Sync
+                </span>
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('campus')}
+                  className="btn-heritage-secondary"
+                  style={{
+                    padding: '3px 10px',
+                    fontSize: '0.78rem',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 4,
+                  }}
+                >
+                  <span>Expand Campus View</span>
+                  <ExternalLinkIcon size={11} color="var(--primary)" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowCampusHero(!showCampusHero)}
+                  className="btn-heritage-secondary"
+                  style={{ padding: '3px 10px', fontSize: '0.78rem' }}
+                >
+                  {showCampusHero ? 'Hide Campus Map ▲' : 'Show Campus Map ▼'}
+                </button>
+              </div>
+            </div>
 
-      {/* AI Executive Intelligence Briefing Strip (DESIGN.md Insight Highlight) */}
+            {showCampusHero && (
+              <AgentWorld
+                tasks={tasks}
+                selectedTask={selectedTask}
+                onSelectTask={(task) => setSelectedTask(task)}
+              />
+            )}
+          </div>
+
+          {/* AI Executive Intelligence Briefing Strip (DESIGN.md Insight Highlight) */}
       <div className="insight-highlight" style={{ position: 'relative', overflow: 'hidden' }}>
         <VicariusLogo size={140} variant="watermark" fill="#8B6F3E" style={{ right: '-15px', bottom: '-25px' }} />
         <div style={{ position: 'relative', zIndex: 1 }}>
