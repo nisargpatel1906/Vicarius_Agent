@@ -9,7 +9,10 @@ import html
 import datetime
 from pathlib import Path
 from typing import Dict, Any
+from dotenv import load_dotenv
 from supabase import create_client
+
+load_dotenv()
 
 from worker.state import AgentState
 from worker.tools.delivery_tools import (
@@ -53,7 +56,9 @@ def deliver_node(state: AgentState) -> Dict[str, Any]:
         return {"status": "done"}
 
     creds = get_google_credentials()
-    sb = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
+    sb_url = os.getenv("SUPABASE_URL") or SUPABASE_URL
+    sb_key = os.getenv("SUPABASE_WORKER_KEY") or os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY") or SUPABASE_KEY
+    sb = create_client(sb_url, sb_key) if sb_url and sb_key else None
 
     html_links = []
     screenshot_path = None

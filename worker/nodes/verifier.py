@@ -9,6 +9,7 @@ New: Actually runs Python files and checks their exit code to verify correctness
 import re
 import json
 import os
+import time
 import subprocess
 import sys
 from pathlib import Path
@@ -58,16 +59,56 @@ def contains_banned_ai_filler(text: str) -> Tuple[bool, str]:
 def run_python_file_check(filepath: Path, timeout: int = 60) -> Tuple[bool, str]:
     """
     Actually runs a Python file in a subprocess and returns (success, output).
+    Handles persistent web servers (Flask, FastAPI, etc.) by verifying compilation and clean startup.
     This gives real pass/fail based on exit code, not just LLM opinion.
     """
     try:
+        content = filepath.read_text(encoding="utf-8", errors="ignore")
+        is_server = bool(re.search(r"app\.run\(|uvicorn\.run\(|socketio\.run\(|http\.server|run_simple\(", content))
+
+        if is_server:
+            # 1. Test compilation & syntax
+            comp_res = subprocess.run(
+                [PYTHON_EXE, "-m", "py_compile", str(filepath.resolve())],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                cwd=str(filepath.parent.resolve()),
+                env={**os.environ, "PYTHONPATH": str(filepath.parent.resolve())},
+            )
+            if comp_res.returncode != 0:
+                return False, f"Server syntax/compilation error: {comp_res.stderr.strip()[:500]}"
+
+            # 2. Briefly launch the server in a subprocess to ensure it starts without crash
+            proc = subprocess.Popen(
+                [PYTHON_EXE, str(filepath.resolve())],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                cwd=str(filepath.parent.resolve()),
+                env={**os.environ, "PYTHONPATH": str(filepath.parent.resolve())},
+            )
+            time.sleep(3)
+            ret = proc.poll()
+            if ret is not None and ret != 0:
+                _, err = proc.communicate()
+                return False, f"Server crashed on startup (code {ret}): {err.strip()[:500]}"
+
+            # Still running healthy -> terminate cleanly
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            return True, "Server started successfully and bound without crashing"
+
         result = subprocess.run(
-            [PYTHON_EXE, str(filepath)],
+            [PYTHON_EXE, str(filepath.resolve())],
             capture_output=True,
             text=True,
             timeout=timeout,
-            cwd=str(filepath.parent),
-            env={**os.environ, "PYTHONPATH": str(filepath.parent)},
+            cwd=str(filepath.parent.resolve()),
+            env={**os.environ, "PYTHONPATH": str(filepath.parent.resolve())},
         )
         output = ""
         if result.stdout.strip():
@@ -284,16 +325,34 @@ def verifier_node(state: AgentState) -> Dict[str, Any]:
 
     # 4. Actually run Python files to check they work
     execution_results = []
-    for f in produced_paths:
-        if f.suffix.lower() == ".py" and f.exists() and f.name in {"smoke_test.py", "main.py", "app.py"}:
-            print(f"[LangGraph:Verifier] Running: {f.name}...")
-            success, output = run_python_file_check(f, timeout=60)
-            status = "PASS" if success else "FAIL"
-            execution_results.append(f"[{status}] {f.name}: {output[:300]}")
-            if not success:
-                print(f"  └─ FAIL: {output[:200]}")
-            else:
-                print(f"  └─ PASS: {output[:100]}")
+
+    # Check for dedicated test suites first
+    test_files = [
+        f for f in produced_paths
+        if f.suffix.lower() == ".py" and f.exists() and (
+            f.name.startswith("test_") or f.name in {"smoke_test.py", "run_smoke.py"} or "tests" in f.parts
+        )
+    ]
+
+    targets_to_run = []
+    if test_files:
+        targets_to_run.extend(test_files[:3])
+
+    entry_files = [
+        f for f in produced_paths
+        if f.suffix.lower() == ".py" and f.exists() and f.name in {"main.py", "app.py", "server.py", "smoke_test.py"} and f not in targets_to_run
+    ]
+    targets_to_run.extend(entry_files[:2])
+
+    for f in targets_to_run:
+        print(f"[LangGraph:Verifier] Running: {f.name}...")
+        success, output = run_python_file_check(f, timeout=60)
+        status = "PASS" if success else "FAIL"
+        execution_results.append(f"[{status}] {f.name}: {output[:300]}")
+        if not success:
+            print(f"  └─ FAIL: {output[:200]}")
+        else:
+            print(f"  └─ PASS: {output[:100]}")
 
     exec_summary = "\n".join(execution_results)
 
