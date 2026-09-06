@@ -112,8 +112,9 @@ def thinker_node(state: AgentState) -> Dict[str, Any]:
     )
 
     # -- Call LLM --------------------------------------------------------------
-    # Uses the existing free-model chain (Gemini → OpenRouter free → Groq).
-    # No paid API needed — the quality comes from the prompt structure.
+    # Chain: OpenRouter free (attempt 1) → OpenRouter free (attempt 2) → Gemini free.
+    # Groq is excluded by passing preferred_provider="openrouter":
+    # llm.py's Groq block only fires when preferred_provider is None or "groq".
     raw_response = None
     try:
         raw_response = call_llm(
@@ -123,6 +124,7 @@ def thinker_node(state: AgentState) -> Dict[str, Any]:
             ],
             temperature=0.15,
             max_tokens=4096,
+            preferred_provider="openrouter",  # OpenRouter×2 → Gemini, no Groq
         )
     except Exception as e:
         print(f"[LangGraph:Thinker] LLM call failed: {e}")
