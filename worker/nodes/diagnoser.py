@@ -133,7 +133,12 @@ def diagnoser_node(state: AgentState) -> Dict[str, Any]:
         "Diagnose root cause and provide fix instructions for next attempt."
     )
 
-    resp = call_llm([{"role": "system", "content": sys_prompt}, {"role": "user", "content": user_prompt}], temperature=0.1, max_tokens=1500)
+    resp = call_llm(
+        [{"role": "system", "content": sys_prompt}, {"role": "user", "content": user_prompt}],
+        temperature=0.1,
+        max_tokens=1500,
+        preferred_provider="openrouter_only",
+    )
     parsed = safe_parse_json(resp)
 
     root_cause = parsed.get("root_cause", feedback) if isinstance(parsed, dict) else feedback

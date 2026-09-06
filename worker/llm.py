@@ -438,7 +438,6 @@ def _format_text_fallback_messages(messages: List[Dict[str, Any]], tool_schema_t
 
     return formatted
 
-
 def call_llm_structured(
     messages: List[Dict[str, str]],
     temperature: float = 0.2,
@@ -447,7 +446,7 @@ def call_llm_structured(
     tools: Optional[List[Dict]] = None,
 ) -> Optional[LLMResponse]:
     """
-    Calls LLM with automatic multi-provider failover: Gemini -> OpenRouter -> Groq.
+    Calls LLM with automatic multi-provider failover: OpenRouter -> Gemini -> Groq.
     
     Tool calling strategy:
     1. Try native tool calling (function calling API) first with OpenAI protocol preserved.
@@ -460,96 +459,192 @@ def call_llm_structured(
 
     tool_schema_text = _build_text_tool_schema_prompt(tools) if tools else ""
 
-    # ── 1. Primary: Gemini API ──────────────────────────────────────
-    GEMINI_MODEL = os.getenv("GEMINI_MODEL") or os.getenv("ANTIGRAVITY_MODEL", "gemini-2.5-flash")
-    if GEMINI_MODEL.startswith("gemini-3."):
-        GEMINI_MODEL = "gemini-2.5-flash"  # Map internal preview name to public API model
+    # Determine execution strategy based on user matrix
+    is_openrouter_only = (preferred_provider == "openrouter_only")
 
-    # Check if GEMINI_API_KEY is an Antigravity internal token (starts with AQ.)
-    is_gemini_token = GEMINI_API_KEY and GEMINI_API_KEY.startswith("AQ.")
-    if is_gemini_token and preferred_provider in (None, "gemini"):
-        # Log note once, skip direct Gemini API endpoint to avoid 400 error
-        pass
+    # ── 1. Primary & Fallback 1: OpenRouter (minimax/minimax-m3:free) ──────
+    if OPENROUTER_API_KEY and preferred_provider in (None, "openrouter", "openrouter_only"):
+        openrouter_model = "minimax/minimax-m3:free"
+        max_openrouter_attempts = 3 if is_openrouter_only else 2  # 3 attempts for Diagnoser, 2 for general (Primary + Fallback 1)
 
-    elif GEMINI_API_KEY and preferred_provider in (None, "gemini") and not _is_rate_limited("gemini"):
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
-            text_msgs = _format_text_fallback_messages(messages, tool_schema_text)
-            contents = []
-            sys_instruction = None
+        for or_attempt in range(1, max_openrouter_attempts + 1):
+            tier_name = "Primary" if or_attempt == 1 else f"Fallback {or_attempt - 1}"
+            if _is_rate_limited("openrouter"):
+                print(f"[LLM-Engine] OpenRouter is in rate-limit cooldown window. Skipping {tier_name}.")
+                break
 
-            for m in text_msgs:
-                role = m["role"]
-                content = m.get("content", "")
-                if role == "system":
-                    sys_instruction = {"parts": [{"text": content}]}
-                elif role == "assistant":
-                    contents.append({"role": "model", "parts": [{"text": content}]})
-                else:
-                    contents.append({"role": "user", "parts": [{"text": content}]})
+            try:
+                if tools:
+                    try:
+                        native_messages = _format_openai_messages(messages)
+                        body_with_tools: Dict[str, Any] = {
+                            "model": openrouter_model,
+                            "messages": native_messages,
+                            "temperature": temperature,
+                            "max_tokens": max_tokens,
+                            "tools": tools,
+                            "tool_choice": "auto",
+                        }
+                        resp = requests.post(
+                            "https://openrouter.ai/api/v1/chat/completions",
+                            headers={
+                                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                                "Content-Type": "application/json",
+                                "HTTP-Referer": os.getenv("APP_URL", "https://github.com/nisargpatel1906/Vicarius_Agent"),
+                                "X-Title": "Vicarius Academic Agent",
+                            },
+                            json=body_with_tools,
+                            timeout=OPENROUTER_TIMEOUT,
+                        )
+                        if resp.ok:
+                            data = resp.json()
+                            choices = data.get("choices", [])
+                            tc = _parse_openai_tool_calls(choices)
+                            if tc:
+                                return LLMResponse(tool_calls=tc, provider="openrouter", finish_reason="tool_calls")
+                            if choices:
+                                content_resp = choices[0].get("message", {}).get("content", "") or ""
+                                text_tc = _parse_text_tool_calls(content_resp)
+                                return LLMResponse(
+                                    content=sanitize_text(content_resp),
+                                    tool_calls=text_tc,
+                                    provider="openrouter",
+                                    finish_reason="tool_calls" if text_tc else choices[0].get("finish_reason", "stop"),
+                                )
+                        elif resp.status_code == 429:
+                            _record_rate_limit("openrouter")
+                            print(f"[LLM-Engine] OpenRouter ({openrouter_model}) {tier_name} 429 rate limited.")
+                            continue
+                    except Exception:
+                        pass
 
-            if not contents:
-                contents = [{"role": "user", "parts": [{"text": "Begin."}]}]
-
-            payload: Dict[str, Any] = {
-                "contents": contents,
-                "generationConfig": {
+                fallback_messages = _format_text_fallback_messages(messages, tool_schema_text)
+                body: Dict[str, Any] = {
+                    "model": openrouter_model,
+                    "messages": fallback_messages,
                     "temperature": temperature,
-                    "maxOutputTokens": max_tokens,
-                },
-            }
-            if sys_instruction:
-                payload["systemInstruction"] = sys_instruction
+                    "max_tokens": max_tokens,
+                }
+                resp = requests.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                        "Content-Type": "application/json",
+                        "HTTP-Referer": os.getenv("APP_URL", "https://github.com/nisargpatel1906/Vicarius_Agent"),
+                        "X-Title": "Vicarius Academic Agent",
+                    },
+                    json=body,
+                    timeout=OPENROUTER_TIMEOUT,
+                )
+                if resp.ok:
+                    data = resp.json()
+                    choices = data.get("choices", [])
+                    if choices:
+                        content_resp = choices[0].get("message", {}).get("content", "") or ""
+                        text_tc = _parse_text_tool_calls(content_resp) if tools else []
+                        return LLMResponse(
+                            content=sanitize_text(content_resp),
+                            tool_calls=text_tc,
+                            provider="openrouter",
+                            finish_reason="tool_calls" if text_tc else choices[0].get("finish_reason", "stop"),
+                        )
+                elif resp.status_code == 429:
+                    _record_rate_limit("openrouter")
+                    print(f"[LLM-Engine] OpenRouter ({openrouter_model}) {tier_name} returned 429.")
+                    continue
+                else:
+                    print(f"[LLM-Engine] OpenRouter ({openrouter_model}) {tier_name} returned HTTP {resp.status_code}.")
+            except Exception as oe:
+                print(f"[LLM-Engine] OpenRouter {tier_name} error with model {openrouter_model} ({oe}).")
 
-            if tools:
+    if is_openrouter_only:
+        print("[LLM-Engine] OpenRouter attempts exhausted for Reflexion Diagnoser.")
+        return None
+
+    # ── 2. Fallback 2 / 3: Google Gemini (gemini-2.0-flash / gemini-1.5-flash) ──────
+    if GEMINI_API_KEY and preferred_provider in (None, "gemini") and not _is_rate_limited("gemini"):
+        is_gemini_token = GEMINI_API_KEY.startswith("AQ.")
+        if not is_gemini_token:
+            gemini_candidates = ["gemini-2.0-flash", "gemini-1.5-flash"]
+            for gem_model in gemini_candidates:
                 try:
-                    payload_with_tools = dict(payload)
-                    payload_with_tools["tools"] = [{"function_declarations": _gemini_tool_schemas(tools)}]
-                    resp = requests.post(url, json=payload_with_tools, timeout=GEMINI_TIMEOUT)
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{gem_model}:generateContent?key={GEMINI_API_KEY}"
+                    text_msgs = _format_text_fallback_messages(messages, tool_schema_text)
+                    contents = []
+                    sys_instruction = None
+
+                    for m in text_msgs:
+                        role = m["role"]
+                        content = m.get("content", "")
+                        if role == "system":
+                            sys_instruction = {"parts": [{"text": content}]}
+                        elif role == "assistant":
+                            contents.append({"role": "model", "parts": [{"text": content}]})
+                        else:
+                            contents.append({"role": "user", "parts": [{"text": content}]})
+
+                    if not contents:
+                        contents = [{"role": "user", "parts": [{"text": "Begin."}]}]
+
+                    payload: Dict[str, Any] = {
+                        "contents": contents,
+                        "generationConfig": {
+                            "temperature": temperature,
+                            "maxOutputTokens": max_tokens,
+                        },
+                    }
+                    if sys_instruction:
+                        payload["systemInstruction"] = sys_instruction
+
+                    if tools:
+                        try:
+                            payload_with_tools = dict(payload)
+                            payload_with_tools["tools"] = [{"function_declarations": _gemini_tool_schemas(tools)}]
+                            resp = requests.post(url, json=payload_with_tools, timeout=GEMINI_TIMEOUT)
+                            if resp.ok:
+                                data = resp.json()
+                                cands = data.get("candidates", [])
+                                if cands:
+                                    tc = _parse_gemini_tool_calls(cands)
+                                    if tc:
+                                        return LLMResponse(tool_calls=tc, provider="gemini", finish_reason="tool_calls")
+                                    parts = cands[0].get("content", {}).get("parts", [])
+                                    if parts and "text" in parts[0]:
+                                        text = sanitize_text(parts[0]["text"])
+                                        text_tc = _parse_text_tool_calls(text)
+                                        return LLMResponse(
+                                            content=text,
+                                            tool_calls=text_tc,
+                                            provider="gemini",
+                                            finish_reason="tool_calls" if text_tc else cands[0].get("finishReason", "stop"),
+                                        )
+                        except Exception:
+                            pass
+
+                    resp = requests.post(url, json=payload, timeout=GEMINI_TIMEOUT)
                     if resp.ok:
                         data = resp.json()
                         cands = data.get("candidates", [])
                         if cands:
-                            tc = _parse_gemini_tool_calls(cands)
-                            if tc:
-                                return LLMResponse(tool_calls=tc, provider="gemini", finish_reason="tool_calls")
                             parts = cands[0].get("content", {}).get("parts", [])
                             if parts and "text" in parts[0]:
                                 text = sanitize_text(parts[0]["text"])
-                                text_tc = _parse_text_tool_calls(text)
+                                text_tc = _parse_text_tool_calls(text) if tools else []
                                 return LLMResponse(
                                     content=text,
                                     tool_calls=text_tc,
                                     provider="gemini",
                                     finish_reason="tool_calls" if text_tc else cands[0].get("finishReason", "stop"),
                                 )
-                except Exception:
-                    pass
+                    else:
+                        status = resp.status_code
+                        if status == 429:
+                            _record_rate_limit("gemini")
+                        print(f"[LLM-Engine] Gemini ({gem_model}) returned HTTP {status}.")
+                except Exception as ge:
+                    print(f"[LLM-Engine] Gemini ({gem_model}) error ({ge}).")
 
-            resp = requests.post(url, json=payload, timeout=GEMINI_TIMEOUT)
-            if resp.ok:
-                data = resp.json()
-                cands = data.get("candidates", [])
-                if cands:
-                    parts = cands[0].get("content", {}).get("parts", [])
-                    if parts and "text" in parts[0]:
-                        text = sanitize_text(parts[0]["text"])
-                        text_tc = _parse_text_tool_calls(text) if tools else []
-                        return LLMResponse(
-                            content=text,
-                            tool_calls=text_tc,
-                            provider="gemini",
-                            finish_reason="tool_calls" if text_tc else cands[0].get("finishReason", "stop"),
-                        )
-            else:
-                status = resp.status_code
-                if status == 429:
-                    _record_rate_limit("gemini")
-                print(f"[LLM-Engine] Gemini returned HTTP {status}. Failing over to OpenRouter...")
-        except Exception as ge:
-            print(f"[LLM-Engine] Gemini error ({ge}). Failing over to OpenRouter...")
-
-    # ── 2. Secondary: Groq ───────────────────────────────────────────
+    # ── 3. Fallback 4: Groq ───────────────────────────────────────────
     if GROQ_API_KEY and preferred_provider in (None, "groq") and not _is_rate_limited("groq"):
         groq_candidates = [
             GROQ_AI_MODEL,
@@ -642,98 +737,6 @@ def call_llm_structured(
             except Exception as gre:
                 print(f"[LLM-Engine] Groq error ({gre}).")
 
-    # ── 3. Tertiary: OpenRouter ─────────────────────────────────────
-    if OPENROUTER_API_KEY and preferred_provider in (None, "openrouter") and not _is_rate_limited("openrouter"):
-        openrouter_models = [
-            OPENROUTER_AI_MODEL,
-            "minimax/minimax-m3:free",
-        ]
-        candidate_models = list(dict.fromkeys(openrouter_models))
-
-        for model_id in candidate_models:
-            try:
-                if tools:
-                    try:
-                        native_messages = _format_openai_messages(messages)
-                        body_with_tools: Dict[str, Any] = {
-                            "model": model_id,
-                            "messages": native_messages,
-                            "temperature": temperature,
-                            "max_tokens": max_tokens,
-                            "tools": tools,
-                            "tool_choice": "auto",
-                        }
-                        resp = requests.post(
-                            "https://openrouter.ai/api/v1/chat/completions",
-                            headers={
-                                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                                "Content-Type": "application/json",
-                                "HTTP-Referer": os.getenv("APP_URL", "https://github.com/nisargpatel1906/Vicarius_Agent"),
-                                "X-Title": "Vicarius Academic Agent",
-                            },
-                            json=body_with_tools,
-                            timeout=OPENROUTER_TIMEOUT,
-                        )
-                        if resp.ok:
-                            data = resp.json()
-                            choices = data.get("choices", [])
-                            tc = _parse_openai_tool_calls(choices)
-                            if tc:
-                                return LLMResponse(tool_calls=tc, provider="openrouter", finish_reason="tool_calls")
-                            if choices:
-                                content_resp = choices[0].get("message", {}).get("content", "") or ""
-                                text_tc = _parse_text_tool_calls(content_resp)
-                                return LLMResponse(
-                                    content=sanitize_text(content_resp),
-                                    tool_calls=text_tc,
-                                    provider="openrouter",
-                                    finish_reason="tool_calls" if text_tc else choices[0].get("finish_reason", "stop"),
-                                )
-                        elif resp.status_code == 429:
-                            _record_rate_limit("openrouter")
-                            print(f"[LLM-Engine] OpenRouter ({model_id}) 429 rate limited.")
-                            continue
-                    except Exception:
-                        pass
-
-                fallback_messages = _format_text_fallback_messages(messages, tool_schema_text)
-                body: Dict[str, Any] = {
-                    "model": model_id,
-                    "messages": fallback_messages,
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                }
-                resp = requests.post(
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                        "Content-Type": "application/json",
-                        "HTTP-Referer": os.getenv("APP_URL", "https://github.com/nisargpatel1906/Vicarius_Agent"),
-                        "X-Title": "Vicarius Academic Agent",
-                    },
-                    json=body,
-                    timeout=OPENROUTER_TIMEOUT,
-                )
-                if resp.ok:
-                    data = resp.json()
-                    choices = data.get("choices", [])
-                    if choices:
-                        content_resp = choices[0].get("message", {}).get("content", "") or ""
-                        text_tc = _parse_text_tool_calls(content_resp) if tools else []
-                        return LLMResponse(
-                            content=sanitize_text(content_resp),
-                            tool_calls=text_tc,
-                            provider="openrouter",
-                            finish_reason="tool_calls" if text_tc else choices[0].get("finish_reason", "stop"),
-                        )
-                elif resp.status_code == 429:
-                    _record_rate_limit("openrouter")
-                    print(f"[LLM-Engine] OpenRouter ({model_id}) returned 429.")
-                    continue
-                else:
-                    print(f"[LLM-Engine] OpenRouter ({model_id}) returned HTTP {resp.status_code}.")
-            except Exception as oe:
-                print(f"[LLM-Engine] OpenRouter error with model {model_id} ({oe}).")
     return None
 
 

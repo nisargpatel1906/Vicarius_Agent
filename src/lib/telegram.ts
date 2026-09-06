@@ -12,6 +12,7 @@ const OPENROUTER_API_URL = process.env.OPENROUTER_API_URL || 'https://openrouter
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'minimax/minimax-m3:free';
 const GROQ_API_URL = process.env.GROQ_API_URL || 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+const GROQ_WHISPER_URL = process.env.GROQ_WHISPER_URL || 'https://api.groq.com/openai/v1/audio/transcriptions';
 const OPENAI_WHISPER_URL = process.env.OPENAI_WHISPER_URL || 'https://api.openai.com/v1/audio/transcriptions';
 const STUDENT_NAME = process.env.STUDENT_NAME || 'Nisarg Patel';
 const STUDENT_UNIVERSITY = process.env.STUDENT_UNIVERSITY || 'Academic Institution';
@@ -161,8 +162,7 @@ export async function createTaskFromTelegram(promptText: string, attachmentMeta?
   const supabase = getSupabaseAdmin();
   const rawBody = promptText.trim();
 
-  let parsed: any = {};
-  const groqKey = process.env.GROQ_API_KEY;
+  let parsed: any = null;
   const systemPrompt = `You are the Vicarius Academic Task Parser for a Computer Engineering / AI-ML student.
 Extract the structured task details into strict JSON:
 {
@@ -170,6 +170,7 @@ Extract the structured task details into strict JSON:
   "course": string (e.g. "CE-401 Machine Learning", "CE-502 Cloud Computing", "CE-403 Web Technologies", "CE-505 Information Security", "DLCV 2026", or "General"),
   "task_type": "document" | "presentation" | "code_project" | "ml_training" | "research" | "handwritten",
   "weight": "light" | "medium" | "heavy",
+  "confidence": number (confidence score from 0.0 to 1.0; e.g. 0.95 for clear prompt, 0.50 if ambiguous),
   "due_date": string in ISO 8601 with Asia/Kolkata timezone offset (+05:30) (e.g. "2026-09-10T18:00:00+05:30". If not specified, default to 3 days from now at 18:00:00+05:30),
   "requirements": string[] (list of key instructions),
   "success_criteria": string (verification criteria),
@@ -177,13 +178,19 @@ Extract the structured task details into strict JSON:
 }`;
 
   const openRouterKey = process.env.OPENROUTER_API_KEY;
+  const groqKey = process.env.GROQ_API_KEY;
+  const geminiKey = process.env.GEMINI_API_KEY;
+
+  // Row 4: Primary Model: OpenRouter (minimax/minimax-m3:free)
   if (openRouterKey) {
     try {
       const res = await fetch(OPENROUTER_API_URL, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${openRouterKey}`,
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'HTTP-Referer': process.env.HTTP_REFERER || 'https://vicarius-agent.local',
+          'X-Title': 'Vicarius Academic Agent',
         },
         body: JSON.stringify({
           model: OPENROUTER_MODEL,
@@ -192,47 +199,124 @@ Extract the structured task details into strict JSON:
             { role: 'user', content: rawBody },
           ],
           temperature: 0.1,
-        })
+        }),
       });
-      
+
       if (res.ok) {
         const data = await res.json();
         const content = data.choices?.[0]?.message?.content || '{}';
-        parsed = JSON.parse(content.replace(/```json/g, '').replace(/```/g, '').trim());
+        const candidate = JSON.parse(content.replace(/```json/g, '').replace(/```/g, '').trim());
+        const conf = typeof candidate.confidence === 'number' ? candidate.confidence : 0.85;
+        if (conf >= 0.70 && candidate.title) {
+          parsed = candidate;
+        } else {
+          console.warn(`[Telegram:Classify] OpenRouter confidence (${conf}) < 0.70. Triggering Fallback 1 (Groq)...`);
+        }
       } else {
-        console.warn(`OpenRouter parsing failed (${res.status}). Falling back to Groq...`);
+        console.warn(`[Telegram:Classify] OpenRouter primary failed (${res.status}). Triggering Fallback 1 (Groq)...`);
       }
     } catch (err) {
-      console.warn('OpenRouter parsing error:', err);
+      console.warn('[Telegram:Classify] OpenRouter primary error:', err);
     }
   }
 
-  if ((!parsed || Object.keys(parsed).length === 0) && groqKey) {
+  // Row 4: Fallback 1: Groq (openai/gpt-oss-120b / qwen3.8-27b)
+  if (!parsed && groqKey) {
+    const groqCandidateModels = ['openai/gpt-oss-120b', 'qwen/qwen3.8-27b', 'llama-3.3-70b-versatile'];
+    for (const gModel of groqCandidateModels) {
+      try {
+        const res = await fetch(GROQ_API_URL, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${groqKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: gModel,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: rawBody },
+            ],
+            temperature: 0.1,
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const content = data.choices?.[0]?.message?.content || '{}';
+          const candidate = JSON.parse(content.replace(/```json/g, '').replace(/```/g, '').trim());
+          const conf = typeof candidate.confidence === 'number' ? candidate.confidence : 0.85;
+          if (conf >= 0.70 && candidate.title) {
+            parsed = candidate;
+            console.log(`[Telegram:Classify] Recovered via Groq Fallback 1 (${gModel}).`);
+            break;
+          }
+        }
+      } catch (err) {
+        console.warn(`[Telegram:Classify] Groq model ${gModel} error:`, err);
+      }
+    }
+  }
+
+  // Row 4: Fallback 2: OpenRouter Backup (llama-3.3-70b-instruct)
+  if (!parsed && openRouterKey) {
     try {
-      const res = await fetch(GROQ_API_URL, {
+      const res = await fetch(OPENROUTER_API_URL, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${groqKey}`,
-          'Content-Type': 'application/json'
+          'Authorization': `Bearer ${openRouterKey}`,
+          'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: GROQ_MODEL,
+          model: 'meta-llama/llama-3.3-70b-instruct',
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: rawBody },
           ],
           temperature: 0.1,
-        })
+        }),
       });
       if (res.ok) {
         const data = await res.json();
         const content = data.choices?.[0]?.message?.content || '{}';
-        parsed = JSON.parse(content.replace(/```json/g, '').replace(/```/g, '').trim());
+        const candidate = JSON.parse(content.replace(/```json/g, '').replace(/```/g, '').trim());
+        if (candidate.title) {
+          parsed = candidate;
+          console.log('[Telegram:Classify] Recovered via OpenRouter Backup (llama-3.3-70b-instruct).');
+        }
       }
     } catch (err) {
-      console.warn('Groq parsing error:', err);
+      console.warn('[Telegram:Classify] OpenRouter backup error:', err);
     }
   }
+
+  // Row 4: Fallback 3: Google Gemini (gemini-2.0-flash / gemini-1.5-flash)
+  if (!parsed && geminiKey) {
+    try {
+      const { GoogleGenerativeAI } = await import('@google/generative-ai');
+      const genAI = new GoogleGenerativeAI(geminiKey);
+      for (const gemModel of ['gemini-2.0-flash', 'gemini-1.5-flash']) {
+        try {
+          const model = genAI.getGenerativeModel({ model: gemModel });
+          const result = await model.generateContent([
+            { text: `${systemPrompt}\n\nUser Prompt:\n${rawBody}` },
+          ]);
+          const text = result.response.text() || '';
+          const candidate = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
+          if (candidate.title) {
+            parsed = candidate;
+            console.log(`[Telegram:Classify] Recovered via Gemini Fallback 3 (${gemModel}).`);
+            break;
+          }
+        } catch (gemErr) {
+          console.warn(`[Telegram:Classify] Gemini ${gemModel} error:`, gemErr);
+        }
+      }
+    } catch (err) {
+      console.warn('[Telegram:Classify] Gemini init error:', err);
+    }
+  }
+
+  parsed = parsed || {};
 
   const title = parsed.title || rawBody.slice(0, 80) || 'Academic Assignment';
   const course = parsed.course || (rawBody.toLowerCase().includes('dlcv') ? 'Deep Learning with Computer Vision (DLCV 2026)' : 'General');
@@ -1165,11 +1249,16 @@ export async function askAiAssistant(userPrompt: string, chatId: string): Promis
 
 
 /**
- * Phase 2A: Downloads and transcribes a Telegram voice message via Whisper.
+ * Phase 2A: Row 6 - Telegram Voice & Audio Notes
+ * Primary: Groq Whisper (whisper-large-v3-turbo)
+ * Fallback 1: OpenAI Whisper (whisper-1)
+ * Fallback 2 / 3: Plain text notification asking user to type
+ * Trigger: Audio transcription timeout (>15s) or API error
  */
 async function transcribeVoiceMessage(fileId: string): Promise<string> {
   const token = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
-  const openRouterKey = process.env.OPENROUTER_API_KEY;
+  const groqKey = process.env.GROQ_API_KEY;
+  const openAiKey = process.env.OPENAI_API_KEY;
 
   try {
     // Step 1: Get file path from Telegram
@@ -1185,38 +1274,84 @@ async function transcribeVoiceMessage(fileId: string): Promise<string> {
     if (!audioRes.ok) throw new Error('Failed to download voice file');
     const audioBuffer = await audioRes.arrayBuffer();
 
-    // Step 3: Transcribe via OpenAI Whisper (using standard OpenAI endpoint if key available)
-    const openAiKey = process.env.OPENAI_API_KEY;
-    if (openAiKey) {
-      const formData = new FormData();
-      const audioBlob = new Blob([audioBuffer], { type: 'audio/ogg' });
-      formData.append('file', audioBlob, 'voice.ogg');
-      formData.append('model', 'whisper-1');
-      formData.append('language', 'en');
+    // Step 3: Primary Model: Groq Whisper (whisper-large-v3-turbo)
+    if (groqKey) {
+      try {
+        const formData = new FormData();
+        const audioBlob = new Blob([audioBuffer], { type: 'audio/ogg' });
+        formData.append('file', audioBlob, 'voice.ogg');
+        formData.append('model', 'whisper-large-v3-turbo');
+        formData.append('language', 'en');
 
-      const whisperRes = await fetch(OPENAI_WHISPER_URL, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${openAiKey}` },
-        body: formData,
-      });
-      if (whisperRes.ok) {
-        const whisperData = await whisperRes.json();
-        return whisperData.text || '';
+        const groqRes = await fetch(GROQ_WHISPER_URL, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${groqKey}` },
+          body: formData,
+          signal: AbortSignal.timeout(15000),
+        });
+
+        if (groqRes.ok) {
+          const groqData = await groqRes.json();
+          const text = (groqData.text || '').trim();
+          if (text) {
+            console.log('[Whisper:Primary] Successfully transcribed voice note via Groq whisper-large-v3-turbo.');
+            return text;
+          }
+        } else {
+          console.warn(`[Whisper:Primary] Groq Whisper failed (${groqRes.status}). Triggering Fallback 1 (OpenAI Whisper)...`);
+        }
+      } catch (groqErr: any) {
+        console.warn(`[Whisper:Primary] Groq Whisper error (${groqErr?.message || groqErr}). Triggering Fallback 1...`);
       }
     }
 
-    // Fallback: Voice message notice
-    console.warn('[Whisper] OpenAI key not available, audio transcription skipped.');
+    // Step 4: Fallback 1: OpenAI Whisper (whisper-1)
+    if (openAiKey) {
+      try {
+        const formData = new FormData();
+        const audioBlob = new Blob([audioBuffer], { type: 'audio/ogg' });
+        formData.append('file', audioBlob, 'voice.ogg');
+        formData.append('model', 'whisper-1');
+        formData.append('language', 'en');
+
+        const whisperRes = await fetch(OPENAI_WHISPER_URL, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${openAiKey}` },
+          body: formData,
+          signal: AbortSignal.timeout(15000),
+        });
+
+        if (whisperRes.ok) {
+          const whisperData = await whisperRes.json();
+          const text = (whisperData.text || '').trim();
+          if (text) {
+            console.log('[Whisper:Fallback 1] Successfully transcribed voice note via OpenAI whisper-1.');
+            return text;
+          }
+        } else {
+          console.warn(`[Whisper:Fallback 1] OpenAI Whisper failed (${whisperRes.status}). Triggering Fallback 2/3...`);
+        }
+      } catch (openAiErr: any) {
+        console.warn(`[Whisper:Fallback 1] OpenAI Whisper error (${openAiErr?.message || openAiErr}). Triggering Fallback 2/3...`);
+      }
+    }
+
+    // Step 5: Fallback 2 / 3: Plain text notification asking user to type
+    console.warn('[Whisper:Fallback 2/3] Audio transcription timed out (>15s) or API error across providers.');
     return '[Voice message received — transcription unavailable. Please type your request.]';
   } catch (err: any) {
-    console.error('[Whisper] Transcription error:', err?.message);
-    return '[Could not transcribe voice message. Please type your request.]';
+    console.error('[Whisper] Overall voice processing error:', err?.message || err);
+    return '[Voice message received — transcription unavailable. Please type your request.]';
   }
 }
 
 
 /**
- * Phase 2B: Extracts assignment requirements from a photo or PDF using AI vision.
+ * Phase 2B: Row 5 - Document & PDF Text Ingestion
+ * Primary: Fast-path Local Extraction (pypdf / pdf-parse)
+ * Fallback 1: Gemini Multimodal (gemini-2.0-flash -> gemini-1.5-flash -> gemini-1.5-pro)
+ * Fallback 2 / 3: OpenRouter Vision (gemma-3-27b-it -> qwen-2.5-vl-72b)
+ * Trigger: Scanned document / missing text stream in PDF (< 50 chars)
  */
 async function extractTaskFromImage(fileId: string, mimeType?: string): Promise<string> {
   const token = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
@@ -1230,36 +1365,40 @@ async function extractTaskFromImage(fileId: string, mimeType?: string): Promise<
     if (!filePath) return '';
     const fileUrl = `${TELEGRAM_FILE_BASE}${token}/${filePath}`;
 
-    // Phase 2A: Direct PDF parsing if mimeType is application/pdf or file path is .pdf
-    if (mimeType === 'application/pdf' || filePath.toLowerCase().endsWith('.pdf')) {
+    const isPdf = mimeType === 'application/pdf' || filePath.toLowerCase().endsWith('.pdf');
+
+    if (isPdf) {
       try {
         const pdfRes = await fetch(fileUrl);
         if (pdfRes.ok) {
           const arrayBuf = await pdfRes.arrayBuffer();
           const buf = Buffer.from(arrayBuf);
           
-          // Fast-path: local pdf-parse
+          // Primary Model: Fast-path Local Extraction (pdf-parse)
           try {
             const { extractPdfText } = await import('./vector');
             const pdfText = await extractPdfText(buf);
-            if (pdfText && pdfText.trim().length > 10) {
+            if (pdfText && pdfText.trim().length >= 50) {
+              console.log(`[Document:Primary] Successfully extracted ${pdfText.length} characters via local pdf-parse.`);
               return pdfText.trim();
             }
           } catch (fastErr) {
-            console.warn('[PDF] Fast-path extractPdfText failed, falling back to Gemini:', fastErr);
+            console.warn('[Document] Fast-path pdf-parse failed, triggering Fallback 1 (Gemini Multimodal):', fastErr);
           }
 
-          // Multimodal AI path: Gemini 2.0 Flash / 1.5 Flash (supports native PDF processing)
+          // Fallback Trigger Condition: Scanned document / missing text stream in PDF (< 50 chars)
+          console.log('[Document] Trigger condition met (low/empty text stream). Initiating Fallback 1 (Gemini Multimodal)...');
+
+          // Fallback 1: Gemini Multimodal (gemini-2.0-flash -> gemini-1.5-flash -> gemini-1.5-pro)
           const geminiKey = process.env.GEMINI_API_KEY;
           if (geminiKey) {
             try {
               const { GoogleGenerativeAI } = await import('@google/generative-ai');
               const genAI = new GoogleGenerativeAI(geminiKey);
-              let aiRes: any = null;
               for (const modelName of ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro']) {
                 try {
                   const model = genAI.getGenerativeModel({ model: modelName });
-                  aiRes = await model.generateContent([
+                  const aiRes = await model.generateContent([
                     {
                       inlineData: {
                         mimeType: 'application/pdf',
@@ -1270,77 +1409,147 @@ async function extractTaskFromImage(fileId: string, mimeType?: string): Promise<
                       text: 'Extract ALL assignment requirements, course title, due date, submission links, constraints, and all specific tasks from this PDF document verbatim. Return the complete, unabridged assignment text with all questions, instructions, and constraints.',
                     },
                   ]);
-                  if (aiRes && aiRes.response) break;
+                  const text = aiRes?.response?.text();
+                  if (text && text.trim().length >= 30) {
+                    console.log(`[Document:Fallback 1] Successfully extracted text via Gemini Multimodal (${modelName}).`);
+                    return text.trim();
+                  }
                 } catch (mErr) {
-                  console.warn(`[PDF] Gemini model ${modelName} failed:`, mErr);
+                  console.warn(`[Document:Fallback 1] Gemini ${modelName} failed:`, mErr);
                 }
               }
-              const text = aiRes?.response?.text();
-              if (text && text.trim().length > 10) {
-                return text.trim();
-              }
             } catch (geminiErr) {
-              console.warn('[PDF] Gemini multimodal extraction failed:', geminiErr);
+              console.warn('[Document:Fallback 1] Gemini Multimodal error:', geminiErr);
+            }
+          }
+
+          // Fallback 2 / 3: OpenRouter Vision (gemma-3-27b-it -> qwen-2.5-vl-72b)
+          const openRouterKey = process.env.OPENROUTER_API_KEY;
+          if (openRouterKey) {
+            const visionModels = ['google/gemma-3-27b-it', 'qwen/qwen-2.5-vl-72b-instruct:free', 'qwen/qwen-2.5-vl-72b-instruct'];
+            const b64Pdf = buf.toString('base64');
+            for (const vModel of visionModels) {
+              try {
+                const visionRes = await fetch(OPENROUTER_API_URL, {
+                  method: 'POST',
+                  headers: {
+                    'Authorization': `Bearer ${openRouterKey}`,
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                    model: vModel,
+                    messages: [{
+                      role: 'user',
+                      content: [
+                        { type: 'image_url', image_url: { url: `data:application/pdf;base64,${b64Pdf}` } },
+                        { type: 'text', text: 'Extract all assignment requirements, instructions, and questions from this document verbatim.' },
+                      ],
+                    }],
+                    temperature: 0.1,
+                  }),
+                });
+                if (visionRes.ok) {
+                  const visionData = await visionRes.json();
+                  const content = visionData.choices?.[0]?.message?.content;
+                  if (content && content.trim().length >= 30) {
+                    console.log(`[Document:Fallback 2/3] Successfully extracted text via OpenRouter Vision (${vModel}).`);
+                    return content.trim();
+                  }
+                }
+              } catch (vErr) {
+                console.warn(`[Document:Fallback 2/3] OpenRouter Vision ${vModel} error:`, vErr);
+              }
             }
           }
         }
       } catch (pdfErr) {
-        console.warn('[PDF] Error extracting PDF text:', pdfErr);
+        console.warn('[Document] Error reading PDF file:', pdfErr);
       }
-      // If direct PDF extraction failed, do not forward PDF to image_url vision endpoint (which fails on PDFs)
       return '';
     }
 
-    const openRouterKey = process.env.OPENROUTER_API_KEY;
-    if (!openRouterKey) return '';
-
-    const visionModels = [
-      process.env.OPENROUTER_VISION_MODEL || 'google/gemma-3-27b-it',
-      'google/gemini-2.0-flash-001',
-      'qwen/qwen-2.5-vl-72b-instruct:free',
-      'meta-llama/llama-3.2-11b-vision-instruct:free',
-    ];
-
-    for (const visionModel of visionModels) {
+    // Photo / Image Ingestion
+    // Fallback 1: Gemini Multimodal (gemini-2.0-flash -> gemini-1.5-flash -> gemini-1.5-pro)
+    const geminiKey = process.env.GEMINI_API_KEY;
+    if (geminiKey) {
       try {
-        const visionRes = await fetch(OPENROUTER_API_URL, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${openRouterKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: visionModel,
-            messages: [
-              {
-                role: 'user',
-                content: [
-                  {
-                    type: 'image_url',
-                    image_url: { url: fileUrl },
+        const imgRes = await fetch(fileUrl);
+        if (imgRes.ok) {
+          const imgBuf = Buffer.from(await imgRes.arrayBuffer());
+          const { GoogleGenerativeAI } = await import('@google/generative-ai');
+          const genAI = new GoogleGenerativeAI(geminiKey);
+          for (const modelName of ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro']) {
+            try {
+              const model = genAI.getGenerativeModel({ model: modelName });
+              const aiRes = await model.generateContent([
+                {
+                  inlineData: {
+                    mimeType: mimeType || 'image/jpeg',
+                    data: imgBuf.toString('base64'),
                   },
-                  {
-                    type: 'text',
-                    text: 'Extract all assignment requirements from this image/document. List: the assignment title, course name, due date, and all specific instructions or requirements. Return as plain text, structured clearly.',
-                  },
-                ],
-              },
-            ],
-            temperature: 0.1,
-          }),
-        });
-
-        if (visionRes.ok) {
-          const visionData = await visionRes.json();
-          const content = visionData.choices?.[0]?.message?.content;
-          if (content && content.trim().length > 10) {
-            return content.trim();
+                },
+                {
+                  text: 'Extract all assignment requirements, course title, due date, submission links, constraints, and all specific tasks from this image verbatim.',
+                },
+              ]);
+              const text = aiRes?.response?.text();
+              if (text && text.trim().length >= 20) {
+                console.log(`[Vision:Fallback 1] Successfully extracted text via Gemini Multimodal (${modelName}).`);
+                return text.trim();
+              }
+            } catch (mErr) {
+              console.warn(`[Vision:Fallback 1] Gemini ${modelName} failed:`, mErr);
+            }
           }
-        } else {
-          console.warn(`[Vision] Model ${visionModel} failed with status ${visionRes.status}. Trying next...`);
         }
-      } catch (vErr) {
-        console.warn(`[Vision] Model ${visionModel} error:`, vErr);
+      } catch (gemErr) {
+        console.warn('[Vision:Fallback 1] Gemini extraction error:', gemErr);
+      }
+    }
+
+    // Fallback 2 / 3: OpenRouter Vision (gemma-3-27b-it -> qwen-2.5-vl-72b)
+    const openRouterKey = process.env.OPENROUTER_API_KEY;
+    if (openRouterKey) {
+      const visionModels = [
+        'google/gemma-3-27b-it',
+        'qwen/qwen-2.5-vl-72b-instruct:free',
+        'qwen/qwen-2.5-vl-72b-instruct',
+      ];
+
+      for (const visionModel of visionModels) {
+        try {
+          const visionRes = await fetch(OPENROUTER_API_URL, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${openRouterKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              model: visionModel,
+              messages: [
+                {
+                  role: 'user',
+                  content: [
+                    { type: 'image_url', image_url: { url: fileUrl } },
+                    { type: 'text', text: 'Extract all assignment requirements from this image. Return as plain text.' },
+                  ],
+                },
+              ],
+              temperature: 0.1,
+            }),
+          });
+
+          if (visionRes.ok) {
+            const visionData = await visionRes.json();
+            const content = visionData.choices?.[0]?.message?.content;
+            if (content && content.trim().length > 10) {
+              console.log(`[Vision:Fallback 2/3] Successfully extracted text via OpenRouter Vision (${visionModel}).`);
+              return content.trim();
+            }
+          }
+        } catch (vErr) {
+          console.warn(`[Vision:Fallback 2/3] Model ${visionModel} error:`, vErr);
+        }
       }
     }
     return '';

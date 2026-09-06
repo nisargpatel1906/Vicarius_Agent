@@ -21,21 +21,33 @@ export interface ClassificationOutput {
 const OPENROUTER_API_URL = process.env.OPENROUTER_API_URL || 'https://openrouter.ai/api/v1/chat/completions';
 const GROQ_API_URL = process.env.GROQ_API_URL || 'https://api.groq.com/openai/v1/chat/completions';
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'minimax/minimax-m3:free';
-const OPENROUTER_FALLBACK_MODEL = process.env.OPENROUTER_FALLBACK_MODEL || 'meta-llama/llama-3.3-70b-instruct:free';
-const OPENROUTER_VISION_MODEL = process.env.OPENROUTER_VISION_MODEL || 'meta-llama/llama-3.2-11b-vision-instruct:free';
-const GROQ_MODEL = process.env.GROQ_MODEL || 'qwen/qwen3.8-27b';
+const OPENROUTER_FALLBACK_MODEL = process.env.OPENROUTER_FALLBACK_MODEL || 'meta-llama/llama-3.3-70b-instruct';
+
+function parseConfidenceScore(content: string): number {
+  try {
+    const clean = content.replace(/```json/g, '').replace(/```/g, '').trim();
+    const parsed = JSON.parse(clean);
+    if (typeof parsed.confidence === 'number') {
+      return parsed.confidence;
+    }
+  } catch {}
+  return 0.85;
+}
 
 /**
- * Call LLM with multi-provider fallback:
- * Primary: OpenRouter (MiniMax or configured model)
- * Fallback 1: Groq (llama-3.3-70b-versatile or configured model)
- * Fallback 2: Secondary OpenRouter model
+ * Row 4: Telegram / Web Ingestion & Task Classification
+ * Primary: OpenRouter (minimax/minimax-m3:free)
+ * Fallback 1: Groq (openai/gpt-oss-120b / qwen3.8-27b)
+ * Fallback 2/3: OpenRouter Backup (llama-3.3-70b-instruct) -> Gemini
+ * Trigger: OpenRouter error or confidence score < 0.70
  */
 async function callLlmWithFallback(prompt: string, systemPrompt: string): Promise<string> {
   const openRouterKey = process.env.OPENROUTER_API_KEY;
   const groqKey = process.env.GROQ_API_KEY;
+  const geminiKey = process.env.GEMINI_API_KEY;
+  let bestCandidateContent: string | null = null;
 
-  // 1. Primary: OpenRouter
+  // 1. Primary Model: OpenRouter (minimax/minimax-m3:free)
   if (openRouterKey) {
     try {
       const res = await fetch(OPENROUTER_API_URL, {
@@ -44,7 +56,7 @@ async function callLlmWithFallback(prompt: string, systemPrompt: string): Promis
           'Content-Type': 'application/json',
           Authorization: `Bearer ${openRouterKey}`,
           'HTTP-Referer': process.env.HTTP_REFERER || 'https://vicarius-agent.local',
-          'X-Title': 'Vicarius Agent',
+          'X-Title': 'Vicarius Academic Agent',
         },
         body: JSON.stringify({
           model: OPENROUTER_MODEL,
@@ -59,57 +71,67 @@ async function callLlmWithFallback(prompt: string, systemPrompt: string): Promis
       if (res.ok) {
         const data = await res.json();
         const content = data.choices?.[0]?.message?.content;
-        if (content) return content;
+        if (content) {
+          const conf = parseConfidenceScore(content);
+          if (conf >= 0.70) {
+            return content;
+          }
+          console.warn(`[Classify:Primary] OpenRouter confidence (${conf}) < 0.70. Triggering Fallback 1 (Groq)...`);
+          bestCandidateContent = content;
+        }
       } else {
         const errBody = await res.text();
-        console.warn(`OpenRouter primary failed (${res.status}): ${errBody}. Falling back to Groq...`);
+        console.warn(`[Classify:Primary] OpenRouter failed (${res.status}): ${errBody}. Triggering Fallback 1 (Groq)...`);
         await logSystemEvent('warning', 'classify', `OpenRouter primary failed: ${res.statusText}. Triggering Groq fallback.`);
       }
     } catch (orErr: any) {
-      console.warn('OpenRouter primary network error. Falling back to Groq:', orErr?.message || orErr);
+      console.warn('[Classify:Primary] OpenRouter network error. Triggering Fallback 1 (Groq):', orErr?.message || orErr);
       await logSystemEvent('warning', 'classify', `OpenRouter primary error: ${orErr?.message || orErr}. Triggering Groq fallback.`);
     }
   }
 
-  // 2. Fallback 1: Groq
+  // 2. Fallback 1: Groq (openai/gpt-oss-120b / qwen3.8-27b)
   if (groqKey) {
-    try {
-      const res = await fetch(GROQ_API_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${groqKey}`,
-        },
-        body: JSON.stringify({
-          model: GROQ_MODEL,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: prompt },
-          ],
-          temperature: 0.1,
-        }),
-      });
+    const groqCandidateModels = ['openai/gpt-oss-120b', 'qwen/qwen3.8-27b', 'llama-3.3-70b-versatile'];
+    for (const gModel of groqCandidateModels) {
+      try {
+        const res = await fetch(GROQ_API_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${groqKey}`,
+          },
+          body: JSON.stringify({
+            model: gModel,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: prompt },
+            ],
+            temperature: 0.1,
+          }),
+        });
 
-      if (res.ok) {
-        const data = await res.json();
-        const content = data.choices?.[0]?.message?.content;
-        if (content) {
-          console.log(`[Classify] Successfully recovered using Groq ${GROQ_MODEL}`);
-          await logSystemEvent('info', 'classify', 'Successfully completed classification using Groq fallback.');
-          return content;
+        if (res.ok) {
+          const data = await res.json();
+          const content = data.choices?.[0]?.message?.content;
+          if (content) {
+            const conf = parseConfidenceScore(content);
+            if (conf >= 0.70) {
+              console.log(`[Classify:Fallback 1] Successfully recovered using Groq ${gModel}`);
+              await logSystemEvent('info', 'classify', `Successfully completed classification using Groq fallback (${gModel}).`);
+              return content;
+            }
+            console.warn(`[Classify:Fallback 1] Groq (${gModel}) confidence (${conf}) < 0.70.`);
+            if (!bestCandidateContent) bestCandidateContent = content;
+          }
         }
-      } else {
-        const errBody = await res.text();
-        console.warn(`Groq fallback failed (${res.status}): ${errBody}. Trying secondary OpenRouter...`);
-        await logSystemEvent('warning', 'classify', `Groq fallback failed: ${res.statusText}`);
+      } catch (groqErr: any) {
+        console.warn(`[Classify:Fallback 1] Groq (${gModel}) error:`, groqErr?.message || groqErr);
       }
-    } catch (groqErr: any) {
-      console.warn('Groq fallback error:', groqErr?.message || groqErr);
-      await logSystemEvent('warning', 'classify', `Groq fallback error: ${groqErr?.message || groqErr}`);
     }
   }
 
-  // 3. Fallback 2: Secondary OpenRouter model
+  // 3. Fallback 2: OpenRouter Backup (llama-3.3-70b-instruct)
   if (openRouterKey) {
     try {
       const res = await fetch(OPENROUTER_API_URL, {
@@ -131,22 +153,56 @@ async function callLlmWithFallback(prompt: string, systemPrompt: string): Promis
       if (res.ok) {
         const data = await res.json();
         const content = data.choices?.[0]?.message?.content;
-        if (content) return content;
+        if (content) {
+          const conf = parseConfidenceScore(content);
+          if (conf >= 0.70) {
+            console.log('[Classify:Fallback 2] Successfully recovered using OpenRouter Backup (llama-3.3-70b-instruct).');
+            return content;
+          }
+          if (!bestCandidateContent) bestCandidateContent = content;
+        }
       }
     } catch (e: any) {
-      console.error('Secondary OpenRouter fallback error:', e?.message || e);
+      console.error('[Classify:Fallback 2] OpenRouter backup error:', e?.message || e);
     }
   }
 
-  throw new Error('All LLM classification providers (OpenRouter primary, Groq fallback, OpenRouter secondary) failed.');
+  // 4. Fallback 3: Google Gemini (gemini-2.0-flash / gemini-1.5-flash)
+  if (geminiKey) {
+    for (const gemModel of ['gemini-2.0-flash', 'gemini-1.5-flash']) {
+      try {
+        const genAI = new GoogleGenerativeAI(geminiKey);
+        const model = genAI.getGenerativeModel({ model: gemModel });
+        const result = await model.generateContent([
+          { text: `${systemPrompt}\n\n${prompt}` },
+        ]);
+        const text = result.response.text();
+        if (text && text.trim()) {
+          console.log(`[Classify:Fallback 3] Successfully recovered using Gemini ${gemModel} fallback.`);
+          await logSystemEvent('info', 'classify', `Successfully completed classification using Gemini (${gemModel}) fallback.`);
+          return text.trim();
+        }
+      } catch (gemErr: any) {
+        console.warn(`[Classify:Fallback 3] Gemini (${gemModel}) fallback failed:`, gemErr?.message || gemErr);
+      }
+    }
+  }
+
+  if (bestCandidateContent) {
+    console.log('[Classify] Returning best candidate from fallback chain.');
+    return bestCandidateContent;
+  }
+
+  throw new Error('All LLM classification providers (OpenRouter primary, Groq fallback, OpenRouter backup, Gemini fallback) failed.');
 }
 
 /**
- * Call Gemini Flash for vision/PDF extraction with OpenRouter Vision fallback (C5 prompt)
+ * Row 5: Document & Attachment Extraction
+ * Fallback 1: Gemini Multimodal (gemini-2.0-flash -> gemini-1.5-flash -> gemini-1.5-pro)
+ * Fallback 2/3: OpenRouter Vision (gemma-3-27b-it -> qwen-2.5-vl-72b)
  */
 async function extractAttachmentContent(attachmentName: string, mimeType?: string, base64Data?: string): Promise<string> {
   const geminiKey = process.env.GEMINI_API_KEY;
-  const geminiModelId = process.env.GEMINI_VISION_MODEL || 'gemini-1.5-flash';
   const openRouterKey = process.env.OPENROUTER_API_KEY;
 
   const c5Prompt = `You are reading an assignment instruction sheet (PDF page or photo). Extract, as plain structured text, everything needed to complete it — do not solve it:
@@ -158,65 +214,72 @@ async function extractAttachmentContent(attachmentName: string, mimeType?: strin
 If the image is unreadable or has no extractable text, say exactly:
 "NO_EXTRACTABLE_CONTENT" and nothing else.`;
 
-  // 1. Primary: Gemini Flash
+  // Fallback 1: Gemini Multimodal (gemini-2.0-flash -> gemini-1.5-flash -> gemini-1.5-pro)
   if (geminiKey && base64Data && mimeType) {
-    try {
-      const genAI = new GoogleGenerativeAI(geminiKey);
-      const model = genAI.getGenerativeModel({ model: geminiModelId });
+    for (const gemModel of ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro']) {
+      try {
+        const genAI = new GoogleGenerativeAI(geminiKey);
+        const model = genAI.getGenerativeModel({ model: gemModel });
 
-      const result = await model.generateContent([
-        c5Prompt,
-        {
-          inlineData: {
-            data: base64Data,
-            mimeType: mimeType,
+        const result = await model.generateContent([
+          c5Prompt,
+          {
+            inlineData: {
+              data: base64Data,
+              mimeType: mimeType,
+            },
           },
-        },
-      ]);
-      const text = result.response.text();
-      if (text && text.trim() && !text.includes('NO_EXTRACTABLE_CONTENT')) return text.trim();
-    } catch (geminiErr: any) {
-      console.warn(`Gemini (${geminiModelId}) vision failed. Falling back to OpenRouter vision:`, geminiErr?.message || geminiErr);
-      await logSystemEvent('warning', 'classify', `Gemini vision failed (${geminiErr?.message || geminiErr}). Triggering OpenRouter vision fallback.`);
+        ]);
+        const text = result.response.text();
+        if (text && text.trim() && !text.includes('NO_EXTRACTABLE_CONTENT')) {
+          console.log(`[Classify:Vision] Extracted attachment via Gemini Multimodal (${gemModel}).`);
+          return text.trim();
+        }
+      } catch (geminiErr: any) {
+        console.warn(`[Classify:Vision] Gemini (${gemModel}) failed:`, geminiErr?.message || geminiErr);
+      }
     }
   }
 
-  // 2. Fallback: OpenRouter Vision
+  // Fallback 2 / 3: OpenRouter Vision (gemma-3-27b-it -> qwen-2.5-vl-72b)
   if (openRouterKey && base64Data && mimeType) {
-    try {
-      const imageUrl = `data:${mimeType};base64,${base64Data}`;
-      const res = await fetch(OPENROUTER_API_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${openRouterKey}`,
-        },
-        body: JSON.stringify({
-          model: OPENROUTER_VISION_MODEL,
-          messages: [
-            {
-              role: 'user',
-              content: [
-                { type: 'text', text: c5Prompt },
-                { type: 'image_url', image_url: { url: imageUrl } },
-              ],
-            },
-          ],
-        }),
-      });
+    const visionModels = ['google/gemma-3-27b-it', 'qwen/qwen-2.5-vl-72b-instruct:free', 'qwen/qwen-2.5-vl-72b-instruct'];
+    const imageUrl = `data:${mimeType};base64,${base64Data}`;
+    for (const vModel of visionModels) {
+      try {
+        const res = await fetch(OPENROUTER_API_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${openRouterKey}`,
+          },
+          body: JSON.stringify({
+            model: vModel,
+            messages: [
+              {
+                role: 'user',
+                content: [
+                  { type: 'text', text: c5Prompt },
+                  { type: 'image_url', image_url: { url: imageUrl } },
+                ],
+              },
+            ],
+            temperature: 0.1,
+          }),
+        });
 
-      if (res.ok) {
-        const data = await res.json();
-        const text = data.choices?.[0]?.message?.content;
-        if (text && text.trim() && !text.includes('NO_EXTRACTABLE_CONTENT')) {
-          console.log('[Classify] Extracted vision content using OpenRouter vision fallback');
-          await logSystemEvent('info', 'classify', 'Extracted attachment via OpenRouter vision fallback.');
-          return text.trim();
+        if (res.ok) {
+          const data = await res.json();
+          const text = data.choices?.[0]?.message?.content;
+          if (text && text.trim() && !text.includes('NO_EXTRACTABLE_CONTENT')) {
+            console.log(`[Classify:Vision] Extracted attachment via OpenRouter vision fallback (${vModel}).`);
+            await logSystemEvent('info', 'classify', `Extracted attachment via OpenRouter vision (${vModel}).`);
+            return text.trim();
+          }
         }
+      } catch (orVisionErr: any) {
+        console.warn(`[Classify:Vision] OpenRouter vision ${vModel} error:`, orVisionErr?.message || orVisionErr);
       }
-    } catch (orVisionErr: any) {
-      console.warn('OpenRouter vision fallback error:', orVisionErr?.message || orVisionErr);
-      await logSystemEvent('warning', 'classify', `OpenRouter vision fallback error: ${orVisionErr?.message || orVisionErr}`);
     }
   }
 

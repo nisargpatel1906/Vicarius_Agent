@@ -433,33 +433,63 @@ def coder_node(state: AgentState) -> Dict[str, Any]:
                 "tool_call_history": [{"engine": "workspace_cache", "status": "complete", "files": [f.name for f in all_files]}],
             }
 
-        agy_prompt = _build_agy_prompt(
-            student_name=student_name,
-            student_enrollment=student_enrollment,
-            student_program=student_program,
-            student_uni=student_uni,
-            title=title,
-            course=course,
-            build_spec=build_spec,
-            plan=plan,
-            custom_directives=custom_directives,
-            writing_voice=writing_voice,
-            academic_level=academic_level,
-            citation_style=citation_style,
-            retry_instructions=retry_instructions,
-            attempt=attempt,
-            work_dir=work_dir,
-        )
-
         agy_timeout = int(os.getenv("ANTIGRAVITY_TIMEOUT", "1800"))
-        success, agy_out = _run_agy_cli(work_dir, agy_prompt, timeout_seconds=agy_timeout)
-        stdout_log += f"\n--- Antigravity CLI Output ---\n{agy_out}\n"
+        agy_max_attempts = 3  # Primary, Fallback 1, Fallback 2/3 (Antigravity CLI gemini-3.8-flash-high with effort: high)
+        current_retry_notes = retry_instructions
 
-        # Check deliverables produced in workspace
-        workspace_paths, missing_files = _compute_missing_files(work_dir, planned_files)
+        for agy_tier in range(1, agy_max_attempts + 1):
+            tier_label = "Primary" if agy_tier == 1 else f"Fallback {agy_tier - 1}"
+            print(f"[LangGraph:Coder] Executing Antigravity CLI ({tier_label} - gemini-3.8-flash-high)...")
 
-        if workspace_paths and not missing_files:
-            print(f"[LangGraph:Coder] agy CLI produced all {len(workspace_paths)} planned deliverable(s).")
+            agy_prompt = _build_agy_prompt(
+                student_name=student_name,
+                student_enrollment=student_enrollment,
+                student_program=student_program,
+                student_uni=student_uni,
+                title=title,
+                course=course,
+                build_spec=build_spec,
+                plan=plan,
+                custom_directives=custom_directives,
+                writing_voice=writing_voice,
+                academic_level=academic_level,
+                citation_style=citation_style,
+                retry_instructions=current_retry_notes,
+                attempt=attempt,
+                work_dir=work_dir,
+            )
+
+            success, agy_out = _run_agy_cli(work_dir, agy_prompt, timeout_seconds=agy_timeout)
+            stdout_log += f"\n--- Antigravity CLI Output ({tier_label}) ---\n{agy_out}\n"
+
+            # Check deliverables produced in workspace
+            workspace_paths, missing_files = _compute_missing_files(work_dir, planned_files)
+
+            if workspace_paths and not missing_files:
+                print(f"[LangGraph:Coder] Antigravity CLI ({tier_label}) produced all {len(workspace_paths)} planned deliverable(s).")
+                _auto_execute_notebooks(work_dir)
+                _auto_package_submission_zip(work_dir, plan, title, build_spec, student_enrollment)
+                all_files = list_workspace_files(work_dir)
+                return {
+                    "produced_files": [str(f.resolve()) for f in all_files],
+                    "stdout_log": stdout_log,
+                    "work_dir": str(work_dir),
+                    "tool_call_history": [{"engine": "agy_cli", "status": "complete", "tier": tier_label, "files": [f.name for f in all_files]}],
+                }
+
+            # Trigger condition: CLI failure, non-zero exit code, or missing planned files
+            trigger_reason = f"Missing planned files: {missing_files}" if missing_files else "CLI completed without generating files."
+            print(f"[LangGraph:Coder] Antigravity CLI ({tier_label}) trigger: {trigger_reason}")
+            if agy_tier < agy_max_attempts:
+                current_retry_notes = (
+                    f"CRITICAL FIX REQUIRED: In previous {tier_label} execution, the following planned deliverables are STILL MISSING:\n"
+                    f"{missing_files}\n"
+                    f"You MUST generate and execute all missing files immediately in this session.\n"
+                    f"{retry_instructions}"
+                )
+
+        if workspace_paths:
+            print(f"[LangGraph:Coder] Antigravity CLI attempts exhausted. Packaging produced files: {[p.name for p in workspace_paths]}")
             _auto_execute_notebooks(work_dir)
             _auto_package_submission_zip(work_dir, plan, title, build_spec, student_enrollment)
             all_files = list_workspace_files(work_dir)
@@ -467,12 +497,8 @@ def coder_node(state: AgentState) -> Dict[str, Any]:
                 "produced_files": [str(f.resolve()) for f in all_files],
                 "stdout_log": stdout_log,
                 "work_dir": str(work_dir),
-                "tool_call_history": [{"engine": "agy_cli", "status": "complete", "files": [f.name for f in all_files]}],
+                "tool_call_history": [{"engine": "agy_cli", "status": "partial", "files": [f.name for f in all_files]}],
             }
-        elif workspace_paths:
-            print(f"[LangGraph:Coder] agy CLI produced {len(workspace_paths)} file(s), missing: {missing_files}. Activating ReAct loop to complete missing deliverables.")
-        else:
-            print(f"[LangGraph:Coder] agy CLI completed without files or encountered issue. Activating ReAct agent loop.")
 
     # Step B: ReAct Agent Loop (Completes Missing or Alternate Files)
     tool_context = {

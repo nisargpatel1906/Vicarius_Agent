@@ -50,8 +50,76 @@ def download_telegram_attachment(bot_token: str, file_id: str, dest_path: Path) 
         return False
 
 
+def _extract_pdf_with_ai(pdf_path: Path) -> str:
+    """Fallback 1: Gemini Multimodal, Fallback 2/3: OpenRouter Vision for scanned PDFs."""
+    import base64
+    import requests
+    try:
+        pdf_bytes = pdf_path.read_bytes()
+        b64_data = base64.b64encode(pdf_bytes).decode("utf-8")
+    except Exception as e:
+        print(f"[LangGraph:Extractor] Failed reading PDF bytes for AI extraction: {e}")
+        return ""
+
+    # Fallback 1: Gemini Multimodal (gemini-2.0-flash -> gemini-1.5-flash -> gemini-1.5-pro)
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if gemini_key and not gemini_key.startswith("AQ."):
+        for model_name in ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]:
+            try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={gemini_key}"
+                payload = {
+                    "contents": [{
+                        "parts": [
+                            {"inline_data": {"mime_type": "application/pdf", "data": b64_data}},
+                            {"text": "Extract all assignment requirements, course title, due date, submission links, constraints, and all specific tasks from this PDF document verbatim. Return the complete, unabridged assignment text with all questions, instructions, and constraints."}
+                        ]
+                    }]
+                }
+                resp = requests.post(url, json=payload, timeout=60)
+                if resp.ok:
+                    data = resp.json()
+                    cands = data.get("candidates", [])
+                    if cands:
+                        text = cands[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+                        if text and len(text.strip()) > 30:
+                            print(f"[LangGraph:Extractor] Successfully extracted text via Gemini Multimodal ({model_name}).")
+                            return text.strip()
+            except Exception as ge:
+                print(f"[LangGraph:Extractor] Gemini {model_name} extraction error: {ge}")
+
+    # Fallback 2/3: OpenRouter Vision (gemma-3-27b-it -> qwen-2.5-vl-72b)
+    openrouter_key = os.getenv("OPENROUTER_API_KEY")
+    if openrouter_key:
+        vision_models = ["google/gemma-3-27b-it", "qwen/qwen-2.5-vl-72b-instruct:free"]
+        for v_model in vision_models:
+            try:
+                url = "https://openrouter.ai/api/v1/chat/completions"
+                payload = {
+                    "model": v_model,
+                    "messages": [{
+                        "role": "user",
+                        "content": [
+                            {"type": "image_url", "image_url": {"url": f"data:application/pdf;base64,{b64_data}"}},
+                            {"type": "text", "text": "Extract all assignment requirements and questions from this document verbatim."}
+                        ]
+                    }],
+                    "temperature": 0.1
+                }
+                resp = requests.post(url, headers={"Authorization": f"Bearer {openrouter_key}"}, json=payload, timeout=60)
+                if resp.ok:
+                    data = resp.json()
+                    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    if content and len(content.strip()) > 30:
+                        print(f"[LangGraph:Extractor] Successfully extracted text via OpenRouter Vision ({v_model}).")
+                        return content.strip()
+            except Exception as ve:
+                print(f"[LangGraph:Extractor] OpenRouter Vision {v_model} error: {ve}")
+
+    return ""
+
+
 def extract_text_from_pdf(pdf_path: Path) -> str:
-    """Extracts all text from a PDF file page by page using pypdf."""
+    """Extracts all text from a PDF file page by page using pypdf, falling back to multimodal AI on scanned files."""
     if not pdf_path.exists():
         return ""
     try:
@@ -61,10 +129,17 @@ def extract_text_from_pdf(pdf_path: Path) -> str:
             text = page.extract_text() or ""
             if text.strip():
                 extracted_pages.append(f"--- Page {idx + 1} ---\n{text.strip()}")
-        return "\n\n".join(extracted_pages)
+        extracted_text = "\n\n".join(extracted_pages).strip()
+        if len(extracted_text) >= 50:
+            return extracted_text
+
+        # Trigger condition: Scanned document / missing text stream in PDF
+        print(f"[LangGraph:Extractor] pypdf found low/empty text ({len(extracted_text)} chars). Triggering Gemini Multimodal / OpenRouter Vision fallback...")
+        ai_extracted = _extract_pdf_with_ai(pdf_path)
+        return ai_extracted or extracted_text
     except Exception as e:
-        print(f"[LangGraph:Extractor] Error extracting text from {pdf_path}: {e}")
-        return ""
+        print(f"[LangGraph:Extractor] Error extracting text from {pdf_path}: {e}. Trying AI fallback...")
+        return _extract_pdf_with_ai(pdf_path)
 
 
 def extract_text_from_docx(docx_path: Path) -> str:
