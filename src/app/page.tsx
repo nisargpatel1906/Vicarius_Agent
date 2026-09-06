@@ -5,6 +5,7 @@ import { Task, Question, Deliverable, SystemEvent, UserProfile } from '@/lib/typ
 import { VicariusLogo } from '@/components/VicariusLogo';
 import { ProfileEditor } from '@/components/ProfileEditor';
 import { AgentWorld } from '@/components/AgentWorld';
+import { TaskFlow } from '@/components/TaskFlow';
 import {
   ClockIcon,
   RefreshIcon,
@@ -50,8 +51,8 @@ export default function DashboardPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [health, setHealth] = useState<HealthData | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [activeTab, setActiveTab] = useState<'pipeline' | 'campus' | 'profile'>('pipeline');
-  const [showCampusHero, setShowCampusHero] = useState<boolean>(true);
+  const [activeTab, setActiveTab] = useState<'pipeline' | 'flow' | 'campus' | 'profile'>('pipeline');
+
   const [showProfileModal, setShowProfileModal] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -81,7 +82,7 @@ export default function DashboardPage() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // Support deep links from navigation / mobile drawer (?tab=profile or ?tab=campus)
+  // Support deep links from navigation / mobile drawer (?tab=profile, ?tab=campus, ?tab=flow)
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
@@ -89,6 +90,8 @@ export default function DashboardPage() {
         setActiveTab('profile');
       } else if (params.get('tab') === 'campus') {
         setActiveTab('campus');
+      } else if (params.get('tab') === 'flow') {
+        setActiveTab('flow');
       }
     }
   }, []);
@@ -97,6 +100,8 @@ export default function DashboardPage() {
   useEffect(() => {
     if (selectedTask) {
       document.title = `${selectedTask.title} • Task Inspector | Vicarius Agent`;
+    } else if (activeTab === 'flow') {
+      document.title = 'Task Flow Trace • Vicarius Agent';
     } else if (activeTab === 'profile') {
       document.title = 'Student Profile & Vault • Vicarius Agent';
     } else if (activeTab === 'campus') {
@@ -607,8 +612,12 @@ export default function DashboardPage() {
             transition: 'all 0.15s ease',
           }}
         >
-          <span style={{ fontSize: '1.05rem' }}>🏰</span>
-          <span>Agent Campus & City Simulation</span>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <rect x="1" y="8" width="4" height="7" rx="1" fill={activeTab === 'campus' ? 'var(--primary)' : 'var(--on-surface-variant)'} opacity="0.8" />
+            <rect x="6" y="5" width="4" height="10" rx="1" fill={activeTab === 'campus' ? 'var(--primary)' : 'var(--on-surface-variant)'} />
+            <rect x="11" y="7" width="4" height="8" rx="1" fill={activeTab === 'campus' ? 'var(--primary)' : 'var(--on-surface-variant)'} opacity="0.8" />
+          </svg>
+          <span>Agent Campus &amp; City Simulation</span>
           <span
             style={{
               fontSize: '11px',
@@ -621,6 +630,48 @@ export default function DashboardPage() {
             }}
           >
             Live Tour
+          </span>
+        </button>
+
+        {/* ── Task Flow Tab ── */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('flow')}
+          style={{
+            padding: '10px 18px',
+            background: activeTab === 'flow' ? 'var(--surface)' : 'transparent',
+            border: 'none',
+            borderBottom: activeTab === 'flow' ? '3px solid var(--primary)' : '3px solid transparent',
+            color: activeTab === 'flow' ? 'var(--primary)' : 'var(--on-surface-variant)',
+            fontWeight: activeTab === 'flow' ? 700 : 500,
+            fontSize: '0.92rem',
+            cursor: 'pointer',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+            borderRadius: '6px 6px 0 0',
+            transition: 'all 0.15s ease',
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <circle cx="2" cy="8" r="1.5" fill={activeTab === 'flow' ? 'var(--primary)' : 'var(--on-surface-variant)'} />
+            <line x1="3.5" y1="8" x2="5.5" y2="8" stroke={activeTab === 'flow' ? 'var(--primary)' : 'var(--on-surface-variant)'} strokeWidth="1.3" />
+            <rect x="5.5" y="5.5" width="5" height="5" rx="1.5" stroke={activeTab === 'flow' ? 'var(--primary)' : 'var(--on-surface-variant)'} strokeWidth="1.3" fill="none" />
+            <line x1="10.5" y1="8" x2="12.5" y2="8" stroke={activeTab === 'flow' ? 'var(--primary)' : 'var(--on-surface-variant)'} strokeWidth="1.3" />
+            <circle cx="14" cy="8" r="1.5" fill={activeTab === 'flow' ? 'var(--primary)' : 'var(--on-surface-variant)'} />
+          </svg>
+          <span>Task Flow Trace</span>
+          <span
+            style={{
+              fontSize: '11px',
+              padding: '2px 7px',
+              borderRadius: 10,
+              background: activeTab === 'flow' ? 'var(--primary)' : 'var(--surface-container-high)',
+              color: activeTab === 'flow' ? '#fff' : 'var(--on-surface-variant)',
+              fontWeight: 700,
+            }}
+          >
+            E2E
           </span>
         </button>
 
@@ -676,6 +727,12 @@ export default function DashboardPage() {
             onSelectTask={(task) => setSelectedTask(task)}
           />
         </div>
+      ) : activeTab === 'flow' ? (
+        <TaskFlow
+          tasks={tasks}
+          selectedTask={selectedTask}
+          onSelectTask={(task) => setSelectedTask(task)}
+        />
       ) : tasks.length === 0 && !loading ? (
         <div
           className="heritage-card"
@@ -781,77 +838,6 @@ export default function DashboardPage() {
         </div>
       ) : (
         <>
-          {/* Collapsible Campus Visualizer Hero in Pipeline View */}
-          <div style={{ marginBottom: 16 }}>
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                marginBottom: 8,
-                padding: '0 4px',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: '1.05rem' }}>🏰</span>
-                <span
-                  style={{
-                    fontWeight: 700,
-                    fontSize: '0.88rem',
-                    color: 'var(--on-surface)',
-                    fontFamily: "'Noto Serif', serif",
-                  }}
-                >
-                  Living Agent Campus Quickview
-                </span>
-                <span
-                  style={{
-                    fontSize: '10px',
-                    padding: '1px 6px',
-                    borderRadius: 10,
-                    background: '#e2f0d9',
-                    color: '#276a3c',
-                    fontWeight: 700,
-                  }}
-                >
-                  Live Sync
-                </span>
-              </div>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('campus')}
-                  className="btn-heritage-secondary"
-                  style={{
-                    padding: '3px 10px',
-                    fontSize: '0.78rem',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 4,
-                  }}
-                >
-                  <span>Expand Campus View</span>
-                  <ExternalLinkIcon size={11} color="var(--primary)" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowCampusHero(!showCampusHero)}
-                  className="btn-heritage-secondary"
-                  style={{ padding: '3px 10px', fontSize: '0.78rem' }}
-                >
-                  {showCampusHero ? 'Hide Campus Map ▲' : 'Show Campus Map ▼'}
-                </button>
-              </div>
-            </div>
-
-            {showCampusHero && (
-              <AgentWorld
-                tasks={tasks}
-                selectedTask={selectedTask}
-                onSelectTask={(task) => setSelectedTask(task)}
-              />
-            )}
-          </div>
 
           {/* AI Executive Intelligence Briefing Strip (DESIGN.md Insight Highlight) */}
       <div className="insight-highlight" style={{ position: 'relative', overflow: 'hidden' }}>
