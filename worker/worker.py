@@ -365,7 +365,8 @@ def next_attempt_fits_before_deadline(task: Dict[str, Any]) -> bool:
         if due_dt.tzinfo is None:
             due_dt = pytz.utc.localize(due_dt)
         due_ist = due_dt.astimezone(TARGET_TZ)
-        now_ist = datetime.datetime.now(datetime.timezone.utc).astimezone(TARGET_TZ)
+        if due_ist < now_ist:
+            return True
         est_minutes = timeout_minutes_for_weight(task)
         total_needed_minutes = est_minutes + DEADLINE_SAFETY_BUFFER_MINUTES
         return (now_ist + datetime.timedelta(minutes=total_needed_minutes)) <= due_ist
@@ -1568,7 +1569,56 @@ if __name__ == "__main__":
     daemon_mode = "--daemon" in sys.argv or "-d" in sys.argv or os.getenv("WORKER_DAEMON", "false").lower() == "true"
 
     if daemon_mode:
-        print("[Worker] Running in continuous daemon polling mode...")
+        log_dir = Path(__file__).resolve().parent.parent / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file_path = log_dir / "worker_daemon.log"
+
+        # Prevent duplicate worker instances
+        pid_file = log_dir / "worker.pid"
+        if pid_file.exists():
+            try:
+                old_pid = int(pid_file.read_text().strip())
+                if psutil.pid_exists(old_pid) and old_pid != os.getpid():
+                    p = psutil.Process(old_pid)
+                    if "python" in p.name().lower():
+                        print(f"[Worker] Another worker instance is already running (PID {old_pid}). Exiting gracefully.")
+                        sys.exit(0)
+            except Exception:
+                pass
+        pid_file.write_text(str(os.getpid()))
+
+        # Safe logging tee for silent background runs (handles pythonw.exe where stdout is None)
+        class LogTee:
+            def __init__(self, file_path, original_stream):
+                self.file = open(file_path, "a", encoding="utf-8", buffering=1)
+                self.stream = original_stream
+
+            def write(self, data):
+                try:
+                    self.file.write(data)
+                except Exception:
+                    pass
+                if self.stream:
+                    try:
+                        self.stream.write(data)
+                    except Exception:
+                        pass
+
+            def flush(self):
+                try:
+                    self.file.flush()
+                except Exception:
+                    pass
+                if self.stream:
+                    try:
+                        self.stream.flush()
+                    except Exception:
+                        pass
+
+        sys.stdout = LogTee(log_file_path, sys.stdout)
+        sys.stderr = LogTee(log_file_path, sys.stderr)
+
+        print(f"\n[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [Worker] Daemon started (PID {os.getpid()}). Polling queue...")
         idle_count = 0
         last_heartbeat = time.time()
         HEARTBEAT_INTERVAL = 1800  # 30 minutes

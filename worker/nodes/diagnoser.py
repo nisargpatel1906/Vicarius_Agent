@@ -25,6 +25,10 @@ def next_attempt_fits_before_deadline(due_str: str, weight: str = "medium") -> b
         due_ist = due_dt.astimezone(TARGET_TZ)
         now_ist = datetime.datetime.now(datetime.timezone.utc).astimezone(TARGET_TZ)
 
+        # If the deadline is already in the past, do not block self-correction attempts
+        if due_ist < now_ist:
+            return True
+
         timeout_mins = 240 if weight == "heavy" else (45 if weight == "medium" else 15)
         needed_mins = timeout_mins + 20  # 20m safety buffer
         return (now_ist + datetime.timedelta(minutes=needed_mins)) <= due_ist
