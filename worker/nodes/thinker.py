@@ -17,10 +17,31 @@ from worker.llm import call_llm
 
 
 def _extract_tagged_block(text: str, tag: str) -> str:
-    """Extract content between <tag> ... </tag> (case-insensitive, greedy)."""
-    pattern = re.compile(rf"<{tag}>(.*?)</{tag}>", re.DOTALL | re.IGNORECASE)
-    m = pattern.search(text or "")
-    return m.group(1).strip() if m else ""
+    """
+    Extract content between <tag> ... </tag>.
+    Two-pass strategy:
+      1. Full paired-tag match (preferred — clean boundaries).
+      2. Greedy fallback: grab everything after <tag> when the model
+         truncates and the closing tag is missing.
+    """
+    if not text:
+        return ""
+    # Pass 1: paired tags
+    paired = re.compile(rf"<{tag}>(.*?)</{tag}>", re.DOTALL | re.IGNORECASE)
+    m = paired.search(text)
+    if m:
+        return m.group(1).strip()
+    # Pass 2: opening tag only — grab to end of string (or next opening tag)
+    open_tag = re.compile(rf"<{tag}>(.*)", re.DOTALL | re.IGNORECASE)
+    m2 = open_tag.search(text)
+    if m2:
+        content = m2.group(1).strip()
+        # Trim off any sibling opening tags that follow (e.g. <execution_plan>...)
+        sibling = re.search(r"<[a-z_]+>", content, re.IGNORECASE)
+        if sibling:
+            content = content[: sibling.start()].strip()
+        return content
+    return ""
 
 
 def thinker_node(state: AgentState) -> Dict[str, Any]:
