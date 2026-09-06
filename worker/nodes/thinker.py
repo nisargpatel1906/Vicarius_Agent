@@ -1,30 +1,19 @@
 """
 Vicarius Agent - Thinker Node
-Sits between Planner and Coder. Uses a thinking-capable model (Claude Sonnet
-via OpenRouter) to reason about the task in depth and produce a concrete,
-ordered execution plan that is injected directly into the Antigravity CLI prompt.
+Sits between Planner and Coder. Uses the existing free-model LLM chain
+(Gemini → OpenRouter free → Groq) to reason about the task and produce a
+concrete, ordered execution plan that is injected into the Antigravity CLI prompt.
 
-This dramatically improves AGY output quality by front-loading all strategic
-reasoning -- risks, fallbacks, exact file ordering, library needs -- before
-AGY touches a single file.
+Improves AGY output quality by front-loading all strategic reasoning --
+risks, fallbacks, exact file ordering, library needs -- before AGY runs.
 """
 
 import re
-import os
 import json as _json
 from typing import Dict, Any
 
 from worker.state import AgentState
 from worker.llm import call_llm
-
-
-# -- Model config --------------------------------------------------------------
-# Primary: Claude Sonnet 4.5 via OpenRouter (extended thinking / best reasoning)
-# Fallback: handled transparently by call_llm's provider failover chain
-THINKING_MODEL_OPENROUTER = os.getenv(
-    "THINKER_MODEL",
-    "anthropic/claude-sonnet-4-5",
-)
 
 
 def _extract_tagged_block(text: str, tag: str) -> str:
@@ -123,12 +112,10 @@ def thinker_node(state: AgentState) -> Dict[str, Any]:
     )
 
     # -- Call LLM --------------------------------------------------------------
+    # Uses the existing free-model chain (Gemini → OpenRouter free → Groq).
+    # No paid API needed — the quality comes from the prompt structure.
     raw_response = None
     try:
-        # Temporarily override the OpenRouter model env var to use Claude Sonnet
-        _orig_model = os.environ.get("OPENROUTER_MODEL", "")
-        os.environ["OPENROUTER_MODEL"] = THINKING_MODEL_OPENROUTER
-
         raw_response = call_llm(
             [
                 {"role": "system", "content": system_prompt},
@@ -137,9 +124,6 @@ def thinker_node(state: AgentState) -> Dict[str, Any]:
             temperature=0.15,
             max_tokens=4096,
         )
-
-        # Restore original model for subsequent calls
-        os.environ["OPENROUTER_MODEL"] = _orig_model
     except Exception as e:
         print(f"[LangGraph:Thinker] LLM call failed: {e}")
         return {"thought_process": "", "agy_execution_plan": ""}
