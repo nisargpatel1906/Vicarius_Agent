@@ -63,7 +63,8 @@ exports/
 test_rag.ts
 tests/
 scripts/
-docx/database_schema_visualization.pdf
-docx/pdf_preview/
+notebooks/
+.agents/
+docx/
 desktop.ini
 logo 1 (3).ico
