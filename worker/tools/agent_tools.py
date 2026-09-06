@@ -181,19 +181,19 @@ def tool_list_files(work_dir: Path) -> str:
 def _detect_python_exe() -> str:
     if os.getenv("AGENT_PYTHON_EXE") and Path(os.environ["AGENT_PYTHON_EXE"]).exists():
         return os.environ["AGENT_PYTHON_EXE"]
-    # 1. Prefer Python 3.12 (standard student ML & CUDA environment)
-    py312 = Path(r"python.exe")
-    if py312.exists():
-        return str(py312)
-    # 2. Check local workspace .venv
+    # 1. Check local workspace .venv
     local_venv = Path(__file__).resolve().parent.parent.parent / ".venv" / "Scripts" / "python.exe"
     if local_venv.exists():
         return str(local_venv)
-    # 3. Check current runtime python
+    # 2. Check current runtime python
     if sys.executable and Path(sys.executable).exists():
         return sys.executable
-    # 4. Fallback
-    return r"python.exe"
+    # 3. Check system PATH python
+    import shutil
+    which_py = shutil.which("python") or shutil.which("python3")
+    if which_py:
+        return which_py
+    return "python"
 
 PYTHON_EXE = _detect_python_exe()
 

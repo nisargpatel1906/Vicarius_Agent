@@ -1,11 +1,17 @@
 # Environment variables and secrets
 .env
+.env*
 .env*.local
 *.pem
 *.key
-credentials.json
-token.json
+*.cert
+*.crt
+*.pfx
+*.p12
+credentials*.json
+token*.json
 client_secret*.json
+service_account*.json
 
 # Dependencies
 node_modules/
