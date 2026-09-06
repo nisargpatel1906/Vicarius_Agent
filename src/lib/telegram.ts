@@ -1646,7 +1646,8 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
   if (fixReplyTo?.text && text && !text.startsWith('/')) {
     const uuidMatch = fixReplyTo.text.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
     const looksLikeFlag = fixReplyTo.text.includes('⚠️')
-      || /couldn.?t finish|what went wrong|what i already tried|flagged/i.test(fixReplyTo.text);
+      || fixReplyTo.text.includes('Review Required')
+      || /couldn.?t finish|what went wrong|what i already tried|flagged|review required|auto-delivered/i.test(fixReplyTo.text);
     if (uuidMatch && looksLikeFlag) {
       const flaggedId = uuidMatch[1];
       const { data: flaggedTask } = await supabase
@@ -1654,7 +1655,7 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
         .select('id, status')
         .eq('id', flaggedId)
         .maybeSingle();
-      if (flaggedTask && (flaggedTask.status === 'flagged' || flaggedTask.status === 'failed')) {
+      if (flaggedTask && (flaggedTask.status === 'flagged' || flaggedTask.status === 'failed' || flaggedTask.status === 'done')) {
         await reply('🔧 <i>Understood — applying your fix and rebuilding...</i>');
         const fixMsg = await applyFixAndRequeue(flaggedId, text);
         await reply(fixMsg);

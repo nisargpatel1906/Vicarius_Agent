@@ -29,7 +29,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_WORKER_KEY") or os.getenv("SUPABASE_SERVICE_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_ALLOWED_CHAT_ID = os.getenv("TELEGRAM_ALLOWED_CHAT_ID")
-DEFAULT_TIMEOUT_MINUTES = int(os.getenv("QUESTION_WAIT_TIMEOUT_MINUTES", "10"))
+DEFAULT_TIMEOUT_MINUTES = int(os.getenv("QUESTION_WAIT_TIMEOUT_MINUTES", "5"))
 SERVER_PORT = int(os.getenv("ASK_HUMAN_PORT", "8765"))
 
 _sb_client = None
@@ -106,10 +106,11 @@ def ask_human(task_id: str, question_text: str, timeout_minutes: int = DEFAULT_T
 
     # 2. Dispatch Telegram alert
     tg_text = (
-        f"❓ <b>Question from Agent for Task:</b>\n"
+        f"❓ <b>Question / Review Required ({timeout_minutes}-Min Window):</b>\n"
         f"<b>{task_title}</b>\n\n"
         f"<i>\"{question_text}\"</i>\n\n"
-        f"👉 <b>Reply directly to this message</b> on Telegram with your answer. The agent is waiting."
+        f"👉 <b>Reply directly to this message</b> within {timeout_minutes} minutes. "
+        f"If no reply is received, the agent will automatically proceed with best-effort completion and deliver."
     )
     send_telegram_message(tg_text)
 
@@ -131,9 +132,9 @@ def ask_human(task_id: str, question_text: str, timeout_minutes: int = DEFAULT_T
         except Exception as pe:
             print(f"[ask_human] Poll error: {pe}", file=sys.stderr)
 
-    # 4. Timeout fallback
-    timeout_answer = "NO_ANSWER: proceed with your most reasonable assumption and state it."
-    print(f"[ask_human] Timed out after {timeout_minutes}m. Setting fallback.")
+    # 4. Timeout fallback (5-minute auto-release)
+    timeout_answer = f"NO_ANSWER: {timeout_minutes}-minute review window elapsed without response. Proceed with best-effort completion and deliver what has been generated."
+    print(f"[ask_human] Timed out after {timeout_minutes}m. Auto-releasing build to proceed.")
     try:
         sb.table("questions").update({
             "status": "timed_out",
@@ -143,7 +144,7 @@ def ask_human(task_id: str, question_text: str, timeout_minutes: int = DEFAULT_T
     except Exception as te:
         print(f"[ask_human] Could not mark question timed_out: {te}", file=sys.stderr)
 
-    send_telegram_message(f"⏳ <b>Question timed out</b> for <i>{task_title}</i>.\nAgent is proceeding with its most reasonable assumption.")
+    send_telegram_message(f"⏳ <b>{timeout_minutes}-Minute Review Window Elapsed</b> for <i>{task_title}</i>.\nAgent is proceeding automatically with best-effort completion and delivery.")
     return {"status": "timed_out", "answer": timeout_answer}
 
 
