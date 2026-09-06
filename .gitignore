@@ -66,5 +66,7 @@ scripts/
 notebooks/
 .agents/
 docx/
+AGENTS.md
+CLAUDE.md
 desktop.ini
 logo 1 (3).ico
