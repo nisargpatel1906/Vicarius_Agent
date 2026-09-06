@@ -1,5 +1,5 @@
 // LangGraph Agentic Pipeline for Vicarius Agent
-// Orchestrates multi-step reasoning, automated pre-retrieval RAG, tool execution, and Telegram HTML delivery
+// Orchestrates multi-step reasoning, automated pre-retrieval RAG, semantic LLM intent routing, tool execution, and Telegram HTML delivery
 
 import { Annotation, StateGraph, END, START } from '@langchain/langgraph';
 import { BaseMessage, HumanMessage, AIMessage, SystemMessage } from '@langchain/core/messages';
@@ -45,7 +45,6 @@ function markdownToTelegramHtml(text: string): string {
   formatted = formatted.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>');
 
   // Convert raw URLs into clickable links if not already wrapped in <a href=
-  // (Handled carefully to avoid double-wrapping)
   formatted = formatted.replace(/(?<!href=")(https?:\/\/[^\s<>)"]+)/g, '<a href="$1">$1</a>');
 
   // Convert inline code: `code` -> <code>code</code>
@@ -69,8 +68,22 @@ export const AcademicAgentState = Annotation.Root({
   userPrompt: Annotation<string>(),
   groundedRecords: Annotation<string>(),
   taskContext: Annotation<string>(),
-  actionTaken: Annotation<string | null>(),
-  finalResponse: Annotation<string>(),
+  intent: Annotation<string>({
+    reducer: (_, y) => y,
+    default: () => 'general_qa',
+  }),
+  intentConfidence: Annotation<number>({
+    reducer: (_, y) => y,
+    default: () => 0.5,
+  }),
+  actionTaken: Annotation<string | null>({
+    reducer: (_, y) => y,
+    default: () => null,
+  }),
+  finalResponse: Annotation<string>({
+    reducer: (_, y) => y,
+    default: () => '',
+  }),
 });
 
 /**
@@ -121,144 +134,233 @@ async function preRetrieveNode(state: typeof AcademicAgentState.State) {
 }
 
 /**
- * Node 2: Intent & Action Execution
- * Checks if the message requires executing a direct academic action.
+ * Node 2: Semantic Intent Router (LLM Powered)
+ * Dynamically classifies user intent without brittle keyword/regex matching.
  */
-async function actionRouterNode(state: typeof AcademicAgentState.State) {
+async function semanticRouterNode(state: typeof AcademicAgentState.State) {
   const prompt = (state.userPrompt || '').trim();
-  const supabase = getSupabaseAdmin();
 
-  // 1. Direct task creation requested
-  const isTaskRequest =
-    /(create|build|generate|make|prepare|write|train|develop|implement|code)\s+(me\s+)?(a\s+|an\s+)?(assignment|task|project|ppt|presentation|report|slide|essay|code|calculator|calculater|app|application|website|web\s*app|script|program|model|system|notebook|dashboard|bot|api)/i.test(
-      prompt
-    ) ||
-    /^(make|build|create|develop|code)\s+.+\s+(due|deadline)\b/i.test(prompt) ||
-    /\b(due\s+(?:on|by|before|date)|deadline\s*(?:is|:))\b/i.test(prompt);
+  const routerSystemPrompt = `You are the Autonomous Intent Router for Vicarius Academic Agent (for a Computer Engineering student).
+Analyze the user's prompt and recent context, then classify the user's goal into strict JSON:
+{
+  "intent": "create_task" | "classroom_feed" | "gmail_feed" | "sync_sources" | "system_status" | "list_tasks" | "course_correction" | "general_qa",
+  "confidence": number // 0.0 to 1.0
+}
 
-  if (isTaskRequest) {
-    const confirmation = await createTaskFromTelegram(prompt);
-    return {
-      actionTaken: confirmation,
-      finalResponse: confirmation,
-    };
-  }
+INTENT DEFINITIONS:
+- "create_task": User wants to build, create, write, code, implement, train, or schedule ANY project, assignment, calculator, app, web app, script, presentation, report, or notebook, OR mentions a deadline/due date.
+- "classroom_feed": User wants announcements, posts, notices from Google Classroom.
+- "gmail_feed": User wants recent emails, inbox messages, or academic alerts from Gmail.
+- "sync_sources": User explicitly wants to re-poll, synchronize, or refresh data from Classroom/Gmail.
+- "system_status": User wants system status, queues, progress telemetry, or agent health check.
+- "list_tasks": User wants to view, list, or check pending or active coursework or tasks.
+- "course_correction": User gives a rule, correction, or memory instruction for future coursework (e.g. "remember that for CE-401 use IEEE format").
+- "general_qa": Questions about coursework, concepts, formulas, lecture links, syllabus, or conversational academic inquiries.`;
 
-  // 2. Specific request for classroom feed without specific dates or filters
-  if (
-    /^(show|give|get|view)\s+(me\s+)?(the\s+)?(last|latest|recent|new)\s+(message|announcement|post|notice).*classroom$/i.test(
-      prompt
-    )
-  ) {
-    const classroomMsg = await getLatestClassroomMessages(5);
-    return {
-      actionTaken: classroomMsg,
-      finalResponse: classroomMsg,
-    };
-  }
+  let detectedIntent = 'general_qa';
+  let detectedConfidence = 0.5;
 
-  // 3. Specific request for Gmail
-  if (
-    /(recent|latest|unread)\s+(email|emails|mail|gmail)|check\s+(my\s+)?(gmail|inbox)/i.test(prompt)
-  ) {
-    const emailMsg = await getRecentGmailEmails(5);
-    return {
-      actionTaken: emailMsg,
-      finalResponse: emailMsg,
-    };
-  }
+  // Try OpenRouter Free Models first
+  const openRouterKey = process.env.OPENROUTER_API_KEY;
+  if (openRouterKey) {
+    const freeModels = ['minimax/minimax-m3:free', 'google/gemini-2.0-flash-exp:free', 'meta-llama/llama-3.3-70b-instruct:free'];
+    for (const model of freeModels) {
+      try {
+        const res = await fetch(OPENROUTER_API_URL, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${openRouterKey}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': process.env.HTTP_REFERER || 'https://vicarius-agent.local',
+            'X-Title': 'Vicarius Academic Agent',
+          },
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: 'system', content: routerSystemPrompt },
+              { role: 'user', content: prompt },
+            ],
+            temperature: 0.1,
+          }),
+        });
 
-  // 4. Synchronization
-  if (/^(sync|synchronize)(\s+(all|classroom|gmail))?$/i.test(prompt)) {
-    const syncMsg = await syncClassroomAndGmail();
-    return {
-      actionTaken: syncMsg,
-      finalResponse: syncMsg,
-    };
-  }
-
-  // 5. System Status
-  if (/(system\s+status|telemetry|queue\s+count|how\s+many\s+tasks)/i.test(prompt)) {
-    const { data: allTasks } = await supabase
-      .from('tasks')
-      .select('id, title, status, course, due_date')
-      .eq('archived', false)
-      .order('due_date', { ascending: true });
-
-    const queued = allTasks?.filter((t) => t.status === 'queued' || t.status === 'new').length || 0;
-    const building =
-      allTasks?.filter(
-        (t) => t.status === 'building' || t.status === 'claimed' || t.status === 'verifying'
-      ).length || 0;
-    const flagged = allTasks?.filter((t) => t.status === 'flagged').length || 0;
-    const done = allTasks?.filter((t) => t.status === 'done').length || 0;
-
-    let statusMsg =
-      `📊 <b>Vicarius Academic System Status</b>\n\n` +
-      `• ⏳ <b>Queued:</b> ${queued}\n` +
-      `• 🔨 <b>In Progress:</b> ${building}\n` +
-      `• ⚠️ <b>Flagged:</b> ${flagged}\n` +
-      `• ✅ <b>Done:</b> ${done}\n\n`;
-
-    if (allTasks && allTasks.length > 0) {
-      statusMsg += `<b>Upcoming Coursework:</b>\n`;
-      allTasks.slice(0, 5).forEach((t) => {
-        const dueStr = t.due_date
-          ? new Date(t.due_date).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })
-          : 'No deadline';
-        statusMsg += `• [${t.status.toUpperCase()}] <b>${escapeHtml(t.title)}</b> (${escapeHtml(t.course || 'General')}) — Due: ${dueStr}\n`;
-      });
+        if (res.ok) {
+          const data = await res.json();
+          const content = (data.choices?.[0]?.message?.content || '').replace(/```json/g, '').replace(/```/g, '').trim();
+          const parsed = JSON.parse(content);
+          if (parsed.intent) {
+            detectedIntent = parsed.intent;
+            detectedConfidence = typeof parsed.confidence === 'number' ? parsed.confidence : 0.9;
+            break;
+          }
+        }
+      } catch (err: any) {
+        console.warn(`[LangGraph Router] OpenRouter (${model}) error:`, err?.message || err);
+      }
     }
-
-    return {
-      actionTaken: statusMsg,
-      finalResponse: statusMsg,
-    };
   }
 
-  // 6. List active tasks
-  if (/(list|show|what\s+are)\s+(active|all|pending|my)\s+tasks/i.test(prompt)) {
-    const { data: listTasks } = await supabase
-      .from('tasks')
-      .select('id, title, status, course, due_date')
-      .eq('archived', false)
-      .order('due_date', { ascending: true });
-
-    let listMsg = `📋 <b>Active Academic Tasks:</b>\n\n`;
-    if (listTasks && listTasks.length > 0) {
-      listTasks.forEach((t) => {
-        const dueStr = t.due_date
-          ? new Date(t.due_date).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })
-          : 'No deadline';
-        listMsg += `• [${t.status.toUpperCase()}] <b>${escapeHtml(t.title)}</b> (${escapeHtml(t.course || 'General')}) — Due: ${dueStr}\n`;
-      });
-    } else {
-      listMsg += `<i>No active tasks found matching criteria.</i>`;
+  // Fallback to Google Gemini (gemini-3.6-flash / gemini-flash-latest) if OpenRouter failed
+  if (detectedConfidence < 0.7 && process.env.GEMINI_API_KEY) {
+    for (const gemModel of ['gemini-3.6-flash', 'gemini-flash-latest']) {
+      try {
+        const model = new ChatGoogleGenerativeAI({
+          model: gemModel,
+          apiKey: process.env.GEMINI_API_KEY,
+          temperature: 0.1,
+        });
+        const res = await model.invoke([
+          new SystemMessage(routerSystemPrompt),
+          new HumanMessage(prompt),
+        ]);
+        const text = (typeof res.content === 'string' ? res.content : JSON.stringify(res.content))
+          .replace(/```json/g, '')
+          .replace(/```/g, '')
+          .trim();
+        const parsed = JSON.parse(text);
+        if (parsed.intent) {
+          detectedIntent = parsed.intent;
+          detectedConfidence = typeof parsed.confidence === 'number' ? parsed.confidence : 0.9;
+          break;
+        }
+      } catch (gemErr: any) {
+        console.warn(`[LangGraph Router] Gemini (${gemModel}) error:`, gemErr?.message || gemErr);
+      }
     }
-
-    return {
-      actionTaken: listMsg,
-      finalResponse: listMsg,
-    };
   }
 
-  // 7. Feedback / Course correction
-  if (/(remember|note\s+that|teacher\s+said|feedback|rule\s+for)\s+(CE|IT|CSE|[A-Z]{2,4}-\d{3})/i.test(prompt)) {
-    const match = prompt.match(/(?:for|in)\s+([A-Za-z0-9\-]+)/i);
-    const course = match ? match[1] : 'General';
-    const resultMsg = await rememberCourseCorrection(course, prompt);
-    return {
-      actionTaken: resultMsg,
-      finalResponse: resultMsg,
-    };
+  // Fallback heuristic if LLMs were unreachable
+  if (detectedConfidence < 0.6) {
+    if (/(create|build|generate|make|prepare|write|train|develop|implement|code)\s+/i.test(prompt) || /\b(due|deadline)\b/i.test(prompt)) {
+      detectedIntent = 'create_task';
+    } else if (/(classroom|notices|announcements)/i.test(prompt)) {
+      detectedIntent = 'classroom_feed';
+    } else if (/(email|emails|gmail|inbox)/i.test(prompt)) {
+      detectedIntent = 'gmail_feed';
+    } else if (/(sync|refresh|poll)/i.test(prompt)) {
+      detectedIntent = 'sync_sources';
+    } else if (/(status|telemetry)/i.test(prompt)) {
+      detectedIntent = 'system_status';
+    } else if (/(list|show|what are).*(tasks|assignments)/i.test(prompt)) {
+      detectedIntent = 'list_tasks';
+    }
   }
 
-  return { actionTaken: null };
+  console.log(`[LangGraph Router] Intent: ${detectedIntent} (conf: ${detectedConfidence}) for prompt: "${prompt.slice(0, 60)}"`);
+
+  return {
+    intent: detectedIntent,
+    intentConfidence: detectedConfidence,
+  };
 }
 
 /**
- * Node 3: LangGraph Gemini Reasoner
- * Generates an intelligent, grounded response using ChatGoogleGenerativeAI (gemini-3.6-flash).
+ * Node 3: Action Execution
+ * Executes deterministic academic tools when classified by the semantic router.
+ */
+async function executeActionNode(state: typeof AcademicAgentState.State) {
+  const prompt = (state.userPrompt || '').trim();
+  const intent = state.intent;
+  const supabase = getSupabaseAdmin();
+
+  let actionResult = '';
+
+  try {
+    switch (intent) {
+      case 'create_task': {
+        actionResult = await createTaskFromTelegram(prompt);
+        break;
+      }
+      case 'classroom_feed': {
+        actionResult = await getLatestClassroomMessages(5);
+        break;
+      }
+      case 'gmail_feed': {
+        actionResult = await getRecentGmailEmails(5);
+        break;
+      }
+      case 'sync_sources': {
+        actionResult = await syncClassroomAndGmail();
+        break;
+      }
+      case 'system_status': {
+        const { data: allTasks } = await supabase
+          .from('tasks')
+          .select('id, title, status, course, due_date')
+          .eq('archived', false)
+          .order('due_date', { ascending: true });
+
+        const queued = allTasks?.filter((t) => t.status === 'queued' || t.status === 'new').length || 0;
+        const building =
+          allTasks?.filter(
+            (t) => t.status === 'building' || t.status === 'claimed' || t.status === 'verifying'
+          ).length || 0;
+        const flagged = allTasks?.filter((t) => t.status === 'flagged').length || 0;
+        const done = allTasks?.filter((t) => t.status === 'done').length || 0;
+
+        let statusMsg =
+          `📊 <b>Vicarius Academic System Status</b>\n\n` +
+          `• ⏳ <b>Queued:</b> ${queued}\n` +
+          `• 🔨 <b>In Progress:</b> ${building}\n` +
+          `• ⚠️ <b>Flagged:</b> ${flagged}\n` +
+          `• ✅ <b>Done:</b> ${done}\n\n`;
+
+        if (allTasks && allTasks.length > 0) {
+          statusMsg += `<b>Upcoming Coursework:</b>\n`;
+          allTasks.slice(0, 5).forEach((t) => {
+            const dueStr = t.due_date
+              ? new Date(t.due_date).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })
+              : 'No deadline';
+            statusMsg += `• [${t.status.toUpperCase()}] <b>${escapeHtml(t.title)}</b> (${escapeHtml(t.course || 'General')}) — Due: ${dueStr}\n`;
+          });
+        }
+        actionResult = statusMsg;
+        break;
+      }
+      case 'list_tasks': {
+        const { data: listTasks } = await supabase
+          .from('tasks')
+          .select('id, title, status, course, due_date')
+          .eq('archived', false)
+          .order('due_date', { ascending: true });
+
+        let listMsg = `📋 <b>Active Academic Tasks:</b>\n\n`;
+        if (listTasks && listTasks.length > 0) {
+          listTasks.forEach((t) => {
+            const dueStr = t.due_date
+              ? new Date(t.due_date).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })
+              : 'No deadline';
+            listMsg += `• [${t.status.toUpperCase()}] <b>${escapeHtml(t.title)}</b> (${escapeHtml(t.course || 'General')}) — Due: ${dueStr}\n`;
+          });
+        } else {
+          listMsg += `<i>No active tasks found matching criteria.</i>`;
+        }
+        actionResult = listMsg;
+        break;
+      }
+      case 'course_correction': {
+        const match = prompt.match(/(?:for|in)\s+([A-Za-z0-9\-]+)/i);
+        const course = match ? match[1] : 'General';
+        actionResult = await rememberCourseCorrection(course, prompt);
+        break;
+      }
+      default:
+        actionResult = '';
+    }
+  } catch (err: any) {
+    console.error(`[LangGraph Action] Error executing action for intent '${intent}':`, err);
+    actionResult = `❌ Action error: ${escapeHtml(err.message)}`;
+  }
+
+  return {
+    actionTaken: actionResult || null,
+    finalResponse: actionResult || '',
+  };
+}
+
+/**
+ * Node 4: LangGraph Grounded Reasoner
+ * Formulates an intelligent, grounded answer for academic concepts, questions, and open-ended queries.
  */
 async function generateReasoningNode(state: typeof AcademicAgentState.State) {
   if (state.actionTaken) {
@@ -277,14 +379,13 @@ CRITICAL RULES:
 1. ALWAYS GROUND YOUR ANSWERS IN THE KNOWLEDGE BASE RECORDS: If relevant records are provided in 'GROUNDED ACADEMIC KNOWLEDGE BASE RECORDS', you MUST use their verbatim text, dates, meeting IDs, and links to answer immediately!
    • If the student asks for a lecture link, Zoom link, or today's session link, extract the Zoom/Meet URL (e.g. https://zoom.us/j/...), Meeting ID, and Passcode directly from the records and output them clearly. NEVER say it was cut off or ask "want me to fetch it?" — you already have the full details!
    • If the student asks about "Red Hat Academy" or any course/program, provide the exact registration form link (e.g. https://forms.gle/...) and details immediately! NEVER say it wasn't found or ask "want me to search your knowledge base?" — the records are right above!
-   • TIMELINE & DATE-BASED QUERIES: If the student asks about announcements, posts, materials, or events from a specific date (e.g. "Sep 1", "September 1", "today", "yesterday", "Sep 3"), you MUST review all grounded records from that date. List and summarize all announcements, notices, room updates, and new materials posted on that date! Include the course, author/faculty, key updates, and clickable links. NEVER claim that no announcements were posted on that date if grounded records exist!
+   • TIMELINE & DATE-BASED QUERIES: If the student asks about announcements, posts, materials, or events from a specific date (e.g. "Sep 1", "September 1", "today", "yesterday", "Sep 3"), you MUST review all grounded records from that date. List and summarize all announcements, notices, room updates, and new materials posted on that date! Include the course, author/faculty, key updates, and clickable links.
    • Format all URLs as clickable HTML (<a href="...">...</a>).
-2. NEVER say you don't have access to academic information. All current announcements, meeting links, and coursework are stored in your grounded context above.
-3. Format all text replies in clean, valid HTML (<b>bold</b>, <i>italic</i>, <code>code</code>, bullet points •, <a href="url">link text</a>). Do NOT use markdown asterisks (*).`;
+2. Format all text replies in clean, valid HTML (<b>bold</b>, <i>italic</i>, <code>code</code>, bullet points •, <a href="url">link text</a>). Do NOT use markdown asterisks (*).`;
 
   let responseContent = '';
 
-  // Primary Attempt: OpenRouter Free Models (minimax/minimax-m3:free -> google/gemini-2.0-flash-exp:free -> meta-llama/llama-3.3-70b-instruct:free)
+  // Primary: OpenRouter Free Models (minimax/minimax-m3:free -> google/gemini-2.0-flash-exp:free -> meta-llama/llama-3.3-70b-instruct:free)
   const openRouterKey = process.env.OPENROUTER_API_KEY;
   if (openRouterKey) {
     const freeModels = [
@@ -327,38 +428,35 @@ CRITICAL RULES:
           }
         }
       } catch (err: any) {
-        console.warn(`[LangGraph] OpenRouter (${model}) error:`, err?.message || err);
+        console.warn(`[LangGraph Reasoner] OpenRouter (${model}) error:`, err?.message || err);
       }
     }
   }
 
   // Fallback: Google Gemini (gemini-3.6-flash / gemini-flash-latest)
-  if (!responseContent) {
-    const geminiKey = process.env.GEMINI_API_KEY;
-    if (geminiKey) {
-      for (const gemModel of ['gemini-3.6-flash', 'gemini-flash-latest']) {
-        try {
-          const model = new ChatGoogleGenerativeAI({
-            model: gemModel,
-            apiKey: geminiKey,
-            temperature: 0.2,
-          });
+  if (!responseContent && process.env.GEMINI_API_KEY) {
+    for (const gemModel of ['gemini-3.6-flash', 'gemini-flash-latest']) {
+      try {
+        const model = new ChatGoogleGenerativeAI({
+          model: gemModel,
+          apiKey: process.env.GEMINI_API_KEY,
+          temperature: 0.2,
+        });
 
-          const messages: BaseMessage[] = [
-            new SystemMessage(systemInstruction),
-            ...state.messages,
-            new HumanMessage(state.userPrompt),
-          ];
+        const messages: BaseMessage[] = [
+          new SystemMessage(systemInstruction),
+          ...state.messages,
+          new HumanMessage(state.userPrompt),
+        ];
 
-          const result = await model.invoke(messages);
-          const text = typeof result.content === 'string' ? result.content : JSON.stringify(result.content);
-          if (text && text.trim()) {
-            responseContent = text.trim();
-            break;
-          }
-        } catch (geminiError: any) {
-          console.warn(`[LangGraph] Gemini (${gemModel}) error:`, geminiError?.message || geminiError);
+        const result = await model.invoke(messages);
+        const text = typeof result.content === 'string' ? result.content : JSON.stringify(result.content);
+        if (text && text.trim()) {
+          responseContent = text.trim();
+          break;
         }
+      } catch (geminiError: any) {
+        console.warn(`[LangGraph Reasoner] Gemini (${gemModel}) error:`, geminiError?.message || geminiError);
       }
     }
   }
@@ -376,7 +474,7 @@ CRITICAL RULES:
 }
 
 /**
- * Node 4: Persistence & Finalization
+ * Node 5: Persistence & Finalization
  * Logs the assistant response to Supabase chat_messages.
  */
 async function persistNode(state: typeof AcademicAgentState.State) {
@@ -402,13 +500,23 @@ async function persistNode(state: typeof AcademicAgentState.State) {
 }
 
 /**
- * Conditional Edge: Decide whether action was handled or if Gemini reasoning is needed
+ * Conditional Edge: Route after Semantic Router
  */
-function routeAfterAction(state: typeof AcademicAgentState.State) {
+function routeAfterSemanticRouter(state: typeof AcademicAgentState.State) {
+  if (state.intent && state.intent !== 'general_qa') {
+    return 'executeAction';
+  }
+  return 'generateReasoning';
+}
+
+/**
+ * Conditional Edge: Route after Action Execution
+ */
+function routeAfterActionExecution(state: typeof AcademicAgentState.State) {
   if (state.actionTaken) {
     return 'persist';
   }
-  return 'generate';
+  return 'generateReasoning';
 }
 
 /**
@@ -416,16 +524,21 @@ function routeAfterAction(state: typeof AcademicAgentState.State) {
  */
 export const academicAgentGraph = new StateGraph(AcademicAgentState)
   .addNode('preRetrieve', preRetrieveNode)
-  .addNode('actionRouter', actionRouterNode)
-  .addNode('generate', generateReasoningNode)
+  .addNode('semanticRouter', semanticRouterNode)
+  .addNode('executeAction', executeActionNode)
+  .addNode('generateReasoning', generateReasoningNode)
   .addNode('persist', persistNode)
   .addEdge(START, 'preRetrieve')
-  .addEdge('preRetrieve', 'actionRouter')
-  .addConditionalEdges('actionRouter', routeAfterAction, {
-    persist: 'persist',
-    generate: 'generate',
+  .addEdge('preRetrieve', 'semanticRouter')
+  .addConditionalEdges('semanticRouter', routeAfterSemanticRouter, {
+    executeAction: 'executeAction',
+    generateReasoning: 'generateReasoning',
   })
-  .addEdge('generate', 'persist')
+  .addConditionalEdges('executeAction', routeAfterActionExecution, {
+    persist: 'persist',
+    generateReasoning: 'generateReasoning',
+  })
+  .addEdge('generateReasoning', 'persist')
   .addEdge('persist', END)
   .compile();
 
