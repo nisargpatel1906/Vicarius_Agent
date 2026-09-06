@@ -18,8 +18,7 @@ import { rememberCourseCorrection } from './aethos';
 const STUDENT_NAME = process.env.STUDENT_NAME || 'Nisarg Patel';
 const STUDENT_UNIVERSITY = process.env.STUDENT_UNIVERSITY || 'Academic Institution';
 const STUDENT_PROGRAM = process.env.STUDENT_PROGRAM || 'Computer Engineering / AI-ML';
-const GROQ_API_URL = process.env.GROQ_API_URL || 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+const OPENROUTER_API_URL = process.env.OPENROUTER_API_URL || 'https://openrouter.ai/api/v1/chat/completions';
 
 /**
  * Escapes characters for Telegram HTML formatting
@@ -131,9 +130,11 @@ async function actionRouterNode(state: typeof AcademicAgentState.State) {
 
   // 1. Direct task creation requested
   const isTaskRequest =
-    /(create|build|generate|make|prepare|write|train)\s+(me\s+)?(a\s+|an\s+)?(assignment|task|project|ppt|presentation|report|slide|essay|code)/i.test(
+    /(create|build|generate|make|prepare|write|train|develop|implement|code)\s+(me\s+)?(a\s+|an\s+)?(assignment|task|project|ppt|presentation|report|slide|essay|code|calculator|calculater|app|application|website|web\s*app|script|program|model|system|notebook|dashboard|bot|api)/i.test(
       prompt
-    );
+    ) ||
+    /^(make|build|create|develop|code)\s+.+\s+(due|deadline)\b/i.test(prompt) ||
+    /\b(due\s+(?:on|by|before|date)|deadline\s*(?:is|:))\b/i.test(prompt);
 
   if (isTaskRequest) {
     const confirmation = await createTaskFromTelegram(prompt);
@@ -283,63 +284,81 @@ CRITICAL RULES:
 
   let responseContent = '';
 
-  // Attempt 1: ChatGoogleGenerativeAI (gemini-2.0-flash / gemini-1.5-flash)
-  try {
-    const geminiKey = process.env.GEMINI_API_KEY;
-    if (!geminiKey) throw new Error('GEMINI_API_KEY is not configured');
-
-    let model: ChatGoogleGenerativeAI;
-    try {
-      model = new ChatGoogleGenerativeAI({
-        model: 'gemini-2.0-flash',
-        apiKey: geminiKey,
-        temperature: 0.2,
-      });
-    } catch {
-      model = new ChatGoogleGenerativeAI({
-        model: 'gemini-1.5-flash',
-        apiKey: geminiKey,
-        temperature: 0.2,
-      });
-    }
-
-    const messages: BaseMessage[] = [
-      new SystemMessage(systemInstruction),
-      ...state.messages,
-      new HumanMessage(state.userPrompt),
+  // Primary Attempt: OpenRouter Free Models (minimax/minimax-m3:free -> google/gemini-2.0-flash-exp:free -> meta-llama/llama-3.3-70b-instruct:free)
+  const openRouterKey = process.env.OPENROUTER_API_KEY;
+  if (openRouterKey) {
+    const freeModels = [
+      'minimax/minimax-m3:free',
+      'google/gemini-2.0-flash-exp:free',
+      'meta-llama/llama-3.3-70b-instruct:free',
     ];
-
-    const result = await model.invoke(messages);
-    responseContent = typeof result.content === 'string' ? result.content : JSON.stringify(result.content);
-  } catch (geminiError: any) {
-    console.warn('[LangGraph] Gemini failed, attempting Groq fallback:', geminiError?.message);
-
-    // Attempt 2: Groq Fallback (llama-3.3-70b-versatile)
-    const groqKey = process.env.GROQ_API_KEY;
-    if (groqKey) {
+    for (const model of freeModels) {
       try {
-        const groqRes = await fetch(GROQ_API_URL, {
+        const historyMsgs = (state.messages || []).map((m) => ({
+          role: m._getType() === 'human' ? 'user' : 'assistant',
+          content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
+        }));
+
+        const res = await fetch(OPENROUTER_API_URL, {
           method: 'POST',
           headers: {
-            Authorization: `Bearer ${groqKey}`,
+            Authorization: `Bearer ${openRouterKey}`,
             'Content-Type': 'application/json',
+            'HTTP-Referer': process.env.HTTP_REFERER || 'https://vicarius-agent.local',
+            'X-Title': 'Vicarius Academic Agent',
           },
           body: JSON.stringify({
-            model: GROQ_MODEL,
+            model,
             messages: [
               { role: 'system', content: systemInstruction },
+              ...historyMsgs,
               { role: 'user', content: state.userPrompt },
             ],
             temperature: 0.2,
           }),
         });
 
-        if (groqRes.ok) {
-          const groqData = await groqRes.json();
-          responseContent = groqData.choices?.[0]?.message?.content || '';
+        if (res.ok) {
+          const data = await res.json();
+          const content = data.choices?.[0]?.message?.content;
+          if (content && content.trim()) {
+            responseContent = content.trim();
+            break;
+          }
         }
-      } catch (groqErr) {
-        console.error('[LangGraph] Groq fallback failed:', groqErr);
+      } catch (err: any) {
+        console.warn(`[LangGraph] OpenRouter (${model}) error:`, err?.message || err);
+      }
+    }
+  }
+
+  // Fallback: Google Gemini (gemini-3.6-flash / gemini-flash-latest)
+  if (!responseContent) {
+    const geminiKey = process.env.GEMINI_API_KEY;
+    if (geminiKey) {
+      for (const gemModel of ['gemini-3.6-flash', 'gemini-flash-latest']) {
+        try {
+          const model = new ChatGoogleGenerativeAI({
+            model: gemModel,
+            apiKey: geminiKey,
+            temperature: 0.2,
+          });
+
+          const messages: BaseMessage[] = [
+            new SystemMessage(systemInstruction),
+            ...state.messages,
+            new HumanMessage(state.userPrompt),
+          ];
+
+          const result = await model.invoke(messages);
+          const text = typeof result.content === 'string' ? result.content : JSON.stringify(result.content);
+          if (text && text.trim()) {
+            responseContent = text.trim();
+            break;
+          }
+        } catch (geminiError: any) {
+          console.warn(`[LangGraph] Gemini (${gemModel}) error:`, geminiError?.message || geminiError);
+        }
       }
     }
   }

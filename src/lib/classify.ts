@@ -90,16 +90,18 @@ async function callLlmWithFallback(prompt: string, systemPrompt: string): Promis
     }
   }
 
-  // 2. Fallback 1: Groq (openai/gpt-oss-120b / qwen3.8-27b)
-  if (groqKey) {
-    const groqCandidateModels = ['openai/gpt-oss-120b', 'qwen/qwen3.8-27b', 'llama-3.3-70b-versatile'];
-    for (const gModel of groqCandidateModels) {
+  // 2. Fallback 1: OpenRouter Free Models (google/gemini-2.0-flash-exp:free / meta-llama/llama-3.3-70b-instruct:free)
+  if (openRouterKey) {
+    const candidateModels = ['google/gemini-2.0-flash-exp:free', 'meta-llama/llama-3.3-70b-instruct:free'];
+    for (const gModel of candidateModels) {
       try {
-        const res = await fetch(GROQ_API_URL, {
+        const res = await fetch(OPENROUTER_API_URL, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${groqKey}`,
+            Authorization: `Bearer ${openRouterKey}`,
+            'HTTP-Referer': process.env.HTTP_REFERER || 'https://vicarius-agent.local',
+            'X-Title': 'Vicarius Academic Agent',
           },
           body: JSON.stringify({
             model: gModel,
@@ -117,16 +119,16 @@ async function callLlmWithFallback(prompt: string, systemPrompt: string): Promis
           if (content) {
             const conf = parseConfidenceScore(content);
             if (conf >= 0.70) {
-              console.log(`[Classify:Fallback 1] Successfully recovered using Groq ${gModel}`);
-              await logSystemEvent('info', 'classify', `Successfully completed classification using Groq fallback (${gModel}).`);
+              console.log(`[Classify:Fallback 1] Successfully recovered using OpenRouter ${gModel}`);
+              await logSystemEvent('info', 'classify', `Successfully completed classification using OpenRouter fallback (${gModel}).`);
               return content;
             }
-            console.warn(`[Classify:Fallback 1] Groq (${gModel}) confidence (${conf}) < 0.70.`);
+            console.warn(`[Classify:Fallback 1] OpenRouter (${gModel}) confidence (${conf}) < 0.70.`);
             if (!bestCandidateContent) bestCandidateContent = content;
           }
         }
-      } catch (groqErr: any) {
-        console.warn(`[Classify:Fallback 1] Groq (${gModel}) error:`, groqErr?.message || groqErr);
+      } catch (orErr: any) {
+        console.warn(`[Classify:Fallback 1] OpenRouter (${gModel}) error:`, orErr?.message || orErr);
       }
     }
   }
@@ -169,7 +171,7 @@ async function callLlmWithFallback(prompt: string, systemPrompt: string): Promis
 
   // 4. Fallback 3: Google Gemini (gemini-2.0-flash / gemini-1.5-flash)
   if (geminiKey) {
-    for (const gemModel of ['gemini-2.0-flash', 'gemini-1.5-flash']) {
+    for (const gemModel of ['gemini-3.6-flash', 'gemini-flash-latest']) {
       try {
         const genAI = new GoogleGenerativeAI(geminiKey);
         const model = genAI.getGenerativeModel({ model: gemModel });
@@ -216,7 +218,7 @@ If the image is unreadable or has no extractable text, say exactly:
 
   // Fallback 1: Gemini Multimodal (gemini-2.0-flash -> gemini-1.5-flash -> gemini-1.5-pro)
   if (geminiKey && base64Data && mimeType) {
-    for (const gemModel of ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro']) {
+    for (const gemModel of ['gemini-3.6-flash', 'gemini-flash-latest']) {
       try {
         const genAI = new GoogleGenerativeAI(geminiKey);
         const model = genAI.getGenerativeModel({ model: gemModel });

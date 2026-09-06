@@ -220,19 +220,25 @@ Extract the structured task details into strict JSON:
     }
   }
 
-  // Row 4: Fallback 1: Groq (openai/gpt-oss-120b / qwen3.8-27b)
-  if (!parsed && groqKey) {
-    const groqCandidateModels = ['openai/gpt-oss-120b', 'qwen/qwen3.8-27b', 'llama-3.3-70b-versatile'];
-    for (const gModel of groqCandidateModels) {
+  // Row 4: Fallback 1: OpenRouter Free Backups (google/gemini-2.0-flash-exp:free / meta-llama/llama-3.3-70b-instruct:free)
+  if (!parsed && openRouterKey) {
+    const candidateModels = [
+      'google/gemini-2.0-flash-exp:free',
+      'meta-llama/llama-3.3-70b-instruct:free',
+      'meta-llama/llama-3.3-70b-instruct',
+    ];
+    for (const orModel of candidateModels) {
       try {
-        const res = await fetch(GROQ_API_URL, {
+        const res = await fetch(OPENROUTER_API_URL, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${groqKey}`,
+            'Authorization': `Bearer ${openRouterKey}`,
             'Content-Type': 'application/json',
+            'HTTP-Referer': process.env.HTTP_REFERER || 'https://vicarius-agent.local',
+            'X-Title': 'Vicarius Academic Agent',
           },
           body: JSON.stringify({
-            model: gModel,
+            model: orModel,
             messages: [
               { role: 'system', content: systemPrompt },
               { role: 'user', content: rawBody },
@@ -247,54 +253,22 @@ Extract the structured task details into strict JSON:
           const conf = typeof candidate.confidence === 'number' ? candidate.confidence : 0.85;
           if (conf >= 0.70 && candidate.title) {
             parsed = candidate;
-            console.log(`[Telegram:Classify] Recovered via Groq Fallback 1 (${gModel}).`);
+            console.log(`[Telegram:Classify] Recovered via OpenRouter Fallback (${orModel}).`);
             break;
           }
         }
       } catch (err) {
-        console.warn(`[Telegram:Classify] Groq model ${gModel} error:`, err);
+        console.warn(`[Telegram:Classify] OpenRouter backup model ${orModel} error:`, err);
       }
     }
   }
 
-  // Row 4: Fallback 2: OpenRouter Backup (llama-3.3-70b-instruct)
-  if (!parsed && openRouterKey) {
-    try {
-      const res = await fetch(OPENROUTER_API_URL, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${openRouterKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'meta-llama/llama-3.3-70b-instruct',
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: rawBody },
-          ],
-          temperature: 0.1,
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const content = data.choices?.[0]?.message?.content || '{}';
-        const candidate = JSON.parse(content.replace(/```json/g, '').replace(/```/g, '').trim());
-        if (candidate.title) {
-          parsed = candidate;
-          console.log('[Telegram:Classify] Recovered via OpenRouter Backup (llama-3.3-70b-instruct).');
-        }
-      }
-    } catch (err) {
-      console.warn('[Telegram:Classify] OpenRouter backup error:', err);
-    }
-  }
-
-  // Row 4: Fallback 3: Google Gemini (gemini-2.0-flash / gemini-1.5-flash)
+  // Row 4: Fallback 2: Google Gemini (gemini-3.6-flash / gemini-flash-latest)
   if (!parsed && geminiKey) {
     try {
       const { GoogleGenerativeAI } = await import('@google/generative-ai');
       const genAI = new GoogleGenerativeAI(geminiKey);
-      for (const gemModel of ['gemini-2.0-flash', 'gemini-1.5-flash']) {
+      for (const gemModel of ['gemini-3.6-flash', 'gemini-flash-latest']) {
         try {
           const model = genAI.getGenerativeModel({ model: gemModel });
           const result = await model.generateContent([
@@ -304,7 +278,7 @@ Extract the structured task details into strict JSON:
           const candidate = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
           if (candidate.title) {
             parsed = candidate;
-            console.log(`[Telegram:Classify] Recovered via Gemini Fallback 3 (${gemModel}).`);
+            console.log(`[Telegram:Classify] Recovered via Gemini Fallback (${gemModel}).`);
             break;
           }
         } catch (gemErr) {
@@ -1395,7 +1369,7 @@ async function extractTaskFromImage(fileId: string, mimeType?: string): Promise<
             try {
               const { GoogleGenerativeAI } = await import('@google/generative-ai');
               const genAI = new GoogleGenerativeAI(geminiKey);
-              for (const modelName of ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro']) {
+              for (const modelName of ['gemini-3.6-flash', 'gemini-flash-latest']) {
                 try {
                   const model = genAI.getGenerativeModel({ model: modelName });
                   const aiRes = await model.generateContent([
@@ -1478,7 +1452,7 @@ async function extractTaskFromImage(fileId: string, mimeType?: string): Promise<
           const imgBuf = Buffer.from(await imgRes.arrayBuffer());
           const { GoogleGenerativeAI } = await import('@google/generative-ai');
           const genAI = new GoogleGenerativeAI(geminiKey);
-          for (const modelName of ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro']) {
+          for (const modelName of ['gemini-3.6-flash', 'gemini-flash-latest']) {
             try {
               const model = genAI.getGenerativeModel({ model: modelName });
               const aiRes = await model.generateContent([
