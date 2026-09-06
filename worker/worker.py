@@ -385,6 +385,17 @@ def claim_next_task() -> Optional[Dict[str, Any]]:
         try:
             sb = get_supabase()
             
+            # Reclaim stale tasks: tasks in 'claimed' or 'building' older than 45 minutes without progress
+            try:
+                cutoff = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=45)).isoformat()
+                sb.table("tasks").update({
+                    "status": "queued",
+                    "worker_id": None,
+                    "claimed_at": None,
+                }).in_("status", ["claimed", "building"]).lt("claimed_at", cutoff).eq("archived", False).execute()
+            except Exception:
+                pass
+
             # Query tasks: status = 'queued', non-archived, ordered by due_date ASC (nulls last)
             resp = (
                 sb.table("tasks")
