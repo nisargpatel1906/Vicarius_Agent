@@ -9,6 +9,7 @@ Implements:
 """
 
 import os
+import re
 import sys
 import json
 import shutil
@@ -42,6 +43,7 @@ def _build_agy_prompt(
     attempt: int,
     work_dir: Path,
     agy_execution_plan: str = "",
+    existing_deliverables: Optional[List[str]] = None,
 ) -> str:
     """Builds the comprehensive execution prompt for the Antigravity CLI."""
     plan_files = plan.get("files", []) if plan else []
@@ -74,6 +76,31 @@ def _build_agy_prompt(
         f"{'='*80}\n"
     ) if agy_execution_plan else ""
 
+    # EXISTING DELIVERABLES block — critical for append/extend operations.
+    # When files already exist in the workspace from a prior run, AGY MUST open
+    # and extend them rather than creating fresh ones from scratch.
+    existing_block = ""
+    if existing_deliverables:
+        ext_lines = [f"  - `{f}`" for f in existing_deliverables]
+        append_target = next(
+            (f for f in existing_deliverables if f.lower().endswith((".pptx", ".docx", ".ipynb"))),
+            None,
+        )
+        append_directive = (
+            f"\n🚨 CRITICAL APPEND DIRECTIVE: Do NOT call `Presentation()` or `Document()` with no arguments (that creates a blank file). "
+            f"You MUST open the EXISTING file `{append_target}` using `Presentation('{append_target}')` "
+            f"(for .pptx) or `Document('{append_target}')` (for .docx) and APPEND the new slides/sections to it. "
+            f"Overwriting or recreating the file from scratch is a CRITICAL ERROR.\n"
+        ) if append_target else ""
+        existing_block = (
+            f"\n{'='*80}\n"
+            f"EXISTING WORKSPACE FILES (from prior run — DO NOT recreate these):\n"
+            f"{'='*80}\n"
+            + "\n".join(ext_lines) + "\n"
+            + append_directive
+            + f"{'='*80}\n"
+        )
+
     return (
         f"================================================================================\n"
         f"CRITICAL EXECUTION DIRECTIVE:\n"
@@ -84,7 +111,8 @@ def _build_agy_prompt(
         f"ALL required deliverables directly in the current working directory (`{work_dir.resolve()}`).\n"
         f"Then execute all code/notebooks so they run and produce real outputs and plots.\n"
         f"================================================================================\n"
-        f"{thinker_plan_block}\n"
+        f"{thinker_plan_block}"
+        f"{existing_block}\n"
         f"You are an expert autonomous academic AI agent acting on behalf of {student_name} "
         f"(Enrollment No: {student_enrollment}), a {student_program} student at {student_uni}.\n\n"
         f"Your mission: Complete this academic assignment by generating all required deliverables "
@@ -143,14 +171,19 @@ def _run_agy_cli(work_dir: Path, prompt: str, timeout_seconds: int = 1800) -> Tu
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             bufsize=1,
             shell=False,
         )
         combined_lines = []
         if proc.stdout:
             for line in iter(proc.stdout.readline, ""):
-                sys.stdout.write(line)
-                sys.stdout.flush()
+                try:
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
+                except Exception:
+                    pass
                 combined_lines.append(line)
             proc.stdout.close()
         proc.wait(timeout=timeout_seconds)
@@ -449,6 +482,15 @@ def coder_node(state: AgentState) -> Dict[str, Any]:
         agy_max_attempts = 3  # Primary, Fallback 1, Fallback 2/3 (Antigravity CLI gemini-3.8-flash-high with effort: high)
         current_retry_notes = retry_instructions
 
+        # Detect files already in workspace from prior runs so AGY knows to APPEND, not recreate.
+        _existing_exts = {".pptx", ".docx", ".ipynb", ".pdf", ".zip", ".py", ".html", ".md"}
+        _existing_deliverables_in_ws: List[str] = [
+            p.name for p in work_dir.iterdir()
+            if p.is_file() and p.suffix.lower() in _existing_exts
+        ] if work_dir.exists() else []
+        if _existing_deliverables_in_ws:
+            print(f"[LangGraph:Coder] Detected {len(_existing_deliverables_in_ws)} pre-existing file(s) in workspace: {_existing_deliverables_in_ws}")
+
         for agy_tier in range(1, agy_max_attempts + 1):
             tier_label = "Primary" if agy_tier == 1 else f"Fallback {agy_tier - 1}"
             print(f"[LangGraph:Coder] Executing Antigravity CLI ({tier_label} - gemini-3.8-flash-high)...")
@@ -470,6 +512,7 @@ def coder_node(state: AgentState) -> Dict[str, Any]:
                 attempt=attempt,
                 work_dir=work_dir,
                 agy_execution_plan=state.get("agy_execution_plan", ""),
+                existing_deliverables=_existing_deliverables_in_ws or None,
             )
 
             success, agy_out = _run_agy_cli(work_dir, agy_prompt, timeout_seconds=agy_timeout)

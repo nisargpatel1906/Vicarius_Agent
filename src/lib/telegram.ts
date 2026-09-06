@@ -467,9 +467,16 @@ ${instruction}`;
   // and requirements — never silently drop the user's instruction.
   const nowIso = new Date().toISOString();
   const changeSummary: string = patch?.change_summary || `Applied your instruction: "${instruction}"`;
+
+  // Detect append/extend intent so the coder knows to open the existing file rather than recreate it.
+  const isAppendIntent = /\b(?:add|append|additional|more|extend|extra|insert|include)\b.{0,40}\b(?:slide|slides|section|page|paragraph|topic)/i.test(instruction);
+  const appendPrefix = isAppendIntent
+    ? `[APPEND MODE — DO NOT CREATE A NEW FILE]: Open the existing deliverable and APPEND the following additions to it, do not start from scratch.\n\n`
+    : ``;
+
   const newBuildSpec: string = (patch?.build_spec && String(patch.build_spec).trim())
-    ? String(patch.build_spec)
-    : `${task.build_spec || ''}\n\n[USER FIX]: ${instruction}`;
+    ? `${appendPrefix}${String(patch.build_spec)}`
+    : `${appendPrefix}${task.build_spec || ''}\n\n[USER FIX]: ${instruction}`;
   const newSuccess: string = (patch?.success_criteria && String(patch.success_criteria).trim())
     ? String(patch.success_criteria)
     : task.success_criteria;
@@ -508,8 +515,9 @@ ${instruction}`;
   return (
     `✅ <b>Got it — I've updated the task and I'm rebuilding it now.</b>\n\n` +
     `📌 <b>Task:</b> ${escapeHtml(task.title)}\n` +
-    `🔧 <b>What I changed:</b> ${escapeHtml(changeSummary)}\n\n` +
-    `<i>The worker will pick it up on its next cycle. I'll message you when it's done.</i>`
+    `🔧 <b>What I changed:</b> ${escapeHtml(changeSummary)}\n` +
+    (isAppendIntent ? `📎 <b>Mode:</b> <code>APPEND</code> — existing files will be extended, not replaced.\n` : '') +
+    `\n<i>The worker will pick it up on its next cycle. I'll message you when it's done.</i>`
   );
 }
 
@@ -1660,6 +1668,31 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
         const fixMsg = await applyFixAndRequeue(flaggedId, text);
         await reply(fixMsg);
         return { handled: true, responseText: 'Fix applied and task re-queued' };
+      }
+    }
+  }
+
+  // 2b. Free-text fallback for flagged tasks: user typed an instruction WITHOUT using the Telegram
+  // "Reply" button. We still apply the instruction to whichever task is currently flagged.
+  // This resolves the common case where the user just types their request in the chat and expects
+  // the agent to pick it up — it now does, as long as a flagged task exists in Supabase.
+  if (text && !text.startsWith('/') && !fixReplyTo) {
+    const { data: activeFlaggedTask } = await supabase
+      .from('tasks')
+      .select('id, title, status')
+      .in('status', ['flagged', 'failed'])
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (activeFlaggedTask) {
+      // Exclude very short messages (like greetings or 1-word status queries) — those should
+      // fall through to the AI assistant so we don't accidentally re-queue on casual chat.
+      const looksLikeInstruction = text.length > 15 || /\b(?:add|fix|change|update|remove|include|append|more|slides?|topic|section|make|create|redo|rebuild|retry)\b/i.test(text);
+      if (looksLikeInstruction) {
+        await reply(`🔧 <i>Found a flagged task "<b>${escapeHtml(activeFlaggedTask.title)}</b>" — applying your instruction and rebuilding...</i>`);
+        const fixMsg = await applyFixAndRequeue(activeFlaggedTask.id, text);
+        await reply(fixMsg);
+        return { handled: true, responseText: 'Fix applied to flagged task via free-text' };
       }
     }
   }

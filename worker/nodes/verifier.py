@@ -177,6 +177,21 @@ def run_llm_judge(task: Dict[str, Any], produced_files: List[Path], stdout_outpu
         elif ext == ".ipynb":
             valid, validation_msg = validate_notebook(f)
             samples.append(f"=== File: {f.name} (Jupyter Notebook) ===\nValidation: {validation_msg}")
+        elif ext == ".pptx":
+            try:
+                import pptx
+                prs = pptx.Presentation(str(f))
+                slide_info = [f"Total Slides: {len(prs.slides)}"]
+                for s_idx, slide in enumerate(prs.slides, 1):
+                    texts = [s.text_frame.text.strip() for s in slide.shapes if s.has_text_frame and s.text_frame.text.strip()]
+                    notes = slide.notes_slide.notes_text_frame.text.strip() if slide.has_notes_slide else ""
+                    slide_preview = f"Slide {s_idx}:\n" + "\n".join(texts[:8])
+                    if notes:
+                        slide_preview += f"\nSpeaker Notes ({len(notes.split())} words):\n{notes[:300]}"
+                    slide_info.append(slide_preview)
+                samples.append(f"=== File: {f.name} (PowerPoint Presentation) ===\n" + "\n\n".join(slide_info)[:3500])
+            except Exception as e:
+                samples.append(f"=== File: {f.name} (PowerPoint Presentation) ===\nExtraction note: {e}")
 
     content_preview = "\n\n".join(samples)
     if not content_preview:
