@@ -24,6 +24,10 @@ class AgentState(TypedDict, total=False):
     # Thinker / Pre-Prompt Reasoning
     thought_process: str        # Raw inner reasoning from thinker_node
     agy_execution_plan: str     # Structured plan injected into AGY CLI prompt
+    thinker_retries: int        # Number of thinker quality-retry loops used
+    thinker_quality_score: float  # 0.0–1.0 quality grade from thinker_validator
+    thinker_needs_retry: bool   # Set True by validator when quality below threshold
+    thinker_retry_note: str     # Targeted feedback from validator for the next attempt
 
     # Artifacts & Outputs
     produced_files: List[str]
@@ -68,6 +72,10 @@ def create_initial_state(task: Dict[str, Any], max_attempts: int = 4, base_work_
         "plan": {},
         "thought_process": "",
         "agy_execution_plan": "",
+        "thinker_retries": 0,
+        "thinker_quality_score": 0.0,
+        "thinker_needs_retry": False,
+        "thinker_retry_note": "",
         "produced_files": [],
         "stdout_log": "",
         "tool_call_history": [],
