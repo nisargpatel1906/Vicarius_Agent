@@ -725,6 +725,11 @@ export default function DashboardPage() {
             tasks={tasks}
             selectedTask={selectedTask}
             onSelectTask={(task) => setSelectedTask(task)}
+            onRefresh={fetchData}
+            onTriggerIngest={handleTriggerIngest}
+            onRetryTask={handleRetryTask}
+            loading={loading}
+            ingesting={ingesting}
           />
         </div>
       ) : activeTab === 'flow' ? (

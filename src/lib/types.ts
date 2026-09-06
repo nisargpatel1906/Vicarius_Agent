@@ -70,6 +70,9 @@ export interface Task {
   result_summary: string | null;
   archived: boolean;
   posted_date?: string | null;
+  error_message?: string | null;
+  deliverables?: Deliverable[];
+  questions?: Question[];
   created_at: string;
   updated_at: string;
 }

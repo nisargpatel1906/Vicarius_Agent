@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Task } from '@/lib/types';
+import { Task, Deliverable } from '@/lib/types';
 import {
   TelegramBrandIcon,
   GoogleClassroomBrandIcon,
@@ -28,6 +28,11 @@ export interface AgentWorldProps {
   tasks: Task[];
   selectedTask: Task | null;
   onSelectTask?: (task: Task) => void;
+  onRefresh?: () => Promise<void>;
+  onTriggerIngest?: () => Promise<void>;
+  onRetryTask?: (taskId: string) => Promise<void>;
+  loading?: boolean;
+  ingesting?: boolean;
   className?: string;
   style?: React.CSSProperties;
 }
@@ -61,7 +66,7 @@ export const CAMPUS_LANDMARKS: CampusLandmark[] = [
     langGraphNodes: ['START', 'User Directive', 'END'],
     toolsUsed: ['Telegram Bot API', 'Supabase Webhooks', 'Mobile Push Notifications'],
     brandIcons: ['telegram'],
-    description: 'Where student directives arrive via Telegram chats, voice notes, and mobile directives. Vicarius rests here between missions.',
+    description: 'Where student directives originate from Telegram chats, voice notes, and mobile push notifications. Vicarius rests here between missions.',
     iconType: 'telegram_base',
     color: '#229ED9',
     inputSchema: '{ "chat_id": 788628401, "message_text": "Need 17-slide pitch deck...", "attachments": [] }',
@@ -78,7 +83,7 @@ export const CAMPUS_LANDMARKS: CampusLandmark[] = [
     langGraphNodes: ['ingestor', 'email_scanner', 'pdf_extractor'],
     toolsUsed: ['Google Classroom API', 'Gmail API', 'pdf-parse', 'mammoth (docx)'],
     brandIcons: ['googleclassroom', 'gmail'],
-    description: 'Automatically scans student Google Classroom courses and Gmail announcements. Extracts syllabus PDFs, rubric constraints, and submission deadlines.',
+    description: 'Automatically scans Google Classroom courses and Gmail announcements. Extracts syllabus PDFs, rubric constraints, and assignment due dates.',
     iconType: 'classroom_ingest',
     color: '#0F9D58',
     inputSchema: '{ "course_id": "CS-401", "assignment_id": "assign_77", "attachments": ["rubric.pdf"] }',
@@ -669,6 +674,22 @@ const SvgResetIcon = () => (
   </svg>
 );
 
+const SvgRefreshIcon = ({ spinning = false }: { spinning?: boolean }) => (
+  <svg
+    width="12"
+    height="12"
+    viewBox="0 0 12 12"
+    fill="none"
+    style={{
+      animation: spinning ? 'spin 1s linear infinite' : 'none',
+      transformOrigin: 'center',
+    }}
+  >
+    <path d="M 10 6 A 4 4 0 1 1 8.2 2.5" stroke="currentColor" strokeWidth="1.6" fill="none" strokeLinecap="round" />
+    <polygon points="7,0.5 10,2.8 7,4" fill="currentColor" />
+  </svg>
+);
+
 const SvgFullscreenIcon = () => (
   <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
     <path d="M1 4.5 V 1 H 4.5 M7.5 1 H 11 V 4.5 M11 7.5 V 11 H 7.5 M4.5 11 H 1 V 7.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
@@ -714,9 +735,11 @@ const SvgCloseIcon = () => (
   </svg>
 );
 
-const SvgChecklistIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-    <polyline points="2.5,7 5.5,10 11.5,4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+const SvgExternalLinkIcon = () => (
+  <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+    <path d="M5 2 H2 A1 1 0 0 0 1 3 V10 A1 1 0 0 0 2 11 H9 A1 1 0 0 0 10 10 V7" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    <polyline points="7,1 11,1 11,5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+    <line x1="5" y1="7" x2="11" y2="1" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
   </svg>
 );
 
@@ -724,10 +747,16 @@ export function AgentWorld({
   tasks,
   selectedTask,
   onSelectTask,
+  onRefresh,
+  onTriggerIngest,
+  onRetryTask,
+  loading = false,
+  ingesting = false,
   className = '',
   style = {},
 }: AgentWorldProps) {
-  const [mode, setMode] = useState<'live' | 'simulation'>('simulation');
+  // Default to live mode if real tasks exist in database
+  const [mode, setMode] = useState<'live' | 'simulation'>('live');
   const [scenarioKey, setScenarioKey] = useState<string>('standard');
   const [simStepIndex, setSimStepIndex] = useState<number>(0);
   const [simProgress, setSimProgress] = useState<number>(0);
@@ -737,13 +766,35 @@ export function AgentWorld({
   const [ambience, setAmbience] = useState<'daylight' | 'heritage' | 'midnight'>('heritage');
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [showInspector, setShowInspector] = useState<boolean>(false);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Auto-sync polling every 8s when in live mode
+  useEffect(() => {
+    if (mode === 'live' && onRefresh) {
+      const interval = setInterval(() => {
+        onRefresh();
+      }, 8000);
+      return () => clearInterval(interval);
+    }
+  }, [mode, onRefresh]);
+
+  const handleManualRefresh = async () => {
+    if (!onRefresh) return;
+    setIsRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setTimeout(() => setIsRefreshing(false), 500);
+    }
+  };
 
   const currentScenario = useMemo(() => {
     return SIMULATION_SCENARIOS[scenarioKey] || SIMULATION_SCENARIOS.standard;
   }, [scenarioKey]);
 
+  // Derive active real task from selectedTask or pick the most active/recent task
   const activeTask = useMemo(() => {
     if (selectedTask) return selectedTask;
     const running = tasks.find((t) => ['claimed', 'building', 'verifying', 'extracting'].includes(t.status));
@@ -753,91 +804,108 @@ export function AgentWorld({
     return tasks[0] || null;
   }, [tasks, selectedTask]);
 
-  // Map live task status to one of the 10 facilities
+  // Map the real task's actual database status to one of the 10 facilities
   const liveStageInfo = useMemo(() => {
     if (!activeTask) {
       return {
         landmarkIndex: 0,
-        action: 'Resting at Telegram Base',
-        thought: 'Listening on Telegram bot webhook and student coursework channels...',
+        action: 'Idle at Telegram Base',
+        thought: 'Campus quiet. Listening on Telegram bot webhook and student coursework channels...',
         node: 'START',
         model: 'Idle',
         status: 'idle' as const,
+        deliverableCount: 0,
       };
     }
+
+    const delivCount = activeTask.deliverables?.length || 0;
+
     switch (activeTask.status) {
-      case 'new':
-      case 'extracting':
+      case 'done':
         return {
-          landmarkIndex: 1,
-          action: `Classroom Ingest: "${activeTask.title}"`,
-          thought: 'Extracting assignment syllabus and PDF rubrics...',
-          node: 'ingestor',
-          model: 'Classroom Ingest',
-          status: 'running' as const,
+          landmarkIndex: 9, // Calendar Vault & Shipping Dock
+          action: `Delivered: "${activeTask.title}"`,
+          thought: delivCount > 0
+            ? `All ${delivCount} deliverables uploaded to Google Drive with IST calendar reminders!`
+            : `Task "${activeTask.title}" delivered to Google Drive and Telegram!`,
+          node: 'deliverer',
+          model: 'Google Drive v3 + Calendar API',
+          status: 'success' as const,
+          deliverableCount: delivCount,
         };
-      case 'queued':
+      case 'failed':
+      case 'flagged':
         return {
-          landmarkIndex: 2,
-          action: `State Committed in Supabase: "${activeTask.title}"`,
-          thought: 'Broadcasting task status over Supabase Realtime channel...',
-          node: 'state_writer',
-          model: 'Supabase Postgres',
-          status: 'running' as const,
-        };
-      case 'claimed':
-        return {
-          landmarkIndex: 4,
-          action: `Thinker Academy Planning: "${activeTask.title}"`,
-          thought: 'Formulating strategic blueprint and rubric criteria with Claude 3.7 Sonnet...',
-          node: 'planner',
-          model: 'Claude 3.7 Sonnet',
-          status: 'running' as const,
+          landmarkIndex: 7, // Self-Healing Diagnostic Hospital (Landmark 8)
+          action: `Self-Healing Hospital: "${activeTask.title}"`,
+          thought: activeTask.error_message
+            ? `Failure diagnosed: "${activeTask.error_message.slice(0, 60)}...". Ready for surgical re-attempt.`
+            : 'Directive flagged for diagnostic recovery. Click "Heal & Requeue" to dispatch fix.',
+          node: 'diagnoser',
+          model: 'LOOP_ENGINEERING RCA',
+          status: 'warning' as const,
+          deliverableCount: delivCount,
         };
       case 'building':
         return {
-          landmarkIndex: 6,
-          action: `Nisarg's Foundry Building: "${activeTask.title}"`,
-          thought: `Antigravity CLI executing ${activeTask.task_type}. Compiling artifacts on local machine...`,
+          landmarkIndex: 6, // Nisarg's Foundry & GPU Workshop (Landmark 7)
+          action: `Foundry Compiling: "${activeTask.title}"`,
+          thought: `Antigravity CLI executing (${activeTask.task_type || 'worker build'}). Synthesizing artifacts in work_dirs/...`,
           node: 'coder',
-          model: 'Python 3.12 (agy)',
+          model: 'Python 3.12 (Antigravity CLI)',
           status: 'running' as const,
+          deliverableCount: delivCount,
         };
       case 'verifying':
         return {
-          landmarkIndex: 8,
-          action: 'QA Observatory: Rubric Audit',
-          thought: 'Auditing presentation slide counts, citation URLs, and format rubrics...',
+          landmarkIndex: 8, // Verification Observatory (Landmark 9)
+          action: `QA Observatory: "${activeTask.title}"`,
+          thought: 'Auditing presentation slide counts, IEEE citation URLs, and format rubrics...',
           node: 'verifier',
           model: 'QA Gate Auditor',
           status: 'running' as const,
+          deliverableCount: delivCount,
         };
-      case 'flagged':
+      case 'claimed':
         return {
-          landmarkIndex: 7,
-          action: 'Self-Healing Hospital: Diagnosing Issue',
-          thought: 'Analyzing failure root causes and synthesizing targeted recovery patch...',
-          node: 'diagnoser',
-          model: 'LOOP_ENGINEERING',
-          status: 'warning' as const,
+          landmarkIndex: 4, // Thinker & Research Academy (Landmark 5)
+          action: `Academy Planning: "${activeTask.title}"`,
+          thought: 'Claude 3.7 Sonnet deconstructing grading rubrics and drafting 17-slide execution blueprint...',
+          node: 'planner',
+          model: 'Claude 3.7 Sonnet',
+          status: 'running' as const,
+          deliverableCount: delivCount,
         };
-      case 'done':
+      case 'queued':
         return {
-          landmarkIndex: 9,
-          action: 'Delivered to Drive & Telegram',
-          thought: `Task "${activeTask.title}" delivered to student Google Drive with calendar reminder!`,
-          node: 'deliverer',
-          model: 'Drive + Telegram',
-          status: 'success' as const,
+          landmarkIndex: 2, // Supabase Hub (Landmark 3)
+          action: `Queued in Supabase: "${activeTask.title}"`,
+          thought: 'Directive committed to PostgreSQL ledger. Awaiting execution slot in worker build queue...',
+          node: 'state_writer',
+          model: 'Supabase Postgres',
+          status: 'running' as const,
+          deliverableCount: delivCount,
+        };
+      case 'extracting':
+      case 'new':
+        return {
+          landmarkIndex: 1, // Google Classroom & Ingest Hub (Landmark 2)
+          action: `Classroom Ingest: "${activeTask.title}"`,
+          thought: 'Extracting assignment syllabus and PDF rubrics using pdf-parse engine...',
+          node: 'ingestor',
+          model: 'Classroom & Gmail Ingest',
+          status: 'running' as const,
+          deliverableCount: delivCount,
         };
       default:
         return {
           landmarkIndex: 0,
-          action: 'Idle at Telegram Base',
-          thought: 'Ready for next student academic directive.',
+          action: `Resting: "${activeTask.title}"`,
+          thought: 'Directive in resting queue. Ready for student instructions.',
           node: 'START',
           model: 'Idle',
           status: 'idle' as const,
+          deliverableCount: delivCount,
         };
     }
   }, [activeTask]);
@@ -919,29 +987,17 @@ export function AgentWorld({
 
   // Cobblestone pathways connecting all 10 facilities in an academic quadrangle
   const campusPaths = [
-    // Telegram Base (110,360) -> Classroom Ingest (240,190)
     'M 110 360 C 140 280 180 200 240 190',
-    // Classroom Ingest (240,190) -> Supabase Hub (390,360)
     'M 240 190 C 290 200 340 280 390 360',
-    // Supabase Hub (390,360) -> LangGraph Tower (520,190)
     'M 390 360 C 430 280 470 200 520 190',
-    // LangGraph Tower (520,190) -> Thinker Academy (660,360)
     'M 520 190 C 560 200 610 280 660 360',
-    // Thinker Academy (660,360) -> Dispatch Nexus (800,190)
     'M 660 360 C 700 280 750 200 800 190',
-    // Dispatch Nexus (800,190) -> Coder Foundry (940,360)
     'M 800 190 C 840 200 890 280 940 360',
-    // Coder Foundry (940,360) -> QA Observatory (1090,220)
     'M 940 360 C 990 300 1040 240 1090 220',
-    // Coder Foundry (940,360) -> Self-Healing Diagnostic Hospital (940,530)
     'M 940 360 C 940 420 940 470 940 530',
-    // QA Observatory (1090,220) -> Self-Healing Hospital (940,530) emergency conduit
     'M 1090 220 C 1080 380 1010 490 940 530',
-    // QA Observatory (1090,220) -> Shipping Dock (1140,430)
     'M 1090 220 C 1110 290 1130 360 1140 430',
-    // Self-Healing Hospital (940,530) -> Coder Foundry (940,360) return patch loop
     'M 940 530 C 920 470 920 420 940 360',
-    // Shipping Dock (1140,430) -> Long Courtyard Return Path -> Telegram Base (110,360)
     'M 1140 430 C 1000 600 400 610 110 360',
   ];
 
@@ -986,7 +1042,6 @@ export function AgentWorld({
   const renderBuilding = (lm: CampusLandmark) => {
     const isActive = activeLandmarkId === lm.id;
 
-    // Building Base geometry with authentic brand icon embedded
     return (
       <g>
         {/* Pulsing Aura if active */}
@@ -1002,7 +1057,7 @@ export function AgentWorld({
           />
         )}
 
-        {/* Shadow */}
+        {/* Ground Shadow */}
         <ellipse cx="0" cy="44" rx="46" ry="12" fill="#231a0f" opacity={ambience === 'midnight' ? 0.35 : 0.14} />
 
         {/* Building Foundation */}
@@ -1017,7 +1072,7 @@ export function AgentWorld({
           strokeWidth={isActive ? 2.2 : 1.4}
         />
 
-        {/* Roof Structure based on landmark type */}
+        {/* Roof Structure */}
         {lm.id === 'telegram_base' && (
           <>
             <polygon points="-48,-14 0,-52 48,-14" fill="url(#roofBronze)" stroke="#5a4316" strokeWidth="1.5" />
@@ -1075,7 +1130,6 @@ export function AgentWorld({
         {lm.id === 'diagnostic_clinic' && (
           <>
             <polygon points="-46,-14 0,-48 46,-14" fill="#E67E22" stroke="#b45309" strokeWidth="1.5" />
-            {/* Medical / Repair Cross */}
             <rect x="-4" y="-38" width="8" height="18" fill="#fff" rx="1" />
             <rect x="-9" y="-33" width="18" height="8" fill="#fff" rx="1" />
           </>
@@ -1100,7 +1154,7 @@ export function AgentWorld({
         <rect x="-10" y="14" width="20" height="26" rx="2" fill="#392f23" stroke="#231a0f" strokeWidth="1" />
         <circle cx="6" cy="27" r="1.5" fill="#ffdea9" />
 
-        {/* Brand Icon Plaque (Authentic official brand vector inside a clean white badge) */}
+        {/* Brand Icon Plaque (Authentic official brand vector inside clean white badge) */}
         <g transform="translate(0, -2)">
           <circle cx="0" cy="0" r="15" fill="#ffffff" stroke={lm.color} strokeWidth="1.8" filter="url(#shadowFilter)" />
           <g transform="translate(-9, -9)">
@@ -1108,7 +1162,7 @@ export function AgentWorld({
           </g>
         </g>
 
-        {/* Second badge if multi-tool (e.g. Google Classroom + Gmail, or Python + PPTX) */}
+        {/* Secondary brand badge for multi-tool facilities */}
         {lm.brandIcons.length > 1 && (
           <g transform="translate(22, 18)">
             <circle cx="0" cy="0" r="10" fill="#ffffff" stroke="var(--outline-variant)" strokeWidth="1.2" filter="url(#shadowFilter)" />
@@ -1219,7 +1273,7 @@ export function AgentWorld({
                   }}
                 >
                   <SvgLivePulseIcon />
-                  {mode === 'live' ? 'Live State Sync' : 'Scenario Simulation'}
+                  {mode === 'live' ? `Supabase Live Connected (${tasks.length} Directives)` : 'Scenario Simulation Tour'}
                 </span>
                 <span style={{ fontSize: '11px', color: 'var(--on-surface-variant)' }}>
                   10 Architectural Facilities &bull; Authentic Brand Tooling &bull; Zero Emojis
@@ -1229,7 +1283,7 @@ export function AgentWorld({
           </div>
         </div>
 
-        {/* Right Controls: Mode, Scenario, Ambience, Fullscreen */}
+        {/* Right Controls: Mode, Task Selector, Scenario, Ambience, Fullscreen */}
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           {/* Mode Switcher */}
           <div
@@ -1282,9 +1336,69 @@ export function AgentWorld({
                 gap: 5,
               }}
             >
-              <SvgPlayIcon /> Scenario Tour
+              <SvgPlayIcon /> Tour Simulation
             </button>
           </div>
+
+          {/* Real Task Selector Dropdown in Live Mode */}
+          {mode === 'live' && tasks.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <select
+                value={activeTask?.id || ''}
+                onChange={(e) => {
+                  const found = tasks.find((t) => t.id === e.target.value);
+                  if (found && onSelectTask) onSelectTask(found);
+                }}
+                style={{
+                  fontSize: '0.82rem',
+                  padding: '6px 10px',
+                  borderRadius: 6,
+                  border: '1px solid var(--outline-variant)',
+                  background: 'var(--surface)',
+                  color: 'var(--on-surface)',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  maxWidth: 240,
+                }}
+              >
+                {tasks.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    [{t.status.toUpperCase()}] {t.title.slice(0, 24)}...
+                  </option>
+                ))}
+              </select>
+
+              {/* Sync Database Button */}
+              {onRefresh && (
+                <button
+                  type="button"
+                  onClick={handleManualRefresh}
+                  disabled={loading || isRefreshing}
+                  className="btn-heritage-secondary"
+                  style={{ padding: '6px 10px', fontSize: '0.8rem', minHeight: 32 }}
+                  title="Sync with Supabase tasks"
+                >
+                  <SvgRefreshIcon spinning={loading || isRefreshing} />
+                  <span>{loading || isRefreshing ? 'Syncing...' : 'Sync'}</span>
+                </button>
+              )}
+
+              {/* Ingest Button */}
+              {onTriggerIngest && (
+                <button
+                  type="button"
+                  onClick={onTriggerIngest}
+                  disabled={ingesting}
+                  className="btn-heritage-secondary"
+                  style={{ padding: '6px 10px', fontSize: '0.8rem', minHeight: 32 }}
+                  title="Scan Google Classroom & Gmail for new directives"
+                >
+                  <GoogleClassroomBrandIcon size={13} />
+                  <span>{ingesting ? 'Scanning...' : 'Ingest'}</span>
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Scenario Selector when in Simulation Mode */}
           {mode === 'simulation' && (
@@ -1385,7 +1499,7 @@ export function AgentWorld({
         </div>
       </div>
 
-      {/* ── Interactive Playback Bar & Timeline Scrubber ── */}
+      {/* ── Interactive Playback Bar (Simulation Mode) ── */}
       {mode === 'simulation' && (
         <div
           style={{
@@ -1401,7 +1515,6 @@ export function AgentWorld({
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              {/* Play / Pause */}
               <button
                 type="button"
                 onClick={() => setIsPlaying(!isPlaying)}
@@ -1412,7 +1525,6 @@ export function AgentWorld({
                 <span>{isPlaying ? 'Pause' : 'Play'}</span>
               </button>
 
-              {/* Step Backward */}
               <button
                 type="button"
                 onClick={() => {
@@ -1426,7 +1538,6 @@ export function AgentWorld({
                 <SvgStepBackIcon />
               </button>
 
-              {/* Step Forward */}
               <button
                 type="button"
                 onClick={() => {
@@ -1440,7 +1551,6 @@ export function AgentWorld({
                 <SvgStepForwardIcon />
               </button>
 
-              {/* Reset */}
               <button
                 type="button"
                 onClick={() => {
@@ -1454,7 +1564,6 @@ export function AgentWorld({
                 <SvgResetIcon />
               </button>
 
-              {/* Speed Multipliers */}
               <div style={{ display: 'inline-flex', gap: 2, marginLeft: 6, background: 'var(--surface-container)', padding: 2, borderRadius: 4, border: '1px solid var(--outline-variant)' }}>
                 {[0.5, 1, 2, 4].map((spd) => (
                   <button
@@ -1478,7 +1587,6 @@ export function AgentWorld({
               </div>
             </div>
 
-            {/* Step Counter Badge */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ fontSize: '0.78rem', color: 'var(--on-surface-variant)', fontWeight: 600 }}>
                 Step {simStepIndex + 1} of {currentScenario.steps.length} &mdash;{' '}
@@ -1487,7 +1595,6 @@ export function AgentWorld({
             </div>
           </div>
 
-          {/* Visual Step Scrubber Timeline */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 3, position: 'relative', marginTop: 2 }}>
             {currentScenario.steps.map((st, idx) => {
               const isPast = idx < simStepIndex;
@@ -1518,6 +1625,62 @@ export function AgentWorld({
               );
             })}
           </div>
+        </div>
+      )}
+
+      {/* ── Live Quick Task Bar (Live Mode) ── */}
+      {mode === 'live' && tasks.length > 0 && (
+        <div
+          style={{
+            background: 'var(--surface-container-low)',
+            borderRadius: 8,
+            border: '1px solid var(--outline-variant)',
+            padding: '8px 12px',
+            marginBottom: 14,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            overflowX: 'auto',
+          }}
+        >
+          <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--primary)', flexShrink: 0 }}>
+            Live Tasks:
+          </span>
+          {tasks.slice(0, 6).map((t) => {
+            const isSel = activeTask?.id === t.id;
+            const statusColor = t.status === 'done' ? '#276a3c' : t.status === 'failed' ? '#ba1a1a' : 'var(--primary)';
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => onSelectTask && onSelectTask(t)}
+                style={{
+                  fontSize: '0.74rem',
+                  padding: '3px 8px',
+                  borderRadius: 4,
+                  border: `1px solid ${isSel ? statusColor : 'var(--outline-variant)'}`,
+                  background: isSel ? 'var(--surface)' : 'transparent',
+                  color: isSel ? statusColor : 'var(--on-surface-variant)',
+                  cursor: 'pointer',
+                  fontWeight: isSel ? 700 : 500,
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  boxShadow: isSel ? '0 1px 3px rgba(0,0,0,0.06)' : 'none',
+                }}
+              >
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: statusColor, display: 'inline-block' }} />
+                <span>{t.title.length > 22 ? t.title.slice(0, 20) + '...' : t.title}</span>
+                {t.deliverables && t.deliverables.length > 0 && (
+                  <span style={{ fontSize: '9px', background: 'var(--surface-container-high)', padding: '1px 4px', borderRadius: 4 }}>
+                    {t.deliverables.length}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -1656,7 +1819,6 @@ export function AgentWorld({
               }}
             >
               {renderBuilding(lm)}
-              {/* Facility Sequence Badge */}
               <circle cx="-38" cy="-10" r="9" fill={lm.color} />
               <text x="-38" y="-7" textAnchor="middle" fontSize="9" fontWeight="800" fill="#fff" fontFamily="'Manrope', sans-serif">
                 {idx + 1}
@@ -1673,7 +1835,7 @@ export function AgentWorld({
               </g>
             )}
 
-            {/* Character Ground Shadow */}
+            {/* Ground Shadow */}
             <ellipse cx="0" cy="13" rx="14" ry="4" fill="#231a0f" opacity="0.25" />
 
             {/* Character Body Structure */}
@@ -1687,7 +1849,7 @@ export function AgentWorld({
               {/* Cognitive Heritage Coat */}
               <path d="M -10 -14 L -12 2 L 12 2 L 10 -14 Z" fill="#705728" stroke="#392f23" strokeWidth="1" />
 
-              {/* Research Satchel with Official Python Brand badge */}
+              {/* Research Satchel */}
               <rect x="6" y="-8" width="8" height="10" rx="1" fill="#8b6f3e" stroke="#5a4316" strokeWidth="1" />
               <line x1="6" y1="-4" x2="14" y2="-4" stroke="#ffdea9" strokeWidth="0.8" />
               <line x1="-8" y1="-14" x2="6" y2="-4" stroke="#5a4316" strokeWidth="1.2" />
@@ -1742,7 +1904,7 @@ export function AgentWorld({
         </svg>
       </div>
 
-      {/* ── Live Telemetry & Diagnostics HUD (Heads-Up Display) ── */}
+      {/* ── Live Telemetry & Diagnostics HUD ── */}
       <div
         style={{
           marginTop: 16,
@@ -1792,12 +1954,12 @@ export function AgentWorld({
                     fontSize: '10px',
                     padding: '2px 8px',
                     borderRadius: 10,
-                    background: agentPos.isMoving ? '#fff1e5' : '#e2f0d9',
-                    color: agentPos.isMoving ? 'var(--primary)' : '#276a3c',
+                    background: liveStageInfo.status === 'success' ? '#e2f0d9' : liveStageInfo.status === 'warning' ? '#ffebec' : '#fff1e5',
+                    color: liveStageInfo.status === 'success' ? '#276a3c' : liveStageInfo.status === 'warning' ? '#ba1a1a' : 'var(--primary)',
                     fontWeight: 700,
                   }}
                 >
-                  {agentPos.isMoving ? 'In Transit' : 'At Facility'}
+                  {mode === 'live' ? `Live: ${activeTask?.status.toUpperCase() || 'IDLE'}` : (agentPos.isMoving ? 'In Transit' : 'At Facility')}
                 </span>
               </div>
               <p
@@ -1841,7 +2003,7 @@ export function AgentWorld({
             }}
           >
             <span style={{ fontSize: '10px', color: 'var(--on-surface-variant)', display: 'block', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-              Inference Engine
+              Engine / Model
             </span>
             <span style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--on-surface)' }}>
               {currentActiveModel}
@@ -1857,26 +2019,10 @@ export function AgentWorld({
             }}
           >
             <span style={{ fontSize: '10px', color: 'var(--on-surface-variant)', display: 'block', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-              Token Budget
-            </span>
-            <span style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--on-surface)' }}>
-              {mode === 'simulation' ? currentStep.telemetry.tokenUsage : '4,120 / 25,000'}
-            </span>
-          </div>
-
-          <div
-            style={{
-              background: 'var(--surface)',
-              border: '1px solid var(--outline-variant)',
-              borderRadius: 6,
-              padding: '4px 10px',
-            }}
-          >
-            <span style={{ fontSize: '10px', color: 'var(--on-surface-variant)', display: 'block', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-              Slide Count Target
+              Deliverables
             </span>
             <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#276a3c' }}>
-              {mode === 'simulation' ? currentStep.telemetry.slideProgress : '17 / 17 Verified'}
+              {mode === 'live' ? `${liveStageInfo.deliverableCount} Produced` : currentStep.telemetry.slideProgress}
             </span>
           </div>
 
@@ -1889,12 +2035,24 @@ export function AgentWorld({
             }}
           >
             <span style={{ fontSize: '10px', color: 'var(--on-surface-variant)', display: 'block', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-              Recovery Loop
+              Sync Status
             </span>
-            <span style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--on-surface)' }}>
-              {mode === 'simulation' ? currentStep.telemetry.attempt : 'Attempt 1 / 4'}
+            <span style={{ fontSize: '0.82rem', fontWeight: 700, color: mode === 'live' ? '#276a3c' : 'var(--primary)' }}>
+              {mode === 'live' ? 'Supabase Realtime' : 'Simulated'}
             </span>
           </div>
+
+          {/* Action Button if live task failed */}
+          {mode === 'live' && activeTask && (activeTask.status === 'failed' || activeTask.status === 'flagged') && onRetryTask && (
+            <button
+              type="button"
+              onClick={() => onRetryTask(activeTask.id)}
+              className="btn-heritage-primary"
+              style={{ padding: '4px 12px', fontSize: '0.78rem', minHeight: 28 }}
+            >
+              Heal &amp; Requeue Task
+            </button>
+          )}
         </div>
 
         {/* Facility Quick Jump Buttons */}
@@ -1988,6 +2146,69 @@ export function AgentWorld({
             </button>
           </div>
 
+          {/* If a real task is active at this landmark in live mode, display its live dossier! */}
+          {mode === 'live' && activeTask && activeLandmarkId === activeLandmarkDetail.id && (
+            <div
+              style={{
+                background: 'var(--surface-container-high)',
+                border: '1px solid var(--outline-variant)',
+                borderRadius: 6,
+                padding: '12px 14px',
+                marginBottom: 14,
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                <span style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--primary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Live Active Task at this Facility
+                </span>
+                <span style={{ fontSize: '11px', fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: '#276a3c', color: '#fff' }}>
+                  {activeTask.status.toUpperCase()}
+                </span>
+              </div>
+              <h5 style={{ margin: '0 0 4px 0', fontSize: '0.96rem', color: 'var(--on-surface)' }}>
+                {activeTask.title}
+              </h5>
+              <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--on-surface-variant)' }}>
+                Task Type: <strong>{activeTask.task_type}</strong> | Due Date: <strong>{activeTask.due_date || 'None'}</strong> | Posted: <strong>{activeTask.posted_date || 'Recent'}</strong>
+              </p>
+
+              {/* Real Deliverables List */}
+              {activeTask.deliverables && activeTask.deliverables.length > 0 && (
+                <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--outline-variant)' }}>
+                  <span style={{ fontSize: '0.74rem', fontWeight: 700, color: 'var(--on-surface-variant)' }}>
+                    Live Deliverables ({activeTask.deliverables.length}):
+                  </span>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
+                    {activeTask.deliverables.slice(0, 4).map((d: Deliverable) => (
+                      <a
+                        key={d.id}
+                        href={d.drive_link || '#'}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{
+                          fontSize: '0.76rem',
+                          padding: '2px 8px',
+                          borderRadius: 4,
+                          background: 'var(--surface)',
+                          border: '1px solid var(--outline-variant)',
+                          color: 'var(--primary)',
+                          textDecoration: 'none',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 4,
+                        }}
+                      >
+                        <GoogleDriveBrandIcon size={12} />
+                        <span>{d.file_name}</span>
+                        <SvgExternalLinkIcon />
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Operational Metrics Bar */}
           <div
             style={{
@@ -2017,7 +2238,6 @@ export function AgentWorld({
 
           {/* 4-Quadrant Technical Dossier */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 14, borderTop: '1px solid var(--outline-variant)', paddingTop: 14 }}>
-            {/* LangGraph Nodes */}
             <div>
               <span style={{ fontSize: '0.74rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--primary)', display: 'block', marginBottom: 6 }}>
                 LangGraph StateGraph Nodes
@@ -2031,7 +2251,6 @@ export function AgentWorld({
               </div>
             </div>
 
-            {/* Official Brand Tooling & APIs */}
             <div>
               <span style={{ fontSize: '0.74rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--primary)', display: 'block', marginBottom: 6 }}>
                 Official Integrated Tools & Brand APIs
@@ -2046,7 +2265,6 @@ export function AgentWorld({
               </div>
             </div>
 
-            {/* Ingestion Payload Schema */}
             <div>
               <span style={{ fontSize: '0.74rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--primary)', display: 'block', marginBottom: 6 }}>
                 Node Ingestion Contract (JSON)
@@ -2056,7 +2274,6 @@ export function AgentWorld({
               </pre>
             </div>
 
-            {/* Output State Transition */}
             <div>
               <span style={{ fontSize: '0.74rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--primary)', display: 'block', marginBottom: 6 }}>
                 State Transition Payload (JSON)
