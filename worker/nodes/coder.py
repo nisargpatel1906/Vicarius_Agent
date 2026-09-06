@@ -485,8 +485,8 @@ def coder_node(state: AgentState) -> Dict[str, Any]:
         # Detect files already in workspace from prior runs so AGY knows to APPEND, not recreate.
         _existing_exts = {".pptx", ".docx", ".ipynb", ".pdf", ".zip", ".py", ".html", ".md"}
         _existing_deliverables_in_ws: List[str] = [
-            p.name for p in work_dir.iterdir()
-            if p.is_file() and p.suffix.lower() in _existing_exts
+            p.relative_to(work_dir).as_posix() for p in work_dir.rglob("*")
+            if p.is_file() and p.suffix.lower() in _existing_exts and not any(part.startswith((".", "__pycache__", "venv")) for part in p.parts)
         ] if work_dir.exists() else []
         if _existing_deliverables_in_ws:
             print(f"[LangGraph:Coder] Detected {len(_existing_deliverables_in_ws)} pre-existing file(s) in workspace: {_existing_deliverables_in_ws}")
