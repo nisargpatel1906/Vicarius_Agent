@@ -54,18 +54,18 @@ def upload_to_drive(creds, folder_id: str, course: str, task_id: str, file_path:
             folder = drive_service.files().create(body=meta, fields='id').execute()
             course_folder_id = folder.get('id')
 
-        # 2. Check if file already uploaded to prevent duplicates
+        # 2. Check if file already uploaded; if so, update content in-place
         file_q = f"name='{file_path.name}' and '{course_folder_id}' in parents and trashed=false"
         existing = drive_service.files().list(q=file_q, fields="files(id, name)").execute().get('files', [])
+        media = MediaFileUpload(str(file_path), resumable=True)
         if existing:
             file_id = existing[0]['id']
-            return f"https://drive.google.com/file/d/{file_id}/view?usp=sharing"
-
-        # 3. Upload file
-        media = MediaFileUpload(str(file_path), resumable=True)
-        file_meta = {'name': file_path.name, 'parents': [course_folder_id]}
-        uploaded = drive_service.files().create(body=file_meta, media_body=media, fields='id').execute()
-        file_id = uploaded.get('id')
+            drive_service.files().update(fileId=file_id, media_body=media).execute()
+        else:
+            # 3. Upload new file
+            file_meta = {'name': file_path.name, 'parents': [course_folder_id]}
+            uploaded = drive_service.files().create(body=file_meta, media_body=media, fields='id').execute()
+            file_id = uploaded.get('id')
 
         # 3. Set reader permission
         try:
