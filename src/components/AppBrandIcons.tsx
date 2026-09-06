@@ -163,7 +163,17 @@ export function VercelBrandIcon({ size = 24, color = '#000000', className = '', 
   );
 }
 
+export function HomeCottageBrandIcon({ size = 24, color = '#705728', className = '', style = {} }: BrandIconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" style={{ color, display: 'inline-block', flexShrink: 0, ...style }} className={className} role="img">
+      <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" />
+    </svg>
+  );
+}
+
 export const BRAND_ICONS = {
+  'home': HomeCottageBrandIcon,
+  'cottage': HomeCottageBrandIcon,
   'telegram': TelegramBrandIcon,
   'googleclassroom': GoogleClassroomBrandIcon,
   'gmail': GmailBrandIcon,

@@ -21,13 +21,14 @@ import {
   LangChainBrandIcon,
   LangGraphBrandIcon,
   VercelBrandIcon,
+  HomeCottageBrandIcon,
   AppBrandBadge,
 } from '@/components/AppBrandIcons';
 
 export interface AgentWorldProps {
   tasks: Task[];
   selectedTask: Task | null;
-  onSelectTask?: (task: Task) => void;
+  onSelectTask?: (task: Task | null) => void;
   onRefresh?: () => Promise<void>;
   onTriggerIngest?: () => Promise<void>;
   onRetryTask?: (taskId: string) => Promise<void>;
@@ -57,6 +58,23 @@ export interface CampusLandmark {
 
 export const CAMPUS_LANDMARKS: CampusLandmark[] = [
   {
+    id: 'agent_home',
+    name: 'Vicarius Home & Haven',
+    subtitle: 'Autonomous Rest Porch & Residence',
+    x: 510,
+    y: 535,
+    stageName: 'STANDBY / Autonomous Rest',
+    langGraphNodes: ['STANDBY', 'HEARTH', 'READY'],
+    toolsUsed: ['Autonomous Standby Daemon', 'Warm Hearth Engine', 'Telegram Webhook Listener'],
+    brandIcons: ['home', 'telegram'],
+    description: 'The cozy residence and autonomous home cottage of Vicarius. When no active assignments or builds are underway, Vicarius stays here on the warm porch, resting and standing by for student directives.',
+    iconType: 'agent_home',
+    color: '#8B6F3E',
+    inputSchema: '{ "status": "idle", "active_tasks": 0, "hearth_warmth": "100%" }',
+    outputSchema: '{ "agent_state": "resting", "ready_for_assignment": true }',
+    metrics: { uptime: '100%', avgLatency: '0ms', throughput: 'Standby' },
+  },
+  {
     id: 'telegram_base',
     name: 'Student Command & Telegram Porch',
     subtitle: 'Directive Intake & Mobile Porch',
@@ -66,7 +84,7 @@ export const CAMPUS_LANDMARKS: CampusLandmark[] = [
     langGraphNodes: ['START', 'User Directive', 'END'],
     toolsUsed: ['Telegram Bot API', 'Supabase Webhooks', 'Mobile Push Notifications'],
     brandIcons: ['telegram'],
-    description: 'Where student directives originate from Telegram chats, voice notes, and mobile push notifications. Vicarius rests here between missions.',
+    description: 'Where student directives originate from Telegram chats, voice notes, and mobile push notifications. Vicarius walks out to this porch when taking in new assignments.',
     iconType: 'telegram_base',
     color: '#229ED9',
     inputSchema: '{ "chat_id": 788628401, "message_text": "Need 17-slide pitch deck...", "attachments": [] }',
@@ -256,72 +274,92 @@ export const SIMULATION_SCENARIOS: Record<string, SimulationScenario> = {
   standard: {
     id: 'standard',
     title: 'Standard 17-Slide Academic Delivery',
-    subtitle: 'Happy path: Telegram directive intake to Google Drive shipment',
+    subtitle: 'Autonomous flow: Home cottage -> Intake -> Foundry build -> QA audit -> Shipment -> Return Home',
     badge: 'Standard Flow',
     steps: [
       {
         fromIndex: 0,
         toIndex: 0,
-        actionText: 'Resting at Telegram Base',
-        thought: 'Campus quiet. Listening on Telegram bot webhook and student coursework channels...',
+        actionText: 'Resting at Home Cottage',
+        thought: 'Campus quiet. Resting by the hearth at Home, listening on Telegram bot webhook and coursework feeds...',
         isStationary: true,
-        activeNode: 'START',
-        activeModel: 'Idle',
-        telemetry: { tokenUsage: '0 / 25,000', slideProgress: '0 / 17', attempt: '1 / 4', status: 'idle' },
+        activeNode: 'STANDBY',
+        activeModel: 'Autonomous Idle',
+        telemetry: { tokenUsage: '0 / 25,000', slideProgress: '0 / 17', attempt: 'Standby', status: 'idle' },
       },
       {
         fromIndex: 0,
-        toIndex: 2,
-        actionText: 'Commuting to Supabase Hub',
-        thought: 'New academic directive received via Telegram! Committing task record to Supabase ledger...',
+        toIndex: 1,
+        actionText: 'Walking to Telegram Porch',
+        thought: 'New academic directive detected! Leaving home cottage for the Telegram intake porch...',
         isStationary: false,
-        activeNode: 'state_writer',
-        activeModel: 'Postgres ACID',
+        activeNode: 'START',
+        activeModel: 'Directive Intake',
+        telemetry: { tokenUsage: '60 / 25,000', slideProgress: '0 / 17', attempt: '1 / 4', status: 'running' },
+      },
+      {
+        fromIndex: 1,
+        toIndex: 1,
+        actionText: 'Intaking Student Directive',
+        thought: 'Received research request via Telegram chat. Committing task record to Supabase ledger...',
+        isStationary: true,
+        activeNode: 'User Directive',
+        activeModel: 'Telegram Bot API',
         telemetry: { tokenUsage: '120 / 25,000', slideProgress: '0 / 17', attempt: '1 / 4', status: 'running' },
       },
       {
-        fromIndex: 2,
-        toIndex: 2,
+        fromIndex: 1,
+        toIndex: 3,
+        actionText: 'Commuting to Supabase Hub',
+        thought: 'Walking to Supabase Intelligence Hub to commit PostgreSQL ACID state...',
+        isStationary: false,
+        activeNode: 'state_writer',
+        activeModel: 'Postgres ACID',
+        telemetry: { tokenUsage: '180 / 25,000', slideProgress: '0 / 17', attempt: '1 / 4', status: 'running' },
+      },
+      {
+        fromIndex: 3,
+        toIndex: 3,
         actionText: 'Committing State in Supabase',
         thought: 'Task record inserted. Broadcasting task status updates over Realtime WebSocket channel...',
         isStationary: true,
         activeNode: 'event_bus',
         activeModel: 'Supabase Realtime',
-        telemetry: { tokenUsage: '180 / 25,000', slideProgress: '0 / 17', attempt: '1 / 4', status: 'running' },
+        telemetry: { tokenUsage: '240 / 25,000', slideProgress: '0 / 17', attempt: '1 / 4', status: 'running' },
       },
       {
-        fromIndex: 2,
-        toIndex: 3,
+        fromIndex: 3,
+        toIndex: 4,
         actionText: 'Walking to LangGraph Tower',
         thought: 'State committed! Entering LangGraph Control Tower to initialize execution graph...',
         isStationary: false,
         activeNode: 'state_graph_coordinator',
         activeModel: 'LangGraph 1.4',
-        telemetry: { tokenUsage: '260 / 25,000', slideProgress: '0 / 17', attempt: '1 / 4', status: 'running' },
+        telemetry: { tokenUsage: '310 / 25,000', slideProgress: '0 / 17', attempt: '1 / 4', status: 'running' },
       },
       {
-        fromIndex: 3,
-        toIndex: 3,
+        fromIndex: 4,
+        toIndex: 4,
         actionText: 'Configuring StateGraph Nodes',
         thought: 'Compiling 9-node graph with conditional diagnostic edges. Routing to Thinker Academy...',
         isStationary: true,
         activeNode: 'checkpoint_manager',
         activeModel: 'LangGraph Engine',
-        telemetry: { tokenUsage: '340 / 25,000', slideProgress: '0 / 17', attempt: '1 / 4', status: 'running' },
+        telemetry: { tokenUsage: '420 / 25,000', slideProgress: '0 / 17', attempt: '1 / 4', status: 'running' },
       },
       {
-        fromIndex: 3,
-        toIndex: 4,
+        fromIndex: 4,
+        toIndex: 5,
         actionText: 'Walking to Thinker Academy',
         thought: 'Heading into the library to formulate 17-slide strategic blueprint and grading rubrics...',
         isStationary: false,
         activeNode: 'extractor',
         activeModel: 'Claude 3.7 Sonnet',
-        telemetry: { tokenUsage: '680 / 25,000', slideProgress: '0 / 17', attempt: '1 / 4', status: 'running' },
+        telemetry: { tokenUsage: '780 / 25,000', slideProgress: '0 / 17', attempt: '1 / 4', status: 'running' },
       },
       {
-        fromIndex: 4,
-        toIndex: 4,
+        fromIndex: 5,
+        toIndex: 5,
         actionText: 'Formulating 17-Slide Plan',
         thought: 'Claude 3.7 Sonnet drafting slide-by-slide structure with IEEE citation criteria...',
         isStationary: true,
@@ -330,8 +368,8 @@ export const SIMULATION_SCENARIOS: Record<string, SimulationScenario> = {
         telemetry: { tokenUsage: '4,200 / 25,000', slideProgress: 'Blueprint Locked', attempt: '1 / 4', status: 'running' },
       },
       {
-        fromIndex: 4,
-        toIndex: 5,
+        fromIndex: 5,
+        toIndex: 6,
         actionText: 'Walking to Model Dispatch Nexus',
         thought: 'Blueprint locked! Heading to Dispatch Nexus to route prompt to high-speed LPU inference...',
         isStationary: false,
@@ -340,8 +378,8 @@ export const SIMULATION_SCENARIOS: Record<string, SimulationScenario> = {
         telemetry: { tokenUsage: '4,650 / 25,000', slideProgress: 'Routing', attempt: '1 / 4', status: 'running' },
       },
       {
-        fromIndex: 5,
-        toIndex: 5,
+        fromIndex: 6,
+        toIndex: 6,
         actionText: 'Routing Prompt via Groq LPU',
         thought: 'Dispatched prompt via Groq LPU at 480 tokens/sec. Compiling response payload...',
         isStationary: true,
@@ -350,8 +388,8 @@ export const SIMULATION_SCENARIOS: Record<string, SimulationScenario> = {
         telemetry: { tokenUsage: '7,800 / 25,000', slideProgress: 'Code Ready', attempt: '1 / 4', status: 'running' },
       },
       {
-        fromIndex: 5,
-        toIndex: 6,
+        fromIndex: 6,
+        toIndex: 7,
         actionText: "Walking to Nisarg's Foundry",
         thought: 'Carrying generated python-pptx builder script to local PC for physical compilation...',
         isStationary: false,
@@ -360,8 +398,8 @@ export const SIMULATION_SCENARIOS: Record<string, SimulationScenario> = {
         telemetry: { tokenUsage: '8,400 / 25,000', slideProgress: 'Compiling...', attempt: '1 / 4', status: 'running' },
       },
       {
-        fromIndex: 6,
-        toIndex: 6,
+        fromIndex: 7,
+        toIndex: 7,
         actionText: 'Compiling 17 Slides via python-pptx',
         thought: 'Antigravity CLI running python-pptx compiler. Generating master corporate slide deck...',
         isStationary: true,
@@ -370,8 +408,8 @@ export const SIMULATION_SCENARIOS: Record<string, SimulationScenario> = {
         telemetry: { tokenUsage: '8,400 / 25,000', slideProgress: '17 / 17 Generated', attempt: '1 / 4', status: 'running' },
       },
       {
-        fromIndex: 6,
-        toIndex: 8,
+        fromIndex: 7,
+        toIndex: 9,
         actionText: 'Carrying Deck to QA Observatory',
         thought: 'Deck generated! Carrying master presentation to QA Observatory for rubric and link audits...',
         isStationary: false,
@@ -380,8 +418,8 @@ export const SIMULATION_SCENARIOS: Record<string, SimulationScenario> = {
         telemetry: { tokenUsage: '8,900 / 25,000', slideProgress: 'Auditing 17 slides', attempt: '1 / 4', status: 'running' },
       },
       {
-        fromIndex: 8,
-        toIndex: 8,
+        fromIndex: 9,
+        toIndex: 9,
         actionText: 'Auditing Slide Count & Citations',
         thought: 'Slide count verified: exactly 17 slides! All 8 academic citations respond with HTTP 200.',
         isStationary: true,
@@ -390,8 +428,8 @@ export const SIMULATION_SCENARIOS: Record<string, SimulationScenario> = {
         telemetry: { tokenUsage: '8,900 / 25,000', slideProgress: '17 / 17 PASSED', attempt: '1 / 4', status: 'success' },
       },
       {
-        fromIndex: 8,
-        toIndex: 9,
+        fromIndex: 9,
+        toIndex: 10,
         actionText: 'Walking to Shipping Dock',
         thought: 'Verification seal stamped! Carrying master files to Google Drive cloud shipping dock...',
         isStationary: false,
@@ -400,8 +438,8 @@ export const SIMULATION_SCENARIOS: Record<string, SimulationScenario> = {
         telemetry: { tokenUsage: '9,200 / 25,000', slideProgress: '17 / 17 Verified', attempt: '1 / 4', status: 'running' },
       },
       {
-        fromIndex: 9,
-        toIndex: 9,
+        fromIndex: 10,
+        toIndex: 10,
         actionText: 'Uploading to Drive & Telegram',
         thought: 'Google Drive upload complete. Google Calendar reminder set in IST. Telegram alert sent!',
         isStationary: true,
@@ -410,36 +448,56 @@ export const SIMULATION_SCENARIOS: Record<string, SimulationScenario> = {
         telemetry: { tokenUsage: '9,450 / 25,000', slideProgress: '17 / 17 DELIVERED', attempt: '1 / 4', status: 'success' },
       },
       {
-        fromIndex: 9,
+        fromIndex: 10,
         toIndex: 0,
         actionText: 'Mission Delivered. Journeying Home',
-        thought: 'Academic directive 100% complete! Returning along the cobblestone avenue to rest.',
+        thought: 'Academic directive 100% complete! Returning along the cobblestone avenue to rest at Home Cottage.',
         isStationary: false,
         activeNode: 'END',
-        activeModel: 'Vicarius Resting',
+        activeModel: 'Vicarius Journeying Home',
         telemetry: { tokenUsage: '9,450 / 25,000', slideProgress: 'Complete', attempt: '1 / 4 (Clean)', status: 'success' },
+      },
+      {
+        fromIndex: 0,
+        toIndex: 0,
+        actionText: 'Resting at Home Cottage',
+        thought: 'Home sweet home! Cozy by the fireplace with a hot cup of tea. Ready for your next academic assignment!',
+        isStationary: true,
+        activeNode: 'STANDBY',
+        activeModel: 'Autonomous Rest',
+        telemetry: { tokenUsage: '9,450 / 25,000', slideProgress: 'Mission Delivered', attempt: 'Standby', status: 'idle' },
       },
     ],
   },
   self_healing: {
     id: 'self_healing',
     title: 'Self-Healing Diagnostic Recovery Loop',
-    subtitle: 'QA slide count mismatch triggers Diagnoser hospital, repairs code, passes QA',
+    subtitle: 'QA slide count mismatch triggers Diagnoser hospital, repairs code, passes QA, returns home',
     badge: 'Self-Healing RCA',
     steps: [
       {
         fromIndex: 0,
-        toIndex: 4,
+        toIndex: 0,
+        actionText: 'Resting at Home Cottage',
+        thought: 'Autonomous standby mode. Monitoring pipeline queues for incoming coursework...',
+        isStationary: true,
+        activeNode: 'STANDBY',
+        activeModel: 'Autonomous Rest',
+        telemetry: { tokenUsage: '0 / 25,000', slideProgress: 'Standby', attempt: '1 / 4', status: 'idle' },
+      },
+      {
+        fromIndex: 0,
+        toIndex: 5,
         actionText: 'Planning & Building Initial Deck',
-        thought: 'Directives received! Fast-tracking planning to generate initial presentation draft...',
+        thought: 'Directives received! Fast-tracking planning at Thinker Academy to generate initial draft...',
         isStationary: false,
         activeNode: 'planner',
         activeModel: 'Claude 3.7 Sonnet',
         telemetry: { tokenUsage: '3,100 / 25,000', slideProgress: 'Initial Draft', attempt: '1 / 4', status: 'running' },
       },
       {
-        fromIndex: 4,
-        toIndex: 6,
+        fromIndex: 5,
+        toIndex: 7,
         actionText: "Compiling Deck in Nisarg's Foundry",
         thought: 'Antigravity CLI synthesizes slides... loop encountered early termination in section 4.',
         isStationary: true,
@@ -448,8 +506,8 @@ export const SIMULATION_SCENARIOS: Record<string, SimulationScenario> = {
         telemetry: { tokenUsage: '5,400 / 25,000', slideProgress: '14 Slides Built', attempt: '1 / 4', status: 'warning' },
       },
       {
-        fromIndex: 6,
-        toIndex: 8,
+        fromIndex: 7,
+        toIndex: 9,
         actionText: 'Carrying Deck to QA Observatory',
         thought: 'Taking initial compilation to QA Observatory for slide count and rubric check...',
         isStationary: false,
@@ -458,8 +516,8 @@ export const SIMULATION_SCENARIOS: Record<string, SimulationScenario> = {
         telemetry: { tokenUsage: '5,900 / 25,000', slideProgress: 'Checking...', attempt: '1 / 4', status: 'running' },
       },
       {
-        fromIndex: 8,
-        toIndex: 8,
+        fromIndex: 9,
+        toIndex: 9,
         actionText: 'QA ALERT: Slide Count Mismatch (14/17)',
         thought: 'FAIL: PRD rubric specifies strictly 17 slides. Build only produced 14. Triggering self-healing...',
         isStationary: true,
@@ -468,8 +526,8 @@ export const SIMULATION_SCENARIOS: Record<string, SimulationScenario> = {
         telemetry: { tokenUsage: '6,200 / 25,000', slideProgress: '14 / 17 (FAIL)', attempt: '1 / 4', status: 'warning' },
       },
       {
-        fromIndex: 8,
-        toIndex: 7,
+        fromIndex: 9,
+        toIndex: 8,
         actionText: 'Rerouting to Self-Healing Clinic',
         thought: 'Emergency diversion to Self-Healing Diagnostic Hospital! Initializing Root-Cause Analysis...',
         isStationary: false,
@@ -478,8 +536,8 @@ export const SIMULATION_SCENARIOS: Record<string, SimulationScenario> = {
         telemetry: { tokenUsage: '6,800 / 25,000', slideProgress: 'Diagnostic Ingest', attempt: '2 / 4', status: 'warning' },
       },
       {
-        fromIndex: 7,
-        toIndex: 7,
+        fromIndex: 8,
+        toIndex: 8,
         actionText: 'Diagnoser Performing Root-Cause Analysis',
         thought: 'RCA: Script loop index stopped at 14. Synthesizing surgical code patch to add missing 3 slides...',
         isStationary: true,
@@ -488,8 +546,8 @@ export const SIMULATION_SCENARIOS: Record<string, SimulationScenario> = {
         telemetry: { tokenUsage: '9,100 / 25,000', slideProgress: 'Patch Synthesized', attempt: '2 / 4', status: 'warning' },
       },
       {
-        fromIndex: 7,
-        toIndex: 6,
+        fromIndex: 8,
+        toIndex: 7,
         actionText: 'Carrying Surgical Patch to Foundry',
         thought: 'Patch synthesized! Walking back to Foundry for clean re-compilation (Attempt 2 of 4)...',
         isStationary: false,
@@ -498,8 +556,8 @@ export const SIMULATION_SCENARIOS: Record<string, SimulationScenario> = {
         telemetry: { tokenUsage: '9,600 / 25,000', slideProgress: 'Applying Patch', attempt: '2 / 4', status: 'running' },
       },
       {
-        fromIndex: 6,
-        toIndex: 6,
+        fromIndex: 7,
+        toIndex: 7,
         actionText: 'Recompiling with Self-Healed Patch',
         thought: 'Antigravity CLI re-executes with patch. All 17 slides generated with complete typography!',
         isStationary: true,
@@ -508,8 +566,8 @@ export const SIMULATION_SCENARIOS: Record<string, SimulationScenario> = {
         telemetry: { tokenUsage: '11,200 / 25,000', slideProgress: '17 / 17 Generated', attempt: '2 / 4', status: 'running' },
       },
       {
-        fromIndex: 6,
-        toIndex: 8,
+        fromIndex: 7,
+        toIndex: 9,
         actionText: 'Returning to QA Observatory',
         thought: 'Re-entering QA Observatory with healed 17-slide master presentation...',
         isStationary: false,
@@ -518,8 +576,8 @@ export const SIMULATION_SCENARIOS: Record<string, SimulationScenario> = {
         telemetry: { tokenUsage: '11,600 / 25,000', slideProgress: 'Re-verifying', attempt: '2 / 4', status: 'running' },
       },
       {
-        fromIndex: 8,
-        toIndex: 8,
+        fromIndex: 9,
+        toIndex: 9,
         actionText: 'QA Audit: PASSED 100%',
         thought: 'SUCCESS: Exactly 17 slides verified! Self-healing resolution verified in 1 retry attempt.',
         isStationary: true,
@@ -528,8 +586,8 @@ export const SIMULATION_SCENARIOS: Record<string, SimulationScenario> = {
         telemetry: { tokenUsage: '11,600 / 25,000', slideProgress: '17 / 17 PASSED', attempt: '2 / 4 (Healed)', status: 'success' },
       },
       {
-        fromIndex: 8,
-        toIndex: 9,
+        fromIndex: 9,
+        toIndex: 10,
         actionText: 'Shipping Healed Presentation to Drive',
         thought: 'Uploading self-healed master deck to Google Drive and broadcasting Telegram completion payload.',
         isStationary: false,
@@ -538,14 +596,24 @@ export const SIMULATION_SCENARIOS: Record<string, SimulationScenario> = {
         telemetry: { tokenUsage: '12,100 / 25,000', slideProgress: '17 / 17 DELIVERED', attempt: '2 / 4', status: 'success' },
       },
       {
-        fromIndex: 9,
+        fromIndex: 10,
         toIndex: 0,
         actionText: 'Recovery Complete. Returning Home',
-        thought: 'Delivered with self-healing audit trail intact! Returning home.',
+        thought: 'Delivered with self-healing audit trail intact! Returning along the avenue to Home Cottage.',
         isStationary: false,
         activeNode: 'END',
-        activeModel: 'Resting',
+        activeModel: 'Journeying Home',
         telemetry: { tokenUsage: '12,100 / 25,000', slideProgress: 'Complete', attempt: '2 / 4 (Healed)', status: 'success' },
+      },
+      {
+        fromIndex: 0,
+        toIndex: 0,
+        actionText: 'Resting at Home Cottage',
+        thought: 'Self-healing run resolved successfully. Resting safely back at home!',
+        isStationary: true,
+        activeNode: 'STANDBY',
+        activeModel: 'Autonomous Rest',
+        telemetry: { tokenUsage: '12,100 / 25,000', slideProgress: 'Healed & Resting', attempt: 'Standby', status: 'idle' },
       },
     ],
   },
@@ -557,7 +625,17 @@ export const SIMULATION_SCENARIOS: Record<string, SimulationScenario> = {
     steps: [
       {
         fromIndex: 0,
-        toIndex: 1,
+        toIndex: 0,
+        actionText: 'Resting at Home Cottage',
+        thought: 'Campus quiet. Standing by at Home Cottage for Google Classroom feed updates...',
+        isStationary: true,
+        activeNode: 'STANDBY',
+        activeModel: 'Autonomous Rest',
+        telemetry: { tokenUsage: '0 / 25,000', slideProgress: 'Standby', attempt: '1 / 4', status: 'idle' },
+      },
+      {
+        fromIndex: 0,
+        toIndex: 2,
         actionText: 'Checking Google Classroom & Gmail',
         thought: 'Scanning Google Classroom courseWork feed for CS-401 and parsing course syllabus announcements...',
         isStationary: false,
@@ -566,8 +644,8 @@ export const SIMULATION_SCENARIOS: Record<string, SimulationScenario> = {
         telemetry: { tokenUsage: '150 / 25,000', slideProgress: '0 / 17', attempt: '1 / 4', status: 'running' },
       },
       {
-        fromIndex: 1,
-        toIndex: 1,
+        fromIndex: 2,
+        toIndex: 2,
         actionText: 'Extracting PDF Syllabus & Rubric',
         thought: 'Downloaded assignment attachment rubric.pdf. Parsing text constraints using pdf-parse engine...',
         isStationary: true,
@@ -576,8 +654,8 @@ export const SIMULATION_SCENARIOS: Record<string, SimulationScenario> = {
         telemetry: { tokenUsage: '650 / 25,000', slideProgress: 'PDF Extracted', attempt: '1 / 4', status: 'running' },
       },
       {
-        fromIndex: 1,
-        toIndex: 2,
+        fromIndex: 2,
+        toIndex: 3,
         actionText: 'Committing Extracted Rubrics to Supabase',
         thought: 'Writing parsed grading rubrics to Supabase tasks table. Broadcasting realtime event...',
         isStationary: false,
@@ -586,8 +664,8 @@ export const SIMULATION_SCENARIOS: Record<string, SimulationScenario> = {
         telemetry: { tokenUsage: '820 / 25,000', slideProgress: 'Rubric Saved', attempt: '1 / 4', status: 'running' },
       },
       {
-        fromIndex: 2,
-        toIndex: 4,
+        fromIndex: 3,
+        toIndex: 5,
         actionText: 'Academy: Dual Deliverable Blueprint',
         thought: 'Thinker Academy designing dual blueprint: 17-slide corporate PPTX deck AND 8-page DOCX technical paper.',
         isStationary: true,
@@ -596,8 +674,8 @@ export const SIMULATION_SCENARIOS: Record<string, SimulationScenario> = {
         telemetry: { tokenUsage: '4,500 / 25,000', slideProgress: 'Dual Blueprint', attempt: '1 / 4', status: 'running' },
       },
       {
-        fromIndex: 4,
-        toIndex: 6,
+        fromIndex: 5,
+        toIndex: 7,
         actionText: "Foundry: Compiling PPTX and Word DOCX",
         thought: 'Antigravity CLI compiles both python-pptx presentation and python-docx report locally...',
         isStationary: true,
@@ -606,8 +684,8 @@ export const SIMULATION_SCENARIOS: Record<string, SimulationScenario> = {
         telemetry: { tokenUsage: '8,200 / 25,000', slideProgress: 'Both Files Built', attempt: '1 / 4', status: 'running' },
       },
       {
-        fromIndex: 6,
-        toIndex: 8,
+        fromIndex: 7,
+        toIndex: 9,
         actionText: 'QA Observatory: Multi-File Audit',
         thought: 'Verifying slide count = 17, DOCX page count = 8, and checking APA citation formatting...',
         isStationary: true,
@@ -616,8 +694,8 @@ export const SIMULATION_SCENARIOS: Record<string, SimulationScenario> = {
         telemetry: { tokenUsage: '8,900 / 25,000', slideProgress: 'Both Verified', attempt: '1 / 4', status: 'success' },
       },
       {
-        fromIndex: 8,
-        toIndex: 9,
+        fromIndex: 9,
+        toIndex: 10,
         actionText: 'Shipping Dual Package to Drive',
         thought: 'Uploading PPTX and DOCX to designated Google Drive folder. Booking submission calendar event!',
         isStationary: false,
@@ -626,14 +704,24 @@ export const SIMULATION_SCENARIOS: Record<string, SimulationScenario> = {
         telemetry: { tokenUsage: '9,300 / 25,000', slideProgress: 'Uploaded 2 Files', attempt: '1 / 4', status: 'success' },
       },
       {
-        fromIndex: 9,
+        fromIndex: 10,
         toIndex: 0,
         actionText: 'Coursework Complete. Returning Home',
-        thought: 'Multi-modal assignment delivered! Vicarius returning to Telegram porch.',
+        thought: 'Multi-modal assignment delivered! Vicarius returning along the avenue to rest at Home Cottage.',
         isStationary: false,
         activeNode: 'END',
-        activeModel: 'Resting',
+        activeModel: 'Returning Home',
         telemetry: { tokenUsage: '9,300 / 25,000', slideProgress: 'Delivered', attempt: '1 / 4', status: 'success' },
+      },
+      {
+        fromIndex: 0,
+        toIndex: 0,
+        actionText: 'Resting at Home Cottage',
+        thought: 'Warm and peaceful at Home Cottage. All student assignments delivered successfully!',
+        isStationary: true,
+        activeNode: 'STANDBY',
+        activeModel: 'Autonomous Rest',
+        telemetry: { tokenUsage: '9,300 / 25,000', slideProgress: 'All Complete', attempt: 'Standby', status: 'idle' },
       },
     ],
   },
@@ -767,6 +855,7 @@ export function AgentWorld({
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [showInspector, setShowInspector] = useState<boolean>(false);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [selectedHome, setSelectedHome] = useState<boolean>(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -794,25 +883,28 @@ export function AgentWorld({
     return SIMULATION_SCENARIOS[scenarioKey] || SIMULATION_SCENARIOS.standard;
   }, [scenarioKey]);
 
-  // Derive active real task from selectedTask or pick the most active/recent task
+  // Derive active real task or stay at Home when agent is doing nothing
   const activeTask = useMemo(() => {
+    if (selectedHome) return null;
     if (selectedTask) return selectedTask;
+    // Check if any task is actively running or in progress
     const running = tasks.find((t) => ['claimed', 'building', 'verifying', 'extracting'].includes(t.status));
     if (running) return running;
     const queued = tasks.find((t) => t.status === 'queued' && !t.archived);
     if (queued) return queued;
-    return tasks[0] || null;
-  }, [tasks, selectedTask]);
+    // When no tasks are actively compiling or queued, agent is doing nothing -> stays at Home!
+    return null;
+  }, [tasks, selectedTask, selectedHome]);
 
-  // Map the real task's actual database status to one of the 10 facilities
+  // Map real task status to campus facility, defaulting to Home Cottage when doing nothing
   const liveStageInfo = useMemo(() => {
     if (!activeTask) {
       return {
-        landmarkIndex: 0,
-        action: 'Idle at Telegram Base',
-        thought: 'Campus quiet. Listening on Telegram bot webhook and student coursework channels...',
-        node: 'START',
-        model: 'Idle',
+        landmarkIndex: 0, // agent_home at (510, 535)
+        action: 'Resting at Home Cottage',
+        thought: 'Cozy by the fireplace with a hot cup of tea. Standing by on the porch for your next academic assignment!',
+        node: 'STANDBY',
+        model: 'Autonomous Idle',
         status: 'idle' as const,
         deliverableCount: 0,
       };
@@ -823,7 +915,7 @@ export function AgentWorld({
     switch (activeTask.status) {
       case 'done':
         return {
-          landmarkIndex: 9, // Calendar Vault & Shipping Dock
+          landmarkIndex: 10, // Calendar Vault & Shipping Dock
           action: `Delivered: "${activeTask.title}"`,
           thought: delivCount > 0
             ? `All ${delivCount} deliverables uploaded to Google Drive with IST calendar reminders!`
@@ -836,7 +928,7 @@ export function AgentWorld({
       case 'failed':
       case 'flagged':
         return {
-          landmarkIndex: 7, // Self-Healing Diagnostic Hospital (Landmark 8)
+          landmarkIndex: 8, // Self-Healing Diagnostic Hospital
           action: `Self-Healing Hospital: "${activeTask.title}"`,
           thought: activeTask.error_message
             ? `Failure diagnosed: "${activeTask.error_message.slice(0, 60)}...". Ready for surgical re-attempt.`
@@ -848,7 +940,7 @@ export function AgentWorld({
         };
       case 'building':
         return {
-          landmarkIndex: 6, // Nisarg's Foundry & GPU Workshop (Landmark 7)
+          landmarkIndex: 7, // Nisarg's Foundry & GPU Workshop
           action: `Foundry Compiling: "${activeTask.title}"`,
           thought: `Antigravity CLI executing (${activeTask.task_type || 'worker build'}). Synthesizing artifacts in work_dirs/...`,
           node: 'coder',
@@ -858,7 +950,7 @@ export function AgentWorld({
         };
       case 'verifying':
         return {
-          landmarkIndex: 8, // Verification Observatory (Landmark 9)
+          landmarkIndex: 9, // Verification Observatory
           action: `QA Observatory: "${activeTask.title}"`,
           thought: 'Auditing presentation slide counts, IEEE citation URLs, and format rubrics...',
           node: 'verifier',
@@ -868,7 +960,7 @@ export function AgentWorld({
         };
       case 'claimed':
         return {
-          landmarkIndex: 4, // Thinker & Research Academy (Landmark 5)
+          landmarkIndex: 5, // Thinker & Research Academy
           action: `Academy Planning: "${activeTask.title}"`,
           thought: 'Claude 3.7 Sonnet deconstructing grading rubrics and drafting 17-slide execution blueprint...',
           node: 'planner',
@@ -878,7 +970,7 @@ export function AgentWorld({
         };
       case 'queued':
         return {
-          landmarkIndex: 2, // Supabase Hub (Landmark 3)
+          landmarkIndex: 3, // Supabase Hub
           action: `Queued in Supabase: "${activeTask.title}"`,
           thought: 'Directive committed to PostgreSQL ledger. Awaiting execution slot in worker build queue...',
           node: 'state_writer',
@@ -889,7 +981,7 @@ export function AgentWorld({
       case 'extracting':
       case 'new':
         return {
-          landmarkIndex: 1, // Google Classroom & Ingest Hub (Landmark 2)
+          landmarkIndex: 2, // Google Classroom & Ingest Hub
           action: `Classroom Ingest: "${activeTask.title}"`,
           thought: 'Extracting assignment syllabus and PDF rubrics using pdf-parse engine...',
           node: 'ingestor',
@@ -899,11 +991,11 @@ export function AgentWorld({
         };
       default:
         return {
-          landmarkIndex: 0,
-          action: `Resting: "${activeTask.title}"`,
-          thought: 'Directive in resting queue. Ready for student instructions.',
-          node: 'START',
-          model: 'Idle',
+          landmarkIndex: 0, // Home Cottage
+          action: `Resting at Home: "${activeTask.title}"`,
+          thought: 'Directive in standby. Vicarius resting by the fireplace at Home Cottage.',
+          node: 'STANDBY',
+          model: 'Autonomous Rest',
           status: 'idle' as const,
           deliverableCount: delivCount,
         };
@@ -967,9 +1059,20 @@ export function AgentWorld({
       return { x: fromLm.x, y: fromLm.y + 48, isMoving, facingLeft };
     }
 
-    const isLongReturn = (fromLm.id === 'shipping_port' || fromLm.id === 'qa_observatory') && toLm.id === 'telegram_base';
-    const midX = (fromLm.x + toLm.x) / 2;
-    const midY = isLongReturn ? 590 : (fromLm.y + toLm.y) / 2 - 35;
+    const isLongReturn = (fromLm.id === 'shipping_port' || fromLm.id === 'qa_observatory') && (toLm.id === 'agent_home' || toLm.id === 'telegram_base');
+    const isHomeToTelegram = (fromLm.id === 'agent_home' && toLm.id === 'telegram_base') || (fromLm.id === 'telegram_base' && toLm.id === 'agent_home');
+
+    let midX = (fromLm.x + toLm.x) / 2;
+    let midY = (fromLm.y + toLm.y) / 2 - 35;
+
+    if (isLongReturn) {
+      midX = (fromLm.x + toLm.x) / 2;
+      midY = 575;
+    } else if (isHomeToTelegram) {
+      midX = (fromLm.x + toLm.x) / 2 - 20;
+      midY = 545;
+    }
+
     const u = 1 - t;
     const x = u * u * fromLm.x + 2 * u * t * midX + t * t * toLm.x;
     const y = u * u * (fromLm.y + 48) + 2 * u * t * midY + t * t * (toLm.y + 48);
@@ -985,7 +1088,7 @@ export function AgentWorld({
   const currentActiveNode = mode === 'simulation' ? currentStep.activeNode : liveStageInfo.node;
   const currentActiveModel = mode === 'simulation' ? currentStep.activeModel : liveStageInfo.model;
 
-  // Cobblestone pathways connecting all 10 facilities in an academic quadrangle
+  // Cobblestone pathways connecting all 11 facilities (including Home Cottage at 510, 535)
   const campusPaths = [
     'M 110 360 C 140 280 180 200 240 190',
     'M 240 190 C 290 200 340 280 390 360',
@@ -998,7 +1101,12 @@ export function AgentWorld({
     'M 1090 220 C 1080 380 1010 490 940 530',
     'M 1090 220 C 1110 290 1130 360 1140 430',
     'M 940 530 C 920 470 920 420 940 360',
-    'M 1140 430 C 1000 600 400 610 110 360',
+    // Bottom avenue connecting Shipping Dock (1140, 430) to Home Cottage (510, 535)
+    'M 1140 430 C 960 570 720 560 510 535',
+    // Bottom avenue connecting Home Cottage (510, 535) to Student Command (110, 360)
+    'M 510 535 C 380 560 220 500 110 360',
+    // Courtyard pathway from Home Cottage up to Central Knowledge Fountain
+    'M 510 535 C 550 450 590 380 640 310',
   ];
 
   // Ambience colors
@@ -1072,7 +1180,48 @@ export function AgentWorld({
           strokeWidth={isActive ? 2.2 : 1.4}
         />
 
-        {/* Roof Structure */}
+        {/* Specific Architectural Roof & Facade Details */}
+        {lm.id === 'agent_home' && (
+          <>
+            {/* Steep Pitch Cottage Gable Roof */}
+            <polygon points="-50,-14 0,-56 50,-14" fill="url(#roofBronze)" stroke="#5a4316" strokeWidth="1.8" />
+            
+            {/* Chimney with warm red brick styling */}
+            <rect x="22" y="-52" width="12" height="26" fill="#8b4513" stroke="#5a2d0c" strokeWidth="1.2" rx="1" />
+            <rect x="20" y="-55" width="16" height="4" fill="#5a2d0c" rx="1" />
+            
+            {/* Hearth Smoke Puffs drifting up */}
+            <circle cx="28" cy="-62" r="3.5" fill="#d1c5b6" opacity="0.65" />
+            <circle cx="32" cy="-70" r="4.5" fill="#d1c5b6" opacity="0.45" />
+            <circle cx="29" cy="-79" r="6" fill="#d1c5b6" opacity="0.28" />
+
+            {/* Cozy Attic Dormer Window in Gable */}
+            <circle cx="0" cy="-32" r="7" fill="#ffdea9" stroke="#5a4316" strokeWidth="1.4" />
+            <line x1="-7" y1="-32" x2="7" y2="-32" stroke="#5a4316" strokeWidth="1" />
+            <line x1="0" y1="-39" x2="0" y2="-25" stroke="#5a4316" strokeWidth="1" />
+            
+            {/* Side Window with Flower Box */}
+            <rect x="-34" y="8" width="16" height="14" rx="2" fill="#ffdea9" stroke="#392f23" strokeWidth="1" />
+            <line x1="-26" y1="8" x2="-26" y2="22" stroke="#392f23" strokeWidth="0.8" />
+            <rect x="-36" y="20" width="20" height="4" rx="1" fill="#705728" stroke="#392f23" strokeWidth="0.8" />
+            <circle cx="-32" cy="18" r="2" fill="#e74c3c" />
+            <circle cx="-26" cy="17" r="2.2" fill="#f1c40f" />
+            <circle cx="-20" cy="18" r="2" fill="#e67e22" />
+
+            {/* Welcoming Porch Awning over Front Door */}
+            <polygon points="-16,10 0,2 16,10" fill="#705728" stroke="#392f23" strokeWidth="1" />
+            <line x1="-14" y1="10" x2="-14" y2="40" stroke="#5a4316" strokeWidth="1.8" />
+            <line x1="14" y1="10" x2="14" y2="40" stroke="#5a4316" strokeWidth="1.8" />
+
+            {/* Hanging Warm Porch Lantern */}
+            <circle cx="0" cy="9" r="8" fill="url(#lampGlow)" opacity="0.9" />
+            <circle cx="0" cy="9" r="2.5" fill="#ffd166" />
+            
+            {/* Stone Doorstep Walkway */}
+            <ellipse cx="0" cy="46" rx="9" ry="3" fill="#d5c7b3" opacity="0.75" />
+          </>
+        )}
+
         {lm.id === 'telegram_base' && (
           <>
             <polygon points="-48,-14 0,-52 48,-14" fill="url(#roofBronze)" stroke="#5a4316" strokeWidth="1.5" />
@@ -1255,7 +1404,7 @@ export function AgentWorld({
                   letterSpacing: '-0.01em',
                 }}
               >
-                Living Agent Campus &mdash; Autonomous 10-Stage City
+                Living Agent Campus &mdash; Autonomous 10-Stage City &amp; Haven
               </h3>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
                 <span
@@ -1276,7 +1425,7 @@ export function AgentWorld({
                   {mode === 'live' ? `Supabase Live Connected (${tasks.length} Directives)` : 'Scenario Simulation Tour'}
                 </span>
                 <span style={{ fontSize: '11px', color: 'var(--on-surface-variant)' }}>
-                  10 Architectural Facilities &bull; Authentic Brand Tooling &bull; Zero Emojis
+                  Home Cottage Haven &bull; 10 Operational Facilities &bull; Authentic Brand Tooling &bull; Zero Emojis
                 </span>
               </div>
             </div>
@@ -1341,13 +1490,19 @@ export function AgentWorld({
           </div>
 
           {/* Real Task Selector Dropdown in Live Mode */}
-          {mode === 'live' && tasks.length > 0 && (
+          {mode === 'live' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <select
-                value={activeTask?.id || ''}
+                value={selectedHome ? '__home__' : (activeTask?.id || '__home__')}
                 onChange={(e) => {
-                  const found = tasks.find((t) => t.id === e.target.value);
-                  if (found && onSelectTask) onSelectTask(found);
+                  if (e.target.value === '__home__') {
+                    setSelectedHome(true);
+                    if (onSelectTask) onSelectTask(null);
+                  } else {
+                    setSelectedHome(false);
+                    const found = tasks.find((t) => t.id === e.target.value);
+                    if (found && onSelectTask) onSelectTask(found);
+                  }
                 }}
                 style={{
                   fontSize: '0.82rem',
@@ -1361,6 +1516,7 @@ export function AgentWorld({
                   maxWidth: 240,
                 }}
               >
+                <option value="__home__">[HOME] Vicarius Haven (Resting / Standby)</option>
                 {tasks.map((t) => (
                   <option key={t.id} value={t.id}>
                     [{t.status.toUpperCase()}] {t.title.slice(0, 24)}...
@@ -1417,8 +1573,8 @@ export function AgentWorld({
               }}
             >
               <option value="standard">Scenario 1: Standard 17-Slide Delivery</option>
-              <option value="self_healing">Scenario 2: Self-Healing & Diagnostic Loop</option>
-              <option value="classroom">Scenario 3: Google Classroom & PDF Ingest</option>
+              <option value="self_healing">Scenario 2: Self-Healing &amp; Diagnostic Loop</option>
+              <option value="classroom">Scenario 3: Google Classroom &amp; PDF Ingest</option>
             </select>
           )}
 
@@ -1629,7 +1785,7 @@ export function AgentWorld({
       )}
 
       {/* ── Live Quick Task Bar (Live Mode) ── */}
-      {mode === 'live' && tasks.length > 0 && (
+      {mode === 'live' && (
         <div
           style={{
             background: 'var(--surface-container-low)',
@@ -1644,16 +1800,48 @@ export function AgentWorld({
           }}
         >
           <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--primary)', flexShrink: 0 }}>
-            Live Tasks:
+            Live Directives:
           </span>
+
+          {/* Quick Home Cottage Button */}
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedHome(true);
+              if (onSelectTask) onSelectTask(null);
+            }}
+            style={{
+              fontSize: '0.74rem',
+              padding: '3px 10px',
+              borderRadius: 4,
+              border: `1px solid ${!activeTask ? 'var(--primary)' : 'var(--outline-variant)'}`,
+              background: !activeTask ? 'var(--surface)' : 'transparent',
+              color: !activeTask ? 'var(--primary)' : 'var(--on-surface-variant)',
+              cursor: 'pointer',
+              fontWeight: !activeTask ? 700 : 500,
+              whiteSpace: 'nowrap',
+              flexShrink: 0,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 5,
+              boxShadow: !activeTask ? '0 1px 3px rgba(0,0,0,0.06)' : 'none',
+            }}
+          >
+            <HomeCottageBrandIcon size={12} color={!activeTask ? 'var(--primary)' : 'currentColor'} />
+            <span>Home (Resting)</span>
+          </button>
+
           {tasks.slice(0, 6).map((t) => {
-            const isSel = activeTask?.id === t.id;
+            const isSel = !selectedHome && activeTask?.id === t.id;
             const statusColor = t.status === 'done' ? '#276a3c' : t.status === 'failed' ? '#ba1a1a' : 'var(--primary)';
             return (
               <button
                 key={t.id}
                 type="button"
-                onClick={() => onSelectTask && onSelectTask(t)}
+                onClick={() => {
+                  setSelectedHome(false);
+                  if (onSelectTask) onSelectTask(t);
+                }}
                 style={{
                   fontSize: '0.74rem',
                   padding: '3px 8px',
@@ -1684,7 +1872,7 @@ export function AgentWorld({
         </div>
       )}
 
-      {/* ── SVG Campus Map (10 Facilities Panoramic Canvas) ── */}
+      {/* ── SVG Campus Map (11 Facilities Panoramic Canvas including Home Cottage) ── */}
       <div
         style={{
           position: 'relative',
@@ -1786,7 +1974,7 @@ export function AgentWorld({
             />
           ))}
 
-          {/* Heritage Street Lanterns */}
+          {/* Heritage Street Lanterns flanking paths & Home Cottage */}
           {[
             { x: 190, y: 280 },
             { x: 320, y: 280 },
@@ -1796,7 +1984,8 @@ export function AgentWorld({
             { x: 870, y: 280 },
             { x: 1010, y: 280 },
             { x: 1020, y: 440 },
-            { x: 500, y: 550 },
+            { x: 420, y: 545 },
+            { x: 600, y: 545 },
           ].map((lamp, idx) => (
             <g key={`lamp-${idx}`} transform={`translate(${lamp.x}, ${lamp.y})`}>
               <ellipse cx="0" cy="12" rx="4" ry="1.5" fill="#231a0f" opacity="0.15" />
@@ -1806,7 +1995,7 @@ export function AgentWorld({
             </g>
           ))}
 
-          {/* Render All 10 Campus Landmark Facilities */}
+          {/* Render All 11 Campus Facilities (Home Cottage is Landmark 0, Facilities 1-10) */}
           {CAMPUS_LANDMARKS.map((lm, idx) => (
             <g
               key={lm.id}
@@ -1821,7 +2010,7 @@ export function AgentWorld({
               {renderBuilding(lm)}
               <circle cx="-38" cy="-10" r="9" fill={lm.color} />
               <text x="-38" y="-7" textAnchor="middle" fontSize="9" fontWeight="800" fill="#fff" fontFamily="'Manrope', sans-serif">
-                {idx + 1}
+                {lm.id === 'agent_home' ? 'H' : idx}
               </text>
             </g>
           ))}
@@ -1959,7 +2148,7 @@ export function AgentWorld({
                     fontWeight: 700,
                   }}
                 >
-                  {mode === 'live' ? `Live: ${activeTask?.status.toUpperCase() || 'IDLE'}` : (agentPos.isMoving ? 'In Transit' : 'At Facility')}
+                  {mode === 'live' ? (!activeTask ? 'STANDBY AT HOME' : `Live: ${activeTask.status.toUpperCase()}`) : (agentPos.isMoving ? 'In Transit' : 'At Facility')}
                 </span>
               </div>
               <p
@@ -2085,7 +2274,7 @@ export function AgentWorld({
                   transition: 'all 0.15s ease',
                 }}
               >
-                <span style={{ fontSize: '9px', fontWeight: 800 }}>{idx + 1}</span>
+                <span style={{ fontSize: '9px', fontWeight: 800 }}>{lm.id === 'agent_home' ? 'H' : idx}</span>
                 <span>{lm.name.split(' ')[0]}</span>
               </button>
             );
@@ -2253,7 +2442,7 @@ export function AgentWorld({
 
             <div>
               <span style={{ fontSize: '0.74rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--primary)', display: 'block', marginBottom: 6 }}>
-                Official Integrated Tools & Brand APIs
+                Official Integrated Tools &amp; Brand APIs
               </span>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 {activeLandmarkDetail.toolsUsed.map((tool) => (
