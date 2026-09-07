@@ -541,7 +541,8 @@ def execute_build(task: Dict[str, Any], retry_count: int = 0, retry_note: str = 
     task_id = task.get("id", "temp")
     task_type = task.get("task_type", "document")
     weight = task.get("weight", "light")
-    task_work_dir = BASE_WORK_DIR / task_id
+    from worker.state import get_task_work_dir
+    task_work_dir = Path(get_task_work_dir(str(BASE_WORK_DIR), task_id, task.get("title", "")))
     task_work_dir.mkdir(parents=True, exist_ok=True)
 
     timeout_minutes = timeout_minutes_for_weight(task)
@@ -561,7 +562,8 @@ def execute_build(task: Dict[str, Any], retry_count: int = 0, retry_note: str = 
             f"🚀 <b>Task Started:</b> {html_module.escape(task.get('title', 'Assignment'))}\n"
             f"<b>Course:</b> {html_module.escape(task.get('course') or 'General')}\n"
             f"<b>Type:</b> <code>{task_type}</code> ({weight} lift)\n"
-            f"<b>Timeout:</b> {timeout_minutes}m\n\n"
+            f"<b>Timeout:</b> {timeout_minutes}m\n"
+            f"<b>📁 Work Folder:</b> <code>{task_work_dir.name}</code>\n\n"
             f"<i>LangGraph AI agent is generating your academic deliverables...</i>"
         )
         send_telegram_notification(start_msg)
@@ -570,7 +572,8 @@ def execute_build(task: Dict[str, Any], retry_count: int = 0, retry_note: str = 
         note_short = (retry_note.strip() or "Refining output")[:140]
         send_telegram_notification(
             f"🔧 <b>Retry {retry_count}/{max_retries}</b> — applying fix: "
-            f"<i>{html_module.escape(note_short)}</i>"
+            f"<i>{html_module.escape(note_short)}</i>\n"
+            f"<b>📁 Reusing folder:</b> <code>{task_work_dir.name}</code>"
         )
 
     if weight == "heavy":
@@ -1102,7 +1105,8 @@ def deliver_and_track(task: Dict[str, Any], produced_files: List[Path], result_s
     task_type = task.get("task_type", "document")
     sb = get_supabase()
     creds = get_google_credentials()
-    task_work_dir = BASE_WORK_DIR / task_id
+    from worker.state import get_task_work_dir
+    task_work_dir = Path(get_task_work_dir(str(BASE_WORK_DIR), task_id, task.get("title", "")))
 
     # If code project, ensure clean project.zip exists
     final_files = list(produced_files)

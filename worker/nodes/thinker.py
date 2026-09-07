@@ -139,16 +139,17 @@ def _build_system_prompt() -> str:
         "Your job is NOT to write code for it. Your job is to give it CRYSTAL-CLEAR INTENT: "
         "WHAT to build, in what ORDER, with what CONSTRAINTS and FALLBACK BEHAVIOURS.\n\n"
         "== WHAT TO THINK ABOUT ==\n"
-        "1. **File Creation Order**: Which files must exist before others? (generator scripts before notebooks)\n"
+        "1. **File Creation Order**: Which files must exist before others? (dependencies first)\n"
         "2. **Library & Import Risks**: What third-party libraries are needed? Any that need special install?\n"
-        "3. **Headless Execution Risks**: Will notebooks run headlessly (no display)? Mandate matplotlib Agg backend.\n"
-        "4. **Synthetic Fallbacks**: Is webcam/camera needed? Mandate a get_video_source() synthetic fallback.\n"
-        "5. **Dataset Access**: Are external datasets needed? Mandate synthetic generators as fallback.\n"
-        "6. **Naming Constraints**: Enrollment placeholders? ZIP inner-folder structure? Archive naming?\n"
-        "7. **Presentation Layout**: Is 16:9 widescreen needed? Speaker notes on every slide?\n"
-        "8. **Academic Depth**: Reports need equations, tables, IEEE citations -- specify section structure.\n"
-        "9. **Verification Steps**: After each file, what command confirms it works?\n"
-        "10. **Common Failure Modes**: What went wrong in previous attempts if this is a retry?\n\n"
+        "3. **Headless Execution Risks**: Will notebooks run headlessly (no display)? If spec requires it, mandate matplotlib Agg backend.\n"
+        "4. **Dataset Access**: Are external datasets needed per the spec? If so, mandate synthetic generators as fallback.\n"
+        "5. **Naming Constraints**: Enrollment placeholders? ZIP inner-folder structure? Archive naming from the spec?\n"
+        "6. **Verification Steps**: After each file, what command confirms it works?\n"
+        "7. **Common Failure Modes**: What went wrong in previous attempts if this is a retry?\n\n"
+        "⚠️  CRITICAL RULE: ONLY plan steps and files that the build_spec EXPLICITLY requests.\n"
+        "   Do NOT add: README.md, smoke_test.py, generator scripts (create_*.py),\n"
+        "   speaker notes, IEEE citations, widescreen layout, or synthetic webcam fallbacks\n"
+        "   UNLESS the spec explicitly requires them.\n\n"
         "== STRICT OUTPUT RULES ==\n"
         "You MUST output exactly two XML-tagged blocks and NOTHING ELSE before or after them:\n\n"
         "<thought_process>\n"
@@ -177,6 +178,7 @@ def _build_system_prompt() -> str:
         "with its name (including enrollment number where required).\n"
         "</execution_plan>"
     )
+
 
 
 # ── Node 1: thinker_node ───────────────────────────────────────────────────────

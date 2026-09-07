@@ -1,9 +1,29 @@
 """
 Vicarius Agent - LangGraph State Definition
-Defines the typed state passed between nodes in the Vicarius LangGraph agent.
+Defines the typed state passed between nodes in the Vicarius Agent.
 """
 
+import re
 from typing import TypedDict, List, Dict, Any, Optional
+
+
+def _title_slug(title: str, max_len: int = 40) -> str:
+    """Convert a task title to a safe directory name slug."""
+    slug = re.sub(r'[^\w\s-]', '', title.lower())   # keep word chars, spaces, hyphens
+    slug = re.sub(r'[\s_]+', '_', slug).strip('_-')  # spaces → underscore
+    return slug[:max_len].strip('_-') or "task"
+
+
+def get_task_work_dir(base_work_dir: str, task_id: str, title: str = "") -> str:
+    """
+    Returns a consistent, human-readable work directory for a task.
+    Format: <base_work_dir>/<task_id>_<title-slug>/
+
+    Always returns the SAME path for the same task_id, even across retries —
+    so fix/retry operations reuse the existing folder instead of creating a new one.
+    """
+    slug = _title_slug(title) if title else "task"
+    return f"{base_work_dir}/{task_id}_{slug}"
 
 
 class AgentState(TypedDict, total=False):
@@ -58,7 +78,11 @@ class AgentState(TypedDict, total=False):
 def create_initial_state(task: Dict[str, Any], max_attempts: int = 4, base_work_dir: Optional[str] = None) -> AgentState:
     """Factory creating a clean initial AgentState for a task."""
     task_id = str(task.get("id", "temp_task"))
-    work_dir = f"{base_work_dir}/{task_id}" if base_work_dir else f"work_dirs/{task_id}"
+    title = task.get("title", "")
+    if base_work_dir:
+        work_dir = get_task_work_dir(base_work_dir, task_id, title)
+    else:
+        work_dir = get_task_work_dir("work_dirs", task_id, title)
     return {
         "task": task,
         "task_id": task_id,

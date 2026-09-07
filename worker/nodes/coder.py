@@ -129,16 +129,16 @@ def _build_agy_prompt(
         f"{files_section}"
         f"{pdf_section}\n"
         f"Full Assignment Specification & Requirements:\n{build_spec}\n\n"
-        f"MANDATORY EXECUTION DIRECTIVES:\n"
-        f"1. STUDENT PERSONALIZATION & ARCHIVE NAMING: If the prompt specifies placeholders like <ENRL NO>, <ENROLLMENT_NO>, <STUDENT_ID>, or <ROLL_NO>, you MUST substitute '{student_enrollment}' (e.g. `DLCV_2025_{student_enrollment}_sub1.zip`). For submission ZIP archives, all deliverables MUST be nested inside an inner folder matching the zip stem (`DLCV_2025_{student_enrollment}_sub1/`).\n"
-        f"2. SELF-CONTAINED JUPYTER NOTEBOOKS (.ipynb): Every notebook MUST be 100% executable headlessly. If OpenCV webcam is required, include a synthetic video stream generator fallback (`get_video_source()`) so execution does not crash in headless environments. If datasets are required (e.g. Cat vs Dog), include synthetic dataset generator helpers (`create_cat_dog_dataset()`). Write Python generator scripts (e.g. `create_task2_notebook.py`) using `nbformat` and execute them so that notebooks contain rendered output cells (loss metrics, confusion matrices, matplotlib inline plots).\n"
-        f"3. 16:9 WIDESCREEN PRESENTATIONS (.pptx): Presentations MUST use 16:9 widescreen layout (slide_width=13.333 inches, slide_height=7.5 inches), modern card-based layouts with dark/executive palettes (e.g. Slate 900 `#0F172A`, Slate 800 cards, Cyan `#06B6D4`, Emerald `#10B981` or Cognitive Heritage), mathematical formula callouts, and comprehensive speaker notes on every single slide.\n"
-        f"4. PYTHON GENERATOR SCRIPTS: When generating notebooks or presentations, write standalone Python generator scripts (e.g. `create_presentation.py`, `create_task2_notebook.py`, `create_task3_notebook.py`, `create_task4_notebook.py`) to build the deliverables cleanly, then execute them with python.\n"
-        f"5. COMPLETE CODE: Write complete, production-ready, fully functional code — NO TODOs, placeholders, or stubs.\n"
-        f"6. ACADEMIC RIGOR: For reports (.docx/.md), write exhaustive graduate-level academic analysis with formulas, tables, and IEEE citations.\n"
-        f"7. AUTHENTIC VOICE: Strictly avoid AI filler phrases (e.g. 'in today's fast-paced world', 'delve into', 'testament to'). Maintain an authentic student voice.\n"
-        f"8. When finished, provide a concise summary list of all files generated in `{work_dir.resolve()}`."
+        f"EXECUTION DIRECTIVES:\n"
+        f"1. STRICTLY FOLLOW THE SPEC: Only produce files explicitly required by the build specification above.\n"
+        f"   Do NOT add: README.md, smoke_test.py, generator scripts (create_*.py), extra ZIPs,\n"
+        f"   or any file not mentioned in the spec or the planned files list.\n"
+        f"2. STUDENT PERSONALIZATION: Replace any <ENRL NO> or enrollment placeholders with '{student_enrollment}'.\n"
+        f"3. Write COMPLETE, WORKING code. No TODOs, no stubs, no placeholders.\n"
+        f"4. For ZIP archives: use the exact archive name from the spec; nest all deliverables in an inner folder matching the zip stem.\n"
+        f"5. When finished, provide a concise summary list of all files generated in `{work_dir.resolve()}`."
     )
+
 
 
 def _run_agy_cli(work_dir: Path, prompt: str, timeout_seconds: int = 1800) -> Tuple[bool, str]:
@@ -285,15 +285,12 @@ def _build_system_prompt(
         "5. Call package_zip to archive all deliverables.\n"
         '6. Say "TASK COMPLETE" when all files are done.\n\n'
         "RULES:\n"
-        f"- Replace any <ENRL NO> or placeholder with '{student_enrollment}'.\n"
+        f"- STRICTLY FOLLOW THE SPEC: Only produce files explicitly required by the assignment spec.\n"
+        f"- Do NOT add README.md, smoke_test.py, create_*.py generator scripts, or extra files not in the plan.\n"
+        f"- Replace any <ENRL NO> or enrollment placeholders with '{student_enrollment}'.\n"
         "- Write COMPLETE, WORKING code. No TODOs, no stubs, no placeholders.\n"
-        "- For Jupyter notebooks, ensure every cell executes cleanly with synthetic fallbacks and execute them.\n"
-        "- For presentations, create 16:9 widescreen slides with technical card layouts and speaker notes.\n"
-        "- For Word reports, use build_report tool with full academic content.\n"
-        "- For ZIP archives, use package_zip with the exact required archive name.\n"
-        "- Actually run your Python code with run_python_file to verify it works.\n"
         "- NEVER hardcode data from previous tasks. Generate everything fresh based on the spec.\n"
-        "- Do NOT generate placeholder or demo content - everything must be academically complete."
+        "- Do NOT generate placeholder or demo content — everything must match the user's requirement exactly."
     )
 
 
@@ -418,8 +415,18 @@ def coder_node(state: AgentState) -> Dict[str, Any]:
     course = state.get("course", task.get("course", "Computer Engineering"))
     task_type = state.get("task_type", task.get("task_type", "document"))
     build_spec = state.get("build_spec", task.get("build_spec", ""))
-    work_dir = Path(state.get("work_dir", f"work_dirs/{state.get('task_id', 'temp')}"))
+    task_id = state.get("task_id", task.get("id", "temp"))
+
+    # Always derive work_dir from the canonical helper so folder names are consistent
+    # across new runs AND fix/retry runs (same task_id → same folder, never a new one).
+    if state.get("work_dir"):
+        work_dir = Path(state["work_dir"])
+    else:
+        from worker.state import get_task_work_dir
+        base = os.path.join(os.path.dirname(__file__), "..", "..", "work_dirs")
+        work_dir = Path(get_task_work_dir(str(Path(base).resolve()), task_id, title))
     work_dir.mkdir(parents=True, exist_ok=True)
+
 
     plan = state.get("plan", {})
     attempt = state.get("attempt", 1)
@@ -468,8 +475,6 @@ def coder_node(state: AgentState) -> Dict[str, Any]:
         workspace_paths, missing_files = _compute_missing_files(work_dir, planned_files)
         if workspace_paths and not missing_files and not retry_instructions:
             print(f"[LangGraph:Coder] Workspace already contains all {len(workspace_paths)} planned deliverable(s). Proceeding to verification.")
-            _auto_execute_notebooks(work_dir)
-            _auto_package_submission_zip(work_dir, plan, title, build_spec, student_enrollment)
             all_files = list_workspace_files(work_dir)
             return {
                 "produced_files": [str(f.resolve()) for f in all_files],
@@ -523,8 +528,6 @@ def coder_node(state: AgentState) -> Dict[str, Any]:
 
             if workspace_paths and not missing_files:
                 print(f"[LangGraph:Coder] Antigravity CLI ({tier_label}) produced all {len(workspace_paths)} planned deliverable(s).")
-                _auto_execute_notebooks(work_dir)
-                _auto_package_submission_zip(work_dir, plan, title, build_spec, student_enrollment)
                 all_files = list_workspace_files(work_dir)
                 return {
                     "produced_files": [str(f.resolve()) for f in all_files],
@@ -545,9 +548,7 @@ def coder_node(state: AgentState) -> Dict[str, Any]:
                 )
 
         if workspace_paths:
-            print(f"[LangGraph:Coder] Antigravity CLI attempts exhausted. Packaging produced files: {[p.name for p in workspace_paths]}")
-            _auto_execute_notebooks(work_dir)
-            _auto_package_submission_zip(work_dir, plan, title, build_spec, student_enrollment)
+            print(f"[LangGraph:Coder] Antigravity CLI attempts exhausted. Returning produced files: {[p.name for p in workspace_paths]}")
             all_files = list_workspace_files(work_dir)
             return {
                 "produced_files": [str(f.resolve()) for f in all_files],

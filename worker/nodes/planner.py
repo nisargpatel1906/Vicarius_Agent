@@ -56,9 +56,9 @@ def planner_node(state: AgentState) -> Dict[str, Any]:
     skills_prompt = f"\nStudent Technical Skillset: {skills_str}" if skills_str else ""
 
     sys_prompt = (
-        f"You are an expert academic tutor and autonomous agent architect for {student_name} "
+        f"You are an expert academic AI agent for {student_name} "
         f"(Enrollment No: {student_enrollment}), a {student_program} student at {student_uni}.{directives_prompt}{skills_prompt}\n"
-        "Analyze the assignment and produce a structured execution blueprint in JSON.\n\n"
+        "Analyze the assignment specification and produce a structured execution blueprint in JSON.\n\n"
         "Available tools the Coder agent can use:\n"
         "- write_file: write any file (Python, Markdown, HTML, etc.)\n"
         "- generate_notebook: create .ipynb notebooks with proper cell structure\n"
@@ -73,31 +73,24 @@ def planner_node(state: AgentState) -> Dict[str, Any]:
         "Return ONLY a valid JSON object:\n"
         "{\n"
         '  "architecture": "High-level design pattern or academic paper structure",\n'
-        '  "execution_strategy": "Brief description of order and approach (e.g. write generator scripts, execute notebooks with nbclient, build 16:9 presentation, verify, package into ZIP)",\n'
+        '  "execution_strategy": "Brief description of order and approach",\n'
         '  "files": [\n'
         '    {"filename": "relative/path/to/file.ext", "purpose": "description", "tool": "which tool to use"}\n'
         "  ],\n"
         '  "rubric_items": ["R1: specific requirement from spec", "R2: ..."],\n'
-        '  "tool_hints": ["generate_notebook", "execute_notebook", "build_presentation", "package_zip"],\n'
+        '  "tool_hints": ["generate_notebook", "build_presentation"],\n'
         '  "deliverable_types": ["ipynb", "pptx", "docx", "zip"]\n'
         "}\n\n"
-        "MANDATORY ACADEMIC QUALITY REQUIREMENTS:\n"
-        "- STUDENT PERSONALIZATION & ARCHIVE NAMING:\n"
-        f"  * Student Enrollment Number: '{student_enrollment}'.\n"
-        f"  * Student Full Name: '{student_name}'.\n"
-        "  * If the assignment specifies an archive or file naming format with placeholders like '<ENRL NO>', '<ENROLLMENT_NO>', '<STUDENT_ID>', or '<ROLL_NO>',\n"
-        f"    you MUST replace the placeholder with the exact student enrollment number '{student_enrollment}' (e.g. 'DLCV_2025_{student_enrollment}_sub1.zip').\n"
-        "  * For submission ZIP archives: the archive MUST contain an inner directory matching the zip stem (e.g. 'DLCV_2025_{student_enrollment}_sub1/') containing all deliverables.\n"
-        "- SELF-CONTAINED EXECUTABLE NOTEBOOKS (.ipynb):\n"
-        "  * Plan complete, runnable Jupyter notebooks (tool='generate_notebook' or Python generator scripts with nbformat).\n"
-        "  * If a notebook requires camera/webcam access or external datasets, it MUST include automated synthetic fallback generators (e.g. synthetic video stream or synthetic image generator) so it executes cleanly headlessly.\n"
-        "  * Plan 'execute_notebook' for every notebook so that cells contain real executed outputs, metrics tables, and inline matplotlib plots.\n"
-        "- WIDESCREEN PRESENTATIONS (.pptx):\n"
-        "  * Plan 16:9 widescreen presentations (tool='build_presentation' or 'create_presentation.py') with multi-column card layouts, mathematical formulas, and comprehensive speaker notes on every slide.\n"
-        "- PYTHON GENERATOR SCRIPTS FOR COMPLEX PROJECTS:\n"
-        "  * For multi-deliverable coursework, plan Python scripts (e.g. 'create_presentation.py', 'create_task2_notebook.py') with tool='write_file' + 'run_python_file' to build and populate deliverables programmatically with zero manual syntax errors.\n"
-        "- NEVER plan placeholder files. Plan every real source file needed.\n"
-        "- For research documents: plan exhaustive sections with equations, comparisons, and IEEE citations."
+        "STRICT DELIVERY RULES:\n"
+        "1. ONLY plan files that the user's build_spec explicitly requests.\n"
+        "   - If the user says 'make a ppt on mobile gaming', plan ONLY the .pptx file.\n"
+        "   - Do NOT add: README.md, smoke_test.py, generator scripts (create_*.py), extra ZIPs,\n"
+        "     or any file not directly mentioned or required by the specification.\n"
+        "2. STUDENT PERSONALIZATION: If the spec uses placeholders like <ENRL NO>, <ENROLLMENT_NO>,\n"
+        f"   <STUDENT_ID>, or <ROLL_NO>, replace them with '{student_enrollment}'.\n"
+        "3. For submission ZIP archives: the archive MUST contain an inner directory matching the zip stem.\n"
+        "4. NEVER plan placeholder files. Plan every real required file.\n"
+        "5. Do not add files just to be thorough — if the spec doesn't mention it, don't plan it."
     )
 
     user_prompt = (
@@ -137,22 +130,30 @@ def planner_node(state: AgentState) -> Dict[str, Any]:
 
     # Minimal dynamic fallback plan if LLM parsing failed
     print("[LangGraph:Planner] Warning: LLM plan parse failed — using minimal fallback plan.")
-    fallback_plan = {
-        "architecture": f"Standard academic deliverable for {task_type}",
-        "execution_strategy": "Write main deliverable, verify with run_python if code, package with package_zip if needed",
-        "files": [
-            {"filename": "Report.md", "purpose": "Technical report addressing requirements", "tool": "write_file"},
-            {"filename": "README.md", "purpose": "Setup, execution, and verification guide", "tool": "write_file"},
-        ],
-        "rubric_items": [f"Complete: {title}"],
-        "tool_hints": ["write_file", "build_report"],
-        "deliverable_types": ["docx"],
-    }
-    if task_type == "code_project":
-        fallback_plan["files"].append({"filename": "smoke_test.py", "purpose": "Automated execution verification", "tool": "run_python_file"})
-        fallback_plan["tool_hints"] = ["write_file", "run_python", "build_report", "package_zip"]
-    elif task_type == "presentation":
-        fallback_plan["deliverable_types"] = ["pptx"]
-        fallback_plan["tool_hints"] = ["build_presentation"]
+    # Determine a sensible single deliverable based on task_type; do NOT add extra files.
+    if task_type in ("presentation",):
+        fallback_file = {"filename": f"{title.replace(' ', '_')}.pptx", "purpose": "Main presentation deliverable", "tool": "build_presentation"}
+        fallback_types = ["pptx"]
+        fallback_hints = ["build_presentation"]
+    elif task_type in ("notebook",):
+        fallback_file = {"filename": f"{title.replace(' ', '_')}.ipynb", "purpose": "Jupyter notebook deliverable", "tool": "generate_notebook"}
+        fallback_types = ["ipynb"]
+        fallback_hints = ["generate_notebook", "execute_notebook"]
+    elif task_type in ("code_project",):
+        fallback_file = {"filename": "main.py", "purpose": "Main code file", "tool": "write_file"}
+        fallback_types = ["py"]
+        fallback_hints = ["write_file", "run_python_file"]
+    else:
+        fallback_file = {"filename": "Report.md", "purpose": "Technical report addressing requirements", "tool": "write_file"}
+        fallback_types = ["docx"]
+        fallback_hints = ["write_file", "build_report"]
 
+    fallback_plan = {
+        "architecture": f"Standard deliverable for {task_type}",
+        "execution_strategy": "Produce the required deliverable based on the build spec",
+        "files": [fallback_file],
+        "rubric_items": [f"Complete: {title}"],
+        "tool_hints": fallback_hints,
+        "deliverable_types": fallback_types,
+    }
     return {"plan": fallback_plan}

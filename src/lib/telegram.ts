@@ -1646,59 +1646,39 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
     }
   }
 
-  // 2. Reply-to-fix: user is replying to a flagged-task alert with a plain-language fix instruction.
-  // Runs BEFORE the pending-question handler so fix instructions are never captured as question answers.
-  // Detection is deliberately strict: the replied-to message must carry a task UUID AND flag markers,
-  // AND the task must actually be flagged/failed — so replies to questions or confirmations fall through.
-  // 2. Reply-to-fix: user is replying to a task alert, completed message, or flagged alert with an instruction.
-  // Runs BEFORE the pending-question handler so fix instructions are never captured as question answers.
+  // 2. Reply-to-fix: fires ONLY when the user clicks Telegram's native Reply button on a bot message.
+  // The replied-to message MUST contain a task UUID, or be an explicit ⚠️ flag / ✅ completion alert.
+  // No free-text fallback, no guessing. If the user wants to fix a task without clicking Reply,
+  // they must use /fix <task_id> <instruction>.
   const fixReplyTo = update.message?.reply_to_message;
   if (fixReplyTo?.text && text && !text.startsWith('/')) {
     const uuidMatch = fixReplyTo.text.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
-    const looksLikeFlag = fixReplyTo.text.includes('⚠️')
-      || fixReplyTo.text.includes('Review Required')
-      || /couldn.?t finish|what went wrong|what i already tried|flagged|review required|auto-delivered/i.test(fixReplyTo.text);
-    const looksLikeCompleted = /Task Completed:|Deliverables:|Google Drive/i.test(fixReplyTo.text);
-    const looksLikeInstruction = text.length > 10 && /\b(?:add|append|fix|change|update|remove|include|more|slides?|section|page|modify|redo|rebuild|retry|extend|insert|adjust)\b/i.test(text);
+    const isFlaggedAlert = fixReplyTo.text.includes('⚠️')
+      || /couldn.?t finish|flagged|review required|what went wrong|what i already tried/i.test(fixReplyTo.text);
+    const isCompletedAlert = /Task Completed:|✅.*Queued|Deliverables:|Google Drive/i.test(fixReplyTo.text);
 
     let targetTaskId: string | null = null;
-    let targetTaskTitle: string | null = null;
 
     if (uuidMatch) {
+      // Strongest signal: a UUID was in the replied-to message
       targetTaskId = uuidMatch[1];
-    } else if (looksLikeCompleted || looksLikeFlag || looksLikeInstruction) {
-      // Try to extract title from message like "Task Completed: <Title>" or "Title: <Title>"
-      const titleMatch = fixReplyTo.text.match(/(?:Task Completed:|📌 Title:|Title:)\s*([^\n\r]+)/i);
-      if (titleMatch && titleMatch[1]) {
+    } else if (isFlaggedAlert || isCompletedAlert) {
+      // Secondary: flagged/completed alert — extract task title from the message
+      const titleMatch = fixReplyTo.text.match(/(?:Task Completed:|📌 Title:|📌.*?:)\s*([^\n\r<]+)/i);
+      if (titleMatch?.[1]) {
         const queryTitle = titleMatch[1].replace(/<\/?[^>]+(>|$)/g, '').trim();
         const { data: matchedTask } = await supabase
           .from('tasks')
           .select('id, title, status')
-          .ilike('title', `%${queryTitle.slice(0, 30)}%`)
+          .ilike('title', `%${queryTitle.slice(0, 40)}%`)
           .order('updated_at', { ascending: false })
           .limit(1)
           .maybeSingle();
-        if (matchedTask) {
-          targetTaskId = matchedTask.id;
-          targetTaskTitle = matchedTask.title;
-        }
-      }
-      // If still not found, pick the most recent task if the user message clearly looks like an instruction
-      if (!targetTaskId && looksLikeInstruction) {
-        const { data: latestTask } = await supabase
-          .from('tasks')
-          .select('id, title, status')
-          .order('updated_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (latestTask) {
-          targetTaskId = latestTask.id;
-          targetTaskTitle = latestTask.title;
-        }
+        if (matchedTask) targetTaskId = matchedTask.id;
       }
     }
 
-    if (targetTaskId && (looksLikeFlag || looksLikeCompleted || looksLikeInstruction)) {
+    if (targetTaskId) {
       const { data: targetTask } = await supabase
         .from('tasks')
         .select('id, title, status')
@@ -1713,80 +1693,11 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
     }
   }
 
-  // 2a-natural: Direct natural language task creation request (e.g. "Make a ppt on...", "Create a presentation about...", "Build me a deck for...")
-  // Evaluated BEFORE free-text fix fallback (2b) so user requests for new deliverables are never hijacked as fixes to older failed tasks!
-  const isNaturalLanguageTaskCreation = (() => {
-    if (!text || text.startsWith('/') || fixReplyTo) return false;
-    const clean = text.trim();
-    // Guard: instructions like "make it 8 slides", "change it to dark", "update it" are modifications, not new creations
-    if (/^(?:please\s+)?(?:make|change|turn|update|set|switch)\s+it\b/i.test(clean)) return false;
+  // Note: Section 2b (free-text fix fallback) has been intentionally removed.
+  // Fix instructions are ONLY accepted via:
+  //   1. The Telegram Reply button (Section 2 above)
+  //   2. The /fix <task_id> <instruction> command (Section 8b below)
 
-    // Pattern 1: Action verb + deliverable type (e.g., "Make a ppt on...", "Create a presentation about...", "Build a report on...")
-    const verbNounPattern = /^(?:please\s+)?(?:make|create|build|generate|write|prepare|develop|code|design|draft)\s+(?:me\s+)?(?:a\s+|an\s+)?(?:\d+[\s-]*(?:slide|page|part)\s+)?(?:new\s+)?(?:ppt|presentation|powerpoint|deck|slides?|report|paper|project|doc|docx|document|notebook|app|script|calculator|assignment)\b/i;
-
-    // Pattern 2: Action verb + topic preposition (e.g., "make a ppt about...", "create slides for...", "build something on...")
-    const verbTopicPattern = /^(?:please\s+)?(?:make|create|prepare|generate|build|draft)\s+(?:me\s+)?(?:a\s+|an\s+)?.*?\b(?:on|about|for|regarding)\b/i;
-
-    // Pattern 3: Deliverable type leading (e.g., "ppt on mobile gaming...", "presentation on AI...", "10 slide deck about...")
-    const nounLeadingPattern = /^(?:(?:\d+[\s-]*(?:slide|page)\s+)?(?:ppt|presentation|deck|slides?|report|paper|project|document))\s+(?:on|about|for|regarding)\s+/i;
-
-    return verbNounPattern.test(clean) || verbTopicPattern.test(clean) || nounLeadingPattern.test(clean);
-  })();
-
-  if (isNaturalLanguageTaskCreation) {
-    try {
-      await reply('⏳ <i>Analyzing requirements and creating task...</i>');
-      const confirmation = await createTaskFromTelegram(text);
-      await reply(confirmation);
-    } catch (e: any) {
-      await reply(`❌ Failed to create task: ${escapeHtml(e.message)}`);
-    }
-    return { handled: true, responseText: 'Task created from natural language prompt' };
-  }
-
-  // 2b. Free-text fallback: user typed an instruction WITHOUT using the Telegram "Reply" button.
-  // We apply the instruction to whichever task is currently flagged/failed, or the most recent task
-  // if the instruction clearly asks to extend/modify deliverables.
-  if (text && !text.startsWith('/') && !fixReplyTo) {
-    // Note: removed 'make' and 'create' so creation requests are never treated as fix instructions!
-    const looksLikeInstruction = text.length > 15 && /\b(?:add|fix|change|update|remove|include|append|more|redo|rebuild|retry|modify|adjust)\b/i.test(text);
-    if (looksLikeInstruction) {
-      // First check flagged/failed tasks — MUST have been updated within the last 2 hours
-      // to avoid hijacking stale tasks that failed days/weeks ago!
-      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
-      const { data: activeFlaggedTask } = await supabase
-        .from('tasks')
-        .select('id, title, status')
-        .in('status', ['flagged', 'failed'])
-        .gt('updated_at', twoHoursAgo)
-        .order('updated_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      
-      const targetTask = activeFlaggedTask || (await (async () => {
-        // If append/extend slides or sections is requested, grab the most recent task (within 24 hours)
-        if (/\b(?:add|append|more|additional|extra)\b.{0,30}\b(?:slide|slides|page|section)\b/i.test(text)) {
-          const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-          const { data: recentTask } = await supabase
-            .from('tasks')
-            .select('id, title, status')
-            .gt('updated_at', oneDayAgo)
-            .order('updated_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-          return recentTask;
-        }
-        return null;
-      })());
-
-      if (targetTask) {
-        await reply(`🔧 <i>Applying your instruction to "<b>${escapeHtml(targetTask.title)}</b>" and rebuilding...</i>`);
-        const fixMsg = await applyFixAndRequeue(targetTask.id, text);
-        await reply(fixMsg);
-        return { handled: true, responseText: 'Fix applied to task via free-text' };
-      }
-    }
-  }
 
   // 3. Check if user is replying to a pending question
   const replyTo = update.message?.reply_to_message;
