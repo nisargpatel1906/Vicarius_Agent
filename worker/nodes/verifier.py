@@ -254,6 +254,25 @@ def verifier_node(state: AgentState) -> Dict[str, Any]:
     task_id = state.get("task_id", task.get("id"))
     attempt = state.get("attempt", 1)
 
+    work_dir = Path(state.get("work_dir", "."))
+    produced_files_raw = state.get("produced_files", [])
+    produced_paths: List[Path] = []
+    for pf in produced_files_raw:
+        if isinstance(pf, Path):
+            p = pf
+        else:
+            p = work_dir / str(pf)
+        if p.exists() and p not in produced_paths:
+            produced_paths.append(p)
+
+    # If produced_paths is empty, scan work_dir for files
+    if not produced_paths and work_dir.exists():
+        for item in work_dir.iterdir():
+            if item.is_file() and not item.name.startswith("."):
+                produced_paths.append(item)
+
+    stdout_output = state.get("last_execution_stdout", "") or ""
+
     print(f"\n[LangGraph:Verifier] Verifying deliverables for '{title}' ({len(produced_paths)} files)...")
 
     from worker.tools.progress import report_progress

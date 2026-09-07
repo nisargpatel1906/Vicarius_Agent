@@ -569,68 +569,98 @@ def dispatch_tool(tool_name: str, arguments: Dict[str, Any], work_dir: Path, con
     """
     ctx = context or {}
     t = tool_name.lower()
+    args = arguments or {}
 
-    if t == "write_file":
-        return tool_write_file(work_dir, arguments["path"], arguments["content"])
+    try:
+        if t == "write_file":
+            path = args.get("path") or args.get("filename") or args.get("file_path") or args.get("file")
+            content = args.get("content") or args.get("text") or args.get("code") or ""
+            if not path:
+                return _err("write_file requires 'path' (relative file path) and 'content' arguments.")
+            return tool_write_file(work_dir, path, content)
 
-    elif t == "read_file":
-        return tool_read_file(work_dir, arguments["path"], arguments.get("max_chars", 4000))
+        elif t == "read_file":
+            path = args.get("path") or args.get("filename") or args.get("file_path") or args.get("file")
+            if not path:
+                return _err("read_file requires 'path' argument.")
+            return tool_read_file(work_dir, path, args.get("max_chars", 4000))
 
-    elif t == "list_files":
-        return tool_list_files(work_dir)
+        elif t == "list_files":
+            return tool_list_files(work_dir)
 
-    elif t == "run_python":
-        return tool_run_python(work_dir, arguments["code"], arguments.get("timeout", 60))
+        elif t == "run_python":
+            code = args.get("code") or args.get("script") or ""
+            if not code:
+                return _err("run_python requires 'code' argument.")
+            return tool_run_python(work_dir, code, args.get("timeout", 60))
 
-    elif t == "run_python_file":
-        return tool_run_python_file(work_dir, arguments["filename"], arguments.get("timeout", 90))
+        elif t == "run_python_file":
+            filename = args.get("filename") or args.get("path") or args.get("file")
+            if not filename:
+                return _err("run_python_file requires 'filename' argument.")
+            return tool_run_python_file(work_dir, filename, args.get("timeout", 90))
 
-    elif t == "generate_notebook":
-        return tool_generate_notebook(work_dir, arguments["filename"], arguments["cells"])
+        elif t == "generate_notebook":
+            filename = args.get("filename") or args.get("path") or "notebook.ipynb"
+            cells = args.get("cells") or []
+            return tool_generate_notebook(work_dir, filename, cells)
 
-    elif t == "execute_notebook":
-        return tool_execute_notebook(work_dir, arguments["filename"], arguments.get("timeout", 600))
+        elif t == "execute_notebook":
+            filename = args.get("filename") or args.get("path") or "notebook.ipynb"
+            return tool_execute_notebook(work_dir, filename, args.get("timeout", 600))
 
-    elif t == "build_presentation":
-        return tool_build_presentation(
-            work_dir,
-            arguments.get("filename", "presentation.pptx"),
-            arguments["slides"],
-            title=arguments.get("title", ctx.get("title", "Presentation")),
-            course=arguments.get("course", ctx.get("course", "")),
-            student_name=arguments.get("student_name", ctx.get("student_name", "")),
-        )
+        elif t == "build_presentation":
+            slides = args.get("slides") or []
+            if not slides:
+                return _err("build_presentation requires 'slides' array.")
+            return tool_build_presentation(
+                work_dir,
+                args.get("filename", "presentation.pptx"),
+                slides,
+                title=args.get("title", ctx.get("title", "Presentation")),
+                course=args.get("course", ctx.get("course", "")),
+                student_name=args.get("student_name", ctx.get("student_name", "")),
+            )
 
-    elif t == "build_report":
-        return tool_build_report(
-            work_dir,
-            arguments.get("filename", "report.docx"),
-            arguments["markdown_content"],
-            title=arguments.get("title", ctx.get("title", "Report")),
-            course=arguments.get("course", ctx.get("course", "")),
-            student_name=arguments.get("student_name", ctx.get("student_name", "")),
-            institution=arguments.get("institution", ctx.get("institution", "")),
-        )
+        elif t == "build_report":
+            markdown_content = args.get("markdown_content") or args.get("content") or ""
+            if not markdown_content:
+                return _err("build_report requires 'markdown_content' argument.")
+            return tool_build_report(
+                work_dir,
+                args.get("filename", "report.docx"),
+                markdown_content,
+                title=args.get("title", ctx.get("title", "Report")),
+                course=args.get("course", ctx.get("course", "")),
+                student_name=args.get("student_name", ctx.get("student_name", "")),
+                institution=args.get("institution", ctx.get("institution", "")),
+            )
 
-    elif t == "package_zip":
-        return tool_package_zip(
-            work_dir,
-            arguments["archive_name"],
-            arguments.get("include_files"),
-        )
+        elif t == "package_zip":
+            archive_name = args.get("archive_name") or args.get("filename") or "project.zip"
+            return tool_package_zip(
+                work_dir,
+                archive_name,
+                args.get("include_files"),
+            )
 
-    elif t == "search_web":
-        return tool_search_web(arguments["query"], arguments.get("max_results", 3))
+        elif t == "search_web":
+            query = args.get("query") or ""
+            if not query:
+                return _err("search_web requires 'query' argument.")
+            return tool_search_web(query, args.get("max_results", 3))
 
-    elif t == "generate_screenshot":
-        return tool_generate_screenshot(
-            work_dir,
-            arguments.get("title", ctx.get("title", "Project")),
-            arguments.get("subtitle", ""),
-        )
+        elif t == "generate_screenshot":
+            return tool_generate_screenshot(
+                work_dir,
+                args.get("title", ctx.get("title", "Project")),
+                args.get("subtitle", ""),
+            )
 
-    else:
-        return _err(f"Unknown tool: '{tool_name}'. Available: write_file, read_file, list_files, run_python, run_python_file, generate_notebook, build_presentation, build_report, package_zip, search_web, generate_screenshot")
+        else:
+            return _err(f"Unknown tool: '{tool_name}'. Available: write_file, read_file, list_files, run_python, run_python_file, generate_notebook, build_presentation, build_report, package_zip, search_web, generate_screenshot")
+    except Exception as err:
+        return _err(f"Error executing tool '{tool_name}': {err}")
 
 
 # ─────────────────────────────────────────────
