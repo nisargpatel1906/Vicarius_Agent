@@ -32,15 +32,32 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 
+import datetime
 # ── State Checkpointing ───────────────────────────────────────────────────────
 
 _CHECKPOINT_FILE = ".vicarius_state.json"
 
 
 def _safe_json_default(obj: Any) -> Any:
-    """JSON serializer fallback for Path objects and other non-serializable types."""
+    """JSON serializer fallback for Path, datetime, set, bytes, and other non-serializable types."""
     if isinstance(obj, Path):
         return str(obj)
+    if isinstance(obj, (datetime.datetime, datetime.date)):
+        return obj.isoformat()
+    if isinstance(obj, set):
+        return sorted(list(obj), key=str)
+    if isinstance(obj, bytes):
+        return f"<bytes len={len(obj)}>"
+    if hasattr(obj, "dict") and callable(getattr(obj, "dict")):
+        try:
+            return obj.dict()
+        except Exception:
+            pass
+    if hasattr(obj, "__dict__"):
+        try:
+            return {k: str(v) for k, v in obj.__dict__.items() if not k.startswith("_")}
+        except Exception:
+            pass
     return str(obj)
 
 
@@ -98,8 +115,9 @@ def node_error_boundary(
     Decorator factory that wraps a LangGraph node function with:
       - try-except crash protection
       - fallback state on exception
+      - error diagnostics tracking in state (last_node_error, node_errors)
       - progress update to dashboard
-      - state checkpointing after successful execution
+      - state checkpointing after execution
 
     Parameters
     ----------
@@ -108,11 +126,6 @@ def node_error_boundary(
         Return {} to pass through with no mutations.
     node_name : str, optional
         Override the display name in log messages. Defaults to function name.
-
-    Example
-    -------
-        @node_error_boundary(fallback=lambda s, e: {})
-        def extractor_node(state): ...
     """
     def decorator(fn: Callable) -> Callable:
         display_name = node_name or fn.__name__
@@ -122,7 +135,7 @@ def node_error_boundary(
             try:
                 result = fn(state)
                 # Checkpoint after every successful node return
-                merged = {**state, **result}
+                merged = {**state, **(result or {})}
                 checkpoint_state(merged)
                 return result
 
@@ -133,7 +146,14 @@ def node_error_boundary(
                     f"activating fallback:\n  {exc}\n{tb}"
                 )
 
-                # Emit progress update so the dashboard shows something
+                now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                error_entry = {
+                    "node": display_name,
+                    "error": f"{type(exc).__name__}: {str(exc)}",
+                    "timestamp": now_iso,
+                }
+
+                # Emit progress update so the dashboard reflects the error
                 try:
                     from worker.tools.progress import report_progress
                     task_id = state.get("task_id") or state.get("task", {}).get("id")
@@ -149,15 +169,36 @@ def node_error_boundary(
                 except Exception:
                     pass  # progress update failure must never cascade
 
-                # Return the caller-supplied fallback state
+                # Invoke caller-supplied fallback state
+                fallback_state: Dict[str, Any] = {}
                 try:
-                    return fallback(state, exc)
+                    fallback_res = fallback(state, exc)
+                    if isinstance(fallback_res, dict):
+                        fallback_state = dict(fallback_res)
                 except Exception as fb_exc:
                     print(
                         f"[NodeGuard:{display_name}] Fallback itself raised: {fb_exc}. "
-                        f"Returning empty dict."
+                        f"Using guaranteed safe fallback state."
                     )
-                    return {}
+                    fallback_state = {
+                        "status": state.get("status", "building"),
+                        "error_message": f"Node '{display_name}' error: {exc} (fallback error: {fb_exc})",
+                    }
+
+                # Ensure diagnostic error fields are attached to state
+                existing_errors = list(state.get("node_errors", []))
+                existing_errors.append(error_entry)
+                fallback_state["last_node_error"] = f"{display_name}: {exc}"
+                fallback_state["node_errors"] = existing_errors
+
+                # Attempt checkpointing the degraded state so crash details are on disk
+                try:
+                    merged_degraded = {**state, **fallback_state}
+                    checkpoint_state(merged_degraded)
+                except Exception:
+                    pass
+
+                return fallback_state
 
         return wrapper
     return decorator

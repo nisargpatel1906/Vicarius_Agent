@@ -198,7 +198,27 @@ def escalate_node(state: AgentState) -> Dict[str, Any]:
                 f"<i>(You can still reply to the review message anytime if you want adjustments!)</i>"
             )
 
-        return deliver_node(deliver_state)
+        try:
+            return deliver_node(deliver_state)
+        except Exception as deliv_err:
+            print(f"[LangGraph:Escalator] Auto-delivery error: {deliv_err}. Safely flagging task.")
+            if sb and task_id:
+                now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                try:
+                    sb.table("tasks").update({
+                        "status": "flagged",
+                        "progress_note": f"Auto-delivery interrupted ({deliv_err})",
+                        "last_progress_at": now_iso,
+                        "result_summary": f"Auto-delivery failed ({deliv_err}). Deliverables preserved on disk.",
+                        "updated_at": now_iso,
+                    }).eq("id", task_id).execute()
+                except Exception as se:
+                    print(f"[Escalator] Status update error: {se}")
+            return {
+                "status": "flagged",
+                "error_message": f"Auto-delivery failed: {deliv_err}",
+                "produced_files": deliver_state["produced_files"],
+            }
 
     # Total failure case with 0 files produced
     print(f"[LangGraph:Escalator] No deliverables produced. Task remains flagged.")

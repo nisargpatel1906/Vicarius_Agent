@@ -32,57 +32,129 @@ from worker.nodes._node_guard import node_error_boundary
 
 def _extractor_fallback(state, _err):
     """Extractor crash → proceed with original build_spec unchanged."""
-    print("[NodeGuard:extractor] Proceeding with original build_spec (no enrichment).")
-    return {}
+    print(f"[NodeGuard:extractor] Extractor encountered error ({_err}) — proceeding with original build_spec.")
+    return {
+        "extracted_requirements": {
+            "summary": state.get("title", ""),
+            "raw_text": state.get("build_spec", ""),
+            "items": [state.get("title", "")],
+        }
+    }
 
 def _planner_fallback(state, _err):
-    """Planner crash → proceed with an empty plan (coder will use raw build_spec)."""
-    print("[NodeGuard:planner] Proceeding with empty plan — coder will use raw build_spec.")
-    return {"plan": {}}
+    """Planner crash → construct a safe emergency deliverable plan matching task_type."""
+    print(f"[NodeGuard:planner] Planner encountered error ({_err}) — constructing safe fallback deliverable plan.")
+    title = state.get("title", "Assignment")
+    task_type = state.get("task_type", "code_project")
+    ext = "py" if task_type == "code_project" else ("pptx" if task_type == "presentation" else "md")
+    fallback_file = {
+        "filename": f"{title.replace(' ', '_')[:40]}.{ext}",
+        "purpose": "Primary task deliverable",
+        "tool": "write_file",
+    }
+    return {
+        "plan": {
+            "architecture": f"Standard {task_type} architecture",
+            "execution_strategy": "Produce required deliverable using build spec",
+            "files": [fallback_file],
+            "rubric_items": [title],
+            "tool_hints": ["write_file"],
+        }
+    }
 
 def _thinker_fallback(state, _err):
-    """Thinker crash → proceed with empty thought (coder still runs, just without pre-reasoning)."""
-    print("[NodeGuard:thinker] Proceeding without pre-reasoning.")
-    return {"thought_process": "", "agy_execution_plan": "", "thinker_needs_retry": False}
+    """Thinker crash → proceed with direct execution without pre-reasoning."""
+    print(f"[NodeGuard:thinker] Thinker encountered error ({_err}) — proceeding with direct execution.")
+    return {
+        "thought_process": "Direct execution fallback: implement requirements directly from build spec.",
+        "agy_execution_plan": "Phase 1: Implement deliverables\nPhase 2: Verify",
+        "thinker_needs_retry": False,
+        "thinker_quality_score": 0.5,
+    }
 
 def _thinker_validator_fallback(state, _err):
     """Validator crash → pass through to coder without retry."""
-    print("[NodeGuard:thinker_validator] Validator error — passing to coder without retry.")
-    return {"thinker_needs_retry": False, "thinker_quality_score": 0.0}
+    print(f"[NodeGuard:thinker_validator] Validator error ({_err}) — passing to coder without retry.")
+    return {"thinker_needs_retry": False, "thinker_quality_score": 0.5}
 
 def _coder_fallback(state, _err):
-    """Coder crash → return empty files so diagnoser can analyse."""
-    print("[NodeGuard:coder] Coder crashed — returning empty produced_files for diagnoser.")
-    return {"produced_files": [], "stdout_log": f"Coder node crashed: {_err}"}
+    """Coder crash → salvage any files already written to work_dir so work is not lost."""
+    print(f"[NodeGuard:coder] Coder encountered error ({_err}) — salvaging workspace files.")
+    existing_files = []
+    work_dir_str = state.get("work_dir")
+    if work_dir_str and Path(work_dir_str).exists():
+        try:
+            from worker.tools.file_tools import list_workspace_files
+            existing_files = [str(f.resolve()) for f in list_workspace_files(Path(work_dir_str))]
+        except Exception:
+            pass
+    return {
+        "produced_files": existing_files,
+        "stdout_log": (state.get("stdout_log") or "") + f"\nCoder node error: {_err}",
+        "retry_instructions": f"Coder error ({_err}). Check workspace and finish deliverables.",
+    }
 
 def _verifier_fallback(state, _err):
-    """Verifier crash → mark as failed so diagnoser is triggered."""
-    print("[NodeGuard:verifier] Verifier crashed — marking verification as failed.")
+    """Verifier crash → mark as failed with error details so diagnoser can analyze."""
+    print(f"[NodeGuard:verifier] Verifier encountered error ({_err}) — routing to diagnoser.")
     return {
         "verification_passed": False,
         "verification_score": 0.0,
-        "verification_feedback": f"Verifier node crashed: {_err}",
+        "verification_feedback": f"Verifier node error: {_err}",
     }
 
 def _diagnoser_fallback(state, _err):
-    """Diagnoser crash → increment attempt and mark non-fixable to force escalation."""
-    print("[NodeGuard:diagnoser] Diagnoser crashed — forcing escalation.")
-    attempt = state.get("attempt", 1)
+    """Diagnoser crash → safely evaluate retry budget and attempt recovery or escalate."""
+    print(f"[NodeGuard:diagnoser] Diagnoser encountered error ({_err}) — checking retry budget.")
+    try:
+        attempt = int(state.get("attempt") or 1)
+        max_attempts = int(state.get("max_attempts") or 4)
+    except Exception:
+        attempt, max_attempts = 1, 4
+    agent_fixable = attempt < max_attempts
     return {
         "attempt": attempt + 1,
-        "agent_fixable": False,
-        "retry_instructions": f"Diagnoser crashed: {_err}",
+        "agent_fixable": agent_fixable,
+        "retry_instructions": f"Automated recovery from diagnoser error ({_err}).",
     }
 
 def _deliverer_fallback(state, _err):
-    """Deliverer crash → return partial status so graph ends without hanging."""
-    print("[NodeGuard:deliverer] Deliverer crashed — ending with partial status.")
-    return {"status": "failed", "error_message": f"Delivery failed: {_err}"}
+    """Deliverer crash → update Supabase safely and return flagged status so graph ends cleanly."""
+    print(f"[NodeGuard:deliverer] Deliverer encountered error ({_err}) — safe fallback to flagged.")
+    task_id = state.get("task_id") or state.get("task", {}).get("id")
+    if task_id:
+        try:
+            from worker.worker import get_supabase
+            sb = get_supabase()
+            if sb:
+                import datetime
+                sb.table("tasks").update({
+                    "status": "flagged",
+                    "result_summary": f"Delivery error: {_err}. Partial deliverables may exist in workspace.",
+                    "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                }).eq("id", task_id).execute()
+        except Exception as sb_e:
+            print(f"[NodeGuard:deliverer] Supabase update warning: {sb_e}")
+    return {"status": "flagged", "error_message": f"Delivery error: {_err}"}
 
 def _escalator_fallback(state, _err):
-    """Escalator crash → end gracefully with flagged status."""
-    print("[NodeGuard:escalator] Escalator crashed — ending with flagged status.")
-    return {"status": "flagged", "error_message": f"Escalation failed: {_err}"}
+    """Escalator crash → end gracefully with flagged status and update Supabase."""
+    print(f"[NodeGuard:escalator] Escalator encountered error ({_err}) — safe fallback.")
+    task_id = state.get("task_id") or state.get("task", {}).get("id")
+    if task_id:
+        try:
+            from worker.worker import get_supabase
+            sb = get_supabase()
+            if sb:
+                import datetime
+                sb.table("tasks").update({
+                    "status": "flagged",
+                    "result_summary": f"Escalator error: {_err}",
+                    "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                }).eq("id", task_id).execute()
+        except Exception as sb_e:
+            print(f"[NodeGuard:escalator] Supabase update warning: {sb_e}")
+    return {"status": "flagged", "error_message": f"Escalation error: {_err}"}
 
 
 # ── Node imports + error boundary wiring ──────────────────────────────────────
@@ -116,63 +188,81 @@ def route_after_thinker_validator(
     """
     If validator flagged needs_retry (quality score too low and retries remain),
     loop back to thinker. Otherwise proceed to coder.
-
-    Hard retry cap: even if thinker_needs_retry is stuck True (e.g. validator
-    node crashed and left stale state), we never exceed MAX_THINKER_RETRIES.
-    This prevents the thinker loop from running forever.
+    Protected with zero-throw guard.
     """
-    thinker_retries = state.get("thinker_retries", 0)
-    if thinker_retries >= MAX_THINKER_RETRIES:
-        print(f"[LangGraph:Router] thinker_retries={thinker_retries} >= cap={MAX_THINKER_RETRIES}. Forcing to coder.")
+    try:
+        thinker_retries = int(state.get("thinker_retries") or 0)
+        if thinker_retries >= MAX_THINKER_RETRIES:
+            print(f"[LangGraph:Router] thinker_retries={thinker_retries} >= cap={MAX_THINKER_RETRIES}. Forcing to coder.")
+            return "coder"
+        if state.get("thinker_needs_retry", False):
+            return "thinker"
         return "coder"
-    if state.get("thinker_needs_retry", False):
-        return "thinker"
-    return "coder"
+    except Exception as e:
+        print(f"[LangGraph:Router] route_after_thinker_validator error: {e}. Defaulting to 'coder'.")
+        return "coder"
 
 
 def route_after_coder(state: AgentState) -> Literal["verifier", "diagnoser"]:
-    """Routes to verifier if output files exist on disk, else routes directly to diagnoser."""
-    produced = state.get("produced_files", [])
-    if produced and len(produced) > 0:
-        return "verifier"
-    # Secondary check: inspect disk directly in case state list was omitted
-    work_dir_str = state.get("work_dir")
-    if work_dir_str and Path(work_dir_str).exists():
-        from worker.tools.file_tools import list_workspace_files
-        if list_workspace_files(Path(work_dir_str)):
+    """Routes to verifier if output files exist on disk, else routes directly to diagnoser.
+    Protected with zero-throw guard.
+    """
+    try:
+        produced = state.get("produced_files", [])
+        if produced and len(produced) > 0:
             return "verifier"
-    return "diagnoser"
+        # Secondary check: inspect disk directly in case state list was omitted
+        work_dir_str = state.get("work_dir")
+        if work_dir_str and Path(work_dir_str).exists():
+            from worker.tools.file_tools import list_workspace_files
+            if list_workspace_files(Path(work_dir_str)):
+                return "verifier"
+        return "diagnoser"
+    except Exception as e:
+        print(f"[LangGraph:Router] route_after_coder error: {e}. Defaulting to 'diagnoser'.")
+        return "diagnoser"
 
 
 def route_after_verify(state: AgentState) -> Literal["deliver", "diagnose"]:
-    """Routes to deliverer if passed, else routes to Reflexion diagnoser."""
-    if state.get("verification_passed", False):
-        return "deliver"
-    return "diagnose"
+    """Routes to deliverer if passed, else routes to Reflexion diagnoser.
+    Protected with zero-throw guard.
+    """
+    try:
+        if state and state.get("verification_passed", False):
+            return "deliver"
+        return "diagnose"
+    except Exception as e:
+        print(f"[LangGraph:Router] route_after_verify error: {e}. Defaulting to 'diagnose'.")
+        return "diagnose"
 
 
 def route_after_diagnose(state: AgentState) -> Literal["coder", "escalate"]:
     """Routes back to coder if retries remain and error is fixable, else escalates to human.
     Includes an infinite-loop guard: if attempt exceeds max_attempts, always escalate.
+    Protected with zero-throw guard.
     """
     try:
-        attempt = int(state.get("attempt") or 1)
-    except (ValueError, TypeError):
-        attempt = 1
-    try:
-        max_attempts = int(state.get("max_attempts") or 4)
-    except (ValueError, TypeError):
-        max_attempts = 4
-    agent_fixable = bool(state.get("agent_fixable", True))
+        try:
+            attempt = int(state.get("attempt") or 1)
+        except (ValueError, TypeError):
+            attempt = 1
+        try:
+            max_attempts = int(state.get("max_attempts") or 4)
+        except (ValueError, TypeError):
+            max_attempts = 4
+        agent_fixable = bool(state.get("agent_fixable", True))
 
-    # Hard cap: never exceed max_attempts regardless of agent_fixable flag.
-    if attempt > max_attempts:
-        print(f"[LangGraph:Router] attempt={attempt} > max_attempts={max_attempts}. Force escalating.")
+        # Hard cap: never exceed max_attempts regardless of agent_fixable flag.
+        if attempt > max_attempts:
+            print(f"[LangGraph:Router] attempt={attempt} > max_attempts={max_attempts}. Force escalating.")
+            return "escalate"
+
+        if attempt <= max_attempts and agent_fixable:
+            return "coder"
         return "escalate"
-
-    if attempt <= max_attempts and agent_fixable:
-        return "coder"
-    return "escalate"
+    except Exception as e:
+        print(f"[LangGraph:Router] route_after_diagnose error: {e}. Defaulting to 'escalate'.")
+        return "escalate"
 
 
 # ── Graph Builder ──────────────────────────────────────────────────────────────

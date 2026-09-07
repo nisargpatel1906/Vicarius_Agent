@@ -72,8 +72,21 @@ def run_python_file_check(filepath: Path, timeout: int = 60, work_dir: Optional[
         pythonpath_entries = []
         if work_dir and work_dir.exists():
             pythonpath_entries.append(str(work_dir.resolve()))
+            # Automatically include nested src/ and package roots
+            for src_dir in work_dir.rglob("src"):
+                if src_dir.is_dir() and str(src_dir.resolve()) not in pythonpath_entries:
+                    pythonpath_entries.append(str(src_dir.resolve()))
+            for proj_root in work_dir.rglob("pyproject.toml"):
+                p_dir = str(proj_root.parent.resolve())
+                if p_dir not in pythonpath_entries:
+                    pythonpath_entries.append(p_dir)
         if filepath.parent.exists() and str(filepath.parent.resolve()) not in pythonpath_entries:
             pythonpath_entries.append(str(filepath.parent.resolve()))
+        # If filepath is inside a subproject with src or pyproject.toml, set target_cwd to that subproject
+        for parent in filepath.parents:
+            if (parent / "pyproject.toml").exists() or (parent / "setup.py").exists() or (parent / "src").exists():
+                target_cwd = str(parent.resolve())
+                break
         if os.environ.get("PYTHONPATH"):
             pythonpath_entries.append(os.environ["PYTHONPATH"])
         combined_pythonpath = os.pathsep.join(pythonpath_entries)

@@ -154,6 +154,8 @@ def _is_quota_exhausted(output: str) -> bool:
         "rate limit exceeded",
         "resource has been exhausted",
         "quota exceeded",
+        "authentication required",
+        "please visit the url to log in",
     ])
 
 
@@ -558,7 +560,7 @@ def coder_node(state: AgentState) -> Dict[str, Any]:
             # Check deliverables produced in workspace
             workspace_paths, missing_files = _compute_missing_files(work_dir, planned_files)
 
-            if workspace_paths and not missing_files:
+            if workspace_paths and not missing_files and not retry_instructions:
                 print(f"[LangGraph:Coder] Antigravity CLI ({tier_label}) produced all {len(workspace_paths)} planned deliverable(s).")
                 all_files = list_workspace_files(work_dir)
                 return {
@@ -581,7 +583,7 @@ def coder_node(state: AgentState) -> Dict[str, Any]:
 
         # After AGY loop ends (either exhausted or quota break):
         workspace_paths, missing_files = _compute_missing_files(work_dir, planned_files)
-        if workspace_paths and not missing_files:
+        if workspace_paths and not missing_files and not retry_instructions:
             print(f"[LangGraph:Coder] All {len(workspace_paths)} planned deliverable(s) present in workspace. Returning.")
             all_files = list_workspace_files(work_dir)
             return {

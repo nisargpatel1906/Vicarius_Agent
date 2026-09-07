@@ -1573,30 +1573,56 @@ def run_worker_cycle() -> bool:
     task_id = task["id"]
     initial_state = create_initial_state(task, max_attempts=MAX_FIX_ATTEMPTS, base_work_dir=str(BASE_WORK_DIR))
     graph = build_vicarius_graph()
+    final_state = {}
     try:
-        final_state = graph.invoke(initial_state)
+        # Set recursion_limit: 100 to prevent premature termination on multi-attempt retries
+        final_state = graph.invoke(initial_state, config={"recursion_limit": 100})
     except Exception as graph_err:
-        # If any LangGraph node raises an unhandled exception the task would
-        # otherwise be stuck in "claimed" forever. Mark it failed immediately.
         err_msg = f"LangGraph pipeline crash for task '{task.get('title')}': {graph_err}"
         print(f"[Worker] CRITICAL: {err_msg}", file=sys.stderr)
         log_system_event("error", "worker", err_msg)
+
+        # Emergency workspace salvage: check if work_dir has produced deliverables before declaring total failure
+        salvaged_files = []
+        try:
+            work_dir_path = Path(initial_state.get("work_dir", ""))
+            if work_dir_path.exists():
+                from worker.tools.file_tools import list_workspace_files
+                salvaged_files = list_workspace_files(work_dir_path)
+        except Exception:
+            pass
+
+        target_status = "flagged" if salvaged_files else "failed"
+        summary_note = (
+            f"Pipeline error ({graph_err}). Salvaged {len(salvaged_files)} file(s) from workspace."
+            if salvaged_files
+            else f"LangGraph pipeline crash: {str(graph_err)[:300]}"
+        )
+
         try:
             sb = get_supabase()
-            sb.table("tasks").update({
-                "status": "failed",
-                "error_message": str(graph_err)[:500],
-                "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            }).eq("id", task_id).execute()
+            if sb:
+                sb.table("tasks").update({
+                    "status": target_status,
+                    "error_message": str(graph_err)[:500],
+                    "result_summary": summary_note,
+                    "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                }).eq("id", task_id).execute()
         except Exception as _sb_err:
-            print(f"[Worker] Could not mark task failed in Supabase: {_sb_err}", file=sys.stderr)
+            print(f"[Worker] Could not update task status in Supabase: {_sb_err}", file=sys.stderr)
+
         import html as _html
+        salvage_text = f"\n📦 <i>Salvaged {len(salvaged_files)} deliverable(s) from workspace.</i>" if salvaged_files else ""
         send_telegram_notification(
-            f"🔴 <b>Pipeline Crash</b>\n"
+            f"⚠️ <b>Pipeline Interrupted ({target_status.upper()})</b>\n"
             f"Task: <code>{_html.escape(task.get('title', task_id))}</code>\n"
-            f"Error: <i>{_html.escape(str(graph_err)[:200])}</i>\n"
+            f"Error: <i>{_html.escape(str(graph_err)[:200])}</i>{salvage_text}\n"
             f"🆔 <code>{task_id}</code>"
         )
+        return False
+
+    if final_state.get("status") == "failed":
+        print(f"[Worker] Task '{task.get('title')}' ended with status 'failed'.")
         return False
 
     return True

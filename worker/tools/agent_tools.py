@@ -41,7 +41,8 @@ def tool_write_file(work_dir: Path, path: str, content: str) -> str:
     - Creates intermediate directories automatically.
     """
     try:
-        target = (work_dir / path).resolve()
+        clean_path = str(path or "").strip('\'" \t\r\n')
+        target = (work_dir / clean_path).resolve()
         # Security: prevent path traversal outside work_dir
         if not str(target).startswith(str(work_dir.resolve())):
             return _err(f"Path '{path}' escapes work_dir — rejected.")

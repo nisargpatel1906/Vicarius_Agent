@@ -81,7 +81,10 @@ def deliver_node(state: AgentState) -> Dict[str, Any]:
 
         drive_link = None
         if creds and DRIVE_OUTPUT_FOLDER_ID:
-            drive_link = upload_to_drive(creds, DRIVE_OUTPUT_FOLDER_ID, course, task_id, f, title)
+            try:
+                drive_link = upload_to_drive(creds, DRIVE_OUTPUT_FOLDER_ID, course, task_id, f, title)
+            except Exception as ue:
+                print(f"[Deliverer] Drive upload error for '{f.name}': {ue}")
 
         if drive_link:
             html_links.append(f"• <a href=\"{drive_link}\">{html.escape(f.name)}</a>")
@@ -95,38 +98,44 @@ def deliver_node(state: AgentState) -> Dict[str, Any]:
                     "file_name": f.name,
                     "file_type": ext,
                     "drive_link": drive_link,
-                    "delivered_via": "both",
+                    "delivered_via": "both" if drive_link else "local",
                 }).execute()
             except Exception as de:
-                print(f"[Deliverer] Deliverable record error: {de}")
+                print(f"[Deliverer] Deliverable record error for '{f.name}': {de}")
 
-    # 2. Google Calendar Event
+    # 2. Google Calendar Event (isolated try-except)
     if creds:
-        create_calendar_deadline_event(creds, task)
+        try:
+            create_calendar_deadline_event(creds, task)
+        except Exception as ce:
+            print(f"[Deliverer] Calendar event warning: {ce}")
 
-    # 3. Telegram Completion Notification (Google Drive Links Only - No Document Attachments)
+    # 3. Telegram Completion Notification (isolated try-except)
     if TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_CHAT_ID:
-        primary_exts = {".zip", ".pptx", ".docx", ".pdf"}
-        primary_links = [l for l, f in zip(html_links, produced_files) if f.suffix.lower() in primary_exts or "_executed" in f.name]
-        displayed_links = (primary_links or html_links)[:15]
-        links_text = "\n".join(displayed_links)
+        try:
+            primary_exts = {".zip", ".pptx", ".docx", ".pdf"}
+            primary_links = [l for l, f in zip(html_links, produced_files) if f.suffix.lower() in primary_exts or "_executed" in f.name]
+            displayed_links = (primary_links or html_links)[:15]
+            links_text = "\n".join(displayed_links)
 
-        folder_link_html = ""
-        target_folder_id = task_drive_folder_id or DRIVE_OUTPUT_FOLDER_ID
-        if target_folder_id:
-            folder_link_html = f"📁 <a href=\"https://drive.google.com/drive/folders/{target_folder_id}\"><b>Open Task Folder in Google Drive</b></a>\n\n"
+            folder_link_html = ""
+            target_folder_id = task_drive_folder_id or DRIVE_OUTPUT_FOLDER_ID
+            if target_folder_id:
+                folder_link_html = f"📁 <a href=\"https://drive.google.com/drive/folders/{target_folder_id}\"><b>Open Task Folder in Google Drive</b></a>\n\n"
 
-        msg = (
-            f"🎉 <b>Task Completed:</b> {html.escape(title)}\n"
-            f"<b>Course:</b> {html.escape(course)}\n"
-            f"🆔 <code>{task_id}</code>\n\n"
-            f"{folder_link_html}"
-            f"<b>Google Drive Deliverables:</b>\n{links_text}\n\n"
-            f"<b>Summary:</b> {html.escape(result_summary[:600])}\n\n"
-            f"✅ <i>All deliverables organized in task folder and ready for submission.</i>\n"
-            f"<i>(To request fixes or additions, reply to this message!)</i>"
-        )
-        send_telegram_notification(TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_CHAT_ID, msg)
+            msg = (
+                f"🎉 <b>Task Completed:</b> {html.escape(title)}\n"
+                f"<b>Course:</b> {html.escape(course)}\n"
+                f"🆔 <code>{task_id}</code>\n\n"
+                f"{folder_link_html}"
+                f"<b>Google Drive Deliverables:</b>\n{links_text}\n\n"
+                f"<b>Summary:</b> {html.escape(result_summary[:600])}\n\n"
+                f"✅ <i>All deliverables organized in task folder and ready for submission.</i>\n"
+                f"<i>(To request fixes or additions, reply to this message!)</i>"
+            )
+            send_telegram_notification(TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_CHAT_ID, msg)
+        except Exception as te:
+            print(f"[Deliverer] Telegram notification warning: {te}")
 
     # 4. Mark done in Supabase
     if sb and task_id:
