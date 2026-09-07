@@ -27,7 +27,7 @@ def _get_silent_kwargs() -> dict:
         si.wShowWindow = subprocess.SW_HIDE
         return {
             "startupinfo": si,
-            "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) | 0x00000008,
+            "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
         }
     return {}
 
@@ -196,24 +196,16 @@ def tool_list_files(work_dir: Path) -> str:
 def _detect_python_exe() -> str:
     if os.getenv("AGENT_PYTHON_EXE") and Path(os.environ["AGENT_PYTHON_EXE"]).exists():
         return os.environ["AGENT_PYTHON_EXE"]
-    # 1. Check local workspace .venv (prefer pythonw.exe on Windows for 100% silent execution)
-    if sys.platform == "win32":
-        local_venv_w = Path(__file__).resolve().parent.parent.parent / ".venv" / "Scripts" / "pythonw.exe"
-        if local_venv_w.exists():
-            return str(local_venv_w)
+    # 1. Check local workspace .venv
     local_venv = Path(__file__).resolve().parent.parent.parent / ".venv" / "Scripts" / "python.exe"
     if local_venv.exists():
         return str(local_venv)
-    # 2. Check current runtime pythonw
-    if sys.platform == "win32" and sys.executable:
-        pyw = sys.executable.lower().replace("python.exe", "pythonw.exe")
-        if Path(pyw).exists():
-            return pyw
+    # 2. Check current runtime python
     if sys.executable and Path(sys.executable).exists():
         return sys.executable
     # 3. Check system PATH python
     import shutil
-    which_py = shutil.which("pythonw") if sys.platform == "win32" else (shutil.which("python") or shutil.which("python3"))
+    which_py = shutil.which("python") or shutil.which("python3")
     if which_py:
         return which_py
     return "python"
