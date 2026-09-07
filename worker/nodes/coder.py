@@ -541,11 +541,6 @@ def coder_node(state: AgentState) -> Dict[str, Any]:
                     "tool_call_history": [{"engine": "agy_cli", "status": "complete", "tier": tier_label, "files": [f.name for f in all_files]}],
                 }
 
-            # Quota detection: break out of CLI retry loop immediately if quota is exhausted
-            if "quota reached" in agy_out.lower():
-                print(f"[LangGraph:Coder] Antigravity CLI quota exhausted. Bypassing further CLI attempts.")
-                break
-
             # Trigger condition: CLI failure, non-zero exit code, or missing planned files
             trigger_reason = f"Missing planned files: {missing_files}" if missing_files else "CLI completed without generating files."
             print(f"[LangGraph:Coder] Antigravity CLI ({tier_label}) trigger: {trigger_reason}")
@@ -557,19 +552,15 @@ def coder_node(state: AgentState) -> Dict[str, Any]:
                     f"{retry_instructions}"
                 )
 
-        if workspace_paths and not missing_files:
-            print(f"[LangGraph:Coder] All planned deliverables verified present: {[p.name for p in workspace_paths]}")
-            _auto_execute_notebooks(work_dir)
-            _auto_package_submission_zip(work_dir, plan, title, build_spec, student_enrollment)
+        if workspace_paths:
+            print(f"[LangGraph:Coder] Antigravity CLI attempts exhausted. Returning produced files: {[p.name for p in workspace_paths]}")
             all_files = list_workspace_files(work_dir)
             return {
                 "produced_files": [str(f.resolve()) for f in all_files],
                 "stdout_log": stdout_log,
                 "work_dir": str(work_dir),
-                "tool_call_history": [{"engine": "agy_cli", "status": "complete", "files": [f.name for f in all_files]}],
+                "tool_call_history": [{"engine": "agy_cli", "status": "partial", "files": [f.name for f in all_files]}],
             }
-        elif workspace_paths:
-            print(f"[LangGraph:Coder] Antigravity CLI produced partial files, missing: {missing_files}. Activating ReAct loop to complete missing deliverables.")
 
     # Step B: ReAct Agent Loop (Completes Missing or Alternate Files)
     tool_context = {
