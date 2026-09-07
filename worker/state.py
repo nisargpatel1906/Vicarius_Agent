@@ -7,6 +7,9 @@ import re
 from typing import TypedDict, List, Dict, Any, Optional
 
 
+from pathlib import Path
+
+
 def _title_slug(title: str, max_len: int = 40) -> str:
     """Convert a task title to a safe directory name slug."""
     slug = re.sub(r'[^\w\s-]', '', title.lower())   # keep word chars, spaces, hyphens
@@ -19,11 +22,21 @@ def get_task_work_dir(base_work_dir: str, task_id: str, title: str = "") -> str:
     Returns a consistent, human-readable work directory for a task.
     Format: <base_work_dir>/<task_id>_<title-slug>/
 
-    Always returns the SAME path for the same task_id, even across retries —
-    so fix/retry operations reuse the existing folder instead of creating a new one.
+    GUARANTEE: If a workspace directory for task_id already exists (from an initial run,
+    prior attempt, or bare UUID), it always returns that EXACT directory so that
+    fixes and replies update in-place rather than creating new/duplicate folders.
     """
+    base_path = Path(base_work_dir)
+    safe_id = str(task_id).strip()
+
+    if base_path.exists():
+        for item in base_path.iterdir():
+            if item.is_dir() and (item.name == safe_id or item.name.startswith(f"{safe_id}_")):
+                return str(item.resolve()).replace("\\", "/")
+
     slug = _title_slug(title) if title else "task"
-    return f"{base_work_dir}/{task_id}_{slug}"
+    new_dir = base_path / f"{safe_id}_{slug}"
+    return str(new_dir.resolve()).replace("\\", "/")
 
 
 class AgentState(TypedDict, total=False):

@@ -516,6 +516,7 @@ ${instruction}`;
     `✅ <b>Got it — I've updated the task and I'm rebuilding it now.</b>\n\n` +
     `📌 <b>Task:</b> ${escapeHtml(task.title)}\n` +
     `🔧 <b>What I changed:</b> ${escapeHtml(changeSummary)}\n` +
+    `📁 <b>Folder:</b> Updating existing task folder in-place (no new folder created).\n` +
     (isAppendIntent ? `📎 <b>Mode:</b> <code>APPEND</code> — existing files will be extended, not replaced.\n` : '') +
     `\n<i>The worker will pick it up on its next cycle. I'll message you when it's done.</i>`
   );

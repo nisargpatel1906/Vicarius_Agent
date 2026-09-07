@@ -64,6 +64,16 @@ def deliver_node(state: AgentState) -> Dict[str, Any]:
     screenshot_path = None
 
     # 1. Google Drive Uploads & Deliverables Logging
+    task_drive_folder_id = None
+    if creds and DRIVE_OUTPUT_FOLDER_ID:
+        try:
+            from googleapiclient.discovery import build
+            from worker.tools.delivery_tools import get_or_create_task_drive_folder
+            drive_service = build('drive', 'v3', credentials=creds)
+            task_drive_folder_id = get_or_create_task_drive_folder(drive_service, DRIVE_OUTPUT_FOLDER_ID, course, task_id, title)
+        except Exception as tfe:
+            print(f"[Deliverer] Task folder resolution error: {tfe}")
+
     for f in produced_files:
         ext = f.suffix.lstrip(".").lower()
         if ext in {"png", "jpg", "jpeg", "webp"} and not screenshot_path:
@@ -71,7 +81,7 @@ def deliver_node(state: AgentState) -> Dict[str, Any]:
 
         drive_link = None
         if creds and DRIVE_OUTPUT_FOLDER_ID:
-            drive_link = upload_to_drive(creds, DRIVE_OUTPUT_FOLDER_ID, course, task_id, f)
+            drive_link = upload_to_drive(creds, DRIVE_OUTPUT_FOLDER_ID, course, task_id, f, title)
 
         if drive_link:
             html_links.append(f"• <a href=\"{drive_link}\">{html.escape(f.name)}</a>")
@@ -102,16 +112,19 @@ def deliver_node(state: AgentState) -> Dict[str, Any]:
         links_text = "\n".join(displayed_links)
 
         folder_link_html = ""
-        if DRIVE_OUTPUT_FOLDER_ID:
-            folder_link_html = f"📁 <a href=\"https://drive.google.com/drive/folders/{DRIVE_OUTPUT_FOLDER_ID}\"><b>Open Complete Google Drive Folder</b></a>\n\n"
+        target_folder_id = task_drive_folder_id or DRIVE_OUTPUT_FOLDER_ID
+        if target_folder_id:
+            folder_link_html = f"📁 <a href=\"https://drive.google.com/drive/folders/{target_folder_id}\"><b>Open Task Folder in Google Drive</b></a>\n\n"
 
         msg = (
             f"🎉 <b>Task Completed:</b> {html.escape(title)}\n"
-            f"<b>Course:</b> {html.escape(course)}\n\n"
+            f"<b>Course:</b> {html.escape(course)}\n"
+            f"🆔 <code>{task_id}</code>\n\n"
             f"{folder_link_html}"
             f"<b>Google Drive Deliverables:</b>\n{links_text}\n\n"
             f"<b>Summary:</b> {html.escape(result_summary[:600])}\n\n"
-            f"✅ <i>All deliverables uploaded to Google Drive and ready for submission.</i>"
+            f"✅ <i>All deliverables organized in task folder and ready for submission.</i>\n"
+            f"<i>(To request fixes or additions, reply to this message!)</i>"
         )
         send_telegram_notification(TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_CHAT_ID, msg)
 

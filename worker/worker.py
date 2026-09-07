@@ -563,7 +563,8 @@ def execute_build(task: Dict[str, Any], retry_count: int = 0, retry_note: str = 
             f"<b>Course:</b> {html_module.escape(task.get('course') or 'General')}\n"
             f"<b>Type:</b> <code>{task_type}</code> ({weight} lift)\n"
             f"<b>Timeout:</b> {timeout_minutes}m\n"
-            f"<b>📁 Work Folder:</b> <code>{task_work_dir.name}</code>\n\n"
+            f"<b>📁 Work Folder:</b> <code>{task_work_dir.name}</code>\n"
+            f"🆔 <code>{task_id}</code>\n\n"
             f"<i>LangGraph AI agent is generating your academic deliverables...</i>"
         )
         send_telegram_notification(start_msg)
@@ -573,7 +574,8 @@ def execute_build(task: Dict[str, Any], retry_count: int = 0, retry_note: str = 
         send_telegram_notification(
             f"🔧 <b>Retry {retry_count}/{max_retries}</b> — applying fix: "
             f"<i>{html_module.escape(note_short)}</i>\n"
-            f"<b>📁 Reusing folder:</b> <code>{task_work_dir.name}</code>"
+            f"<b>📁 Reusing folder:</b> <code>{task_work_dir.name}</code>\n"
+            f"🆔 <code>{task_id}</code>"
         )
 
     if weight == "heavy":
@@ -1016,45 +1018,32 @@ def get_google_credentials():
     return None
 
 
-def upload_to_drive(creds, course: str, task_id: str, file_path: Path) -> Optional[str]:
-    """Upload deliverable to Google Drive folder structure: Agent Outputs/<course>/ and set public reader permission."""
+def upload_to_drive(creds, course: str, task_id: str, file_path: Path, title: str = "") -> Optional[str]:
+    """
+    Upload deliverable to Google Drive into the dedicated task folder:
+    Agent Outputs / <course> / <Task Title> [<task_id[:8]>] / <file_name>
+    and set public reader permission.
+    If the file already exists in the task folder, updates it in-place.
+    """
     try:
-        from googleapiclient.discovery import build
-        from googleapiclient.http import MediaFileUpload
-
-        drive_service = build('drive', 'v3', credentials=creds)
+        from worker.tools.delivery_tools import upload_to_drive as dt_upload_to_drive
         parent_folder_id = DRIVE_OUTPUT_FOLDER_ID
-
-        # 1. Create or get course folder
-        course_q = f"mimeType='application/vnd.google-apps.folder' and name='{course}' and '{parent_folder_id}' in parents and trashed=false"
-        res = drive_service.files().list(q=course_q, fields="files(id, name)").execute()
-        files = res.get('files', [])
-        if files:
-            course_folder_id = files[0]['id']
-        else:
-            meta = {'name': course, 'mimeType': 'application/vnd.google-apps.folder', 'parents': [parent_folder_id]}
-            folder = drive_service.files().create(body=meta, fields='id').execute()
-            course_folder_id = folder.get('id')
-
-        # 2. Upload file
-        media = MediaFileUpload(str(file_path), resumable=True)
-        file_meta = {'name': file_path.name, 'parents': [course_folder_id]}
-        uploaded = drive_service.files().create(body=file_meta, media_body=media, fields='id, webViewLink').execute()
-        file_id = uploaded.get('id')
-
-        # 3. Grant 'anyone with link can view' permission so links open without access denied errors
-        try:
-            drive_service.permissions().create(
-                fileId=file_id,
-                body={'type': 'anyone', 'role': 'reader'},
-                fields='id'
-            ).execute()
-        except Exception as perm_err:
-            print(f"[DriveUpload-PermWarning] Could not set public permission: {perm_err}")
-
-        return f"https://drive.google.com/file/d/{file_id}/view?usp=sharing"
+        return dt_upload_to_drive(creds, parent_folder_id, course, task_id, file_path, title=title)
     except Exception as e:
         print(f"[DriveUpload-Warning] Could not upload to Drive: {e}")
+        return None
+
+
+def get_task_drive_folder_id(creds, course: str, task_id: str, title: str = "") -> Optional[str]:
+    """Retrieves or creates the dedicated task folder in Google Drive."""
+    try:
+        from googleapiclient.discovery import build
+        from worker.tools.delivery_tools import get_or_create_task_drive_folder
+        drive_service = build('drive', 'v3', credentials=creds)
+        parent_folder_id = DRIVE_OUTPUT_FOLDER_ID
+        return get_or_create_task_drive_folder(drive_service, parent_folder_id, course, task_id, title)
+    except Exception as e:
+        print(f"[DriveUpload-FolderWarning] Could not get task drive folder: {e}")
         return None
 
 
@@ -1128,7 +1117,7 @@ def deliver_and_track(task: Dict[str, Any], produced_files: List[Path], result_s
 
         drive_link = None
         if creds and DRIVE_OUTPUT_FOLDER_ID:
-            drive_link = upload_to_drive(creds, course, task_id, f)
+            drive_link = upload_to_drive(creds, course, task_id, f, title=task.get("title", ""))
             if drive_link:
                 html_links.append(f"• <a href=\"{drive_link}\">{html.escape(f.name)}</a>")
             else:
@@ -1149,14 +1138,24 @@ def deliver_and_track(task: Dict[str, Any], produced_files: List[Path], result_s
         create_calendar_deadline_event(creds, task)
 
     # 3. Send completion alert via Telegram
+    task_folder_link = None
+    if creds and DRIVE_OUTPUT_FOLDER_ID:
+        folder_id = get_task_drive_folder_id(creds, course, task_id, task.get("title", ""))
+        if folder_id:
+            task_folder_link = f"https://drive.google.com/drive/folders/{folder_id}?usp=sharing"
+
     links_text = "\n".join(html_links) if html_links else "Saved locally in working directory."
+    folder_section = f"📁 <a href=\"{task_folder_link}\"><b>Open Task Folder in Google Drive</b></a>\n\n" if task_folder_link else ""
     summary_msg = (
         f"🎉 <b>Task Completed:</b> {html.escape(task['title'])}\n"
         f"<b>Course:</b> {html.escape(course)}\n"
         f"<b>Output Files:</b> {html.escape(', '.join([f.name for f in final_files]))}\n\n"
+        f"{folder_section}"
         f"<b>Drive Links:</b>\n{links_text}\n\n"
         f"<b>Summary:</b> {html.escape(result_summary)}\n\n"
-        f"✅ <i>Deliverables are ready for your manual submission.</i>"
+        f"🆔 <code>{task_id}</code>\n"
+        f"✅ <i>Deliverables are organized in task folder and ready for submission.</i>\n"
+        f"<i>(To request fixes or additions, reply to this message!)</i>"
     )
     send_telegram_notification(summary_msg)
 
@@ -1468,7 +1467,7 @@ def handle_task_failure(
             for f in produced_files:
                 p = Path(f) if f else None
                 if p and p.exists():
-                    link = upload_to_drive(creds, task.get("course") or "General", task_id, p)
+                    link = upload_to_drive(creds, task.get("course") or "General", task_id, p, title=task.get("title", ""))
                     if link:
                         drive_links.append(f"<a href=\"{link}\">{html.escape(p.name)}</a>")
     
