@@ -64,7 +64,9 @@ test_rag.ts
 tests/
 scripts/
 notebooks/
-.agents/
+.agents/*
+!.agents/skills/
+!.agents/rules/
 docx/
 AGENTS.md
 CLAUDE.md

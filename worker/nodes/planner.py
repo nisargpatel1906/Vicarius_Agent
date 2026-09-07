@@ -4,6 +4,7 @@ Analyzes task requirements, attachments, and success criteria to dynamically
 formulate a structured execution blueprint including tool hints and execution strategy.
 """
 
+from pathlib import Path
 from typing import Dict, Any
 from worker.state import AgentState
 from worker.llm import call_llm, safe_parse_json
@@ -59,9 +60,17 @@ def planner_node(state: AgentState) -> Dict[str, Any]:
     directives_prompt = f"\nStudent Guidelines & Working Directives: {custom_directives}" if custom_directives else ""
     skills_prompt = f"\nStudent Technical Skillset: {skills_str}" if skills_str else ""
 
+    # Discover available agent skills in .agents/skills/
+    repo_skills_dir = Path(__file__).resolve().parents[2] / ".agents" / "skills"
+    agent_skills_prompt = ""
+    if repo_skills_dir.is_dir():
+        sk_names = [s.name for s in repo_skills_dir.iterdir() if s.is_dir() and (s / "SKILL.md").exists()]
+        if sk_names:
+            agent_skills_prompt = f"\nAvailable Agent Execution Skills: {', '.join(sk_names)}"
+
     sys_prompt = (
         f"You are an expert academic AI agent for {student_name} "
-        f"(Enrollment No: {student_enrollment}), a {student_program} student at {student_uni}.{directives_prompt}{skills_prompt}\n"
+        f"(Enrollment No: {student_enrollment}), a {student_program} student at {student_uni}.{directives_prompt}{skills_prompt}{agent_skills_prompt}\n"
         "Analyze the assignment specification and produce a structured execution blueprint in JSON.\n\n"
         "Available tools the Coder agent can use:\n"
         "- write_file: write any file (Python, Markdown, HTML, etc.)\n"

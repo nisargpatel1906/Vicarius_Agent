@@ -80,6 +80,21 @@ def _build_agy_prompt(
     local_pdfs = list(work_dir.glob("*.pdf"))
     pdf_section = f"\nReference Documents in Workspace:\n" + "\n".join([f"- `{p.name}`" for p in local_pdfs]) + "\n" if local_pdfs else ""
 
+    # Discover available domain skills in workspace .agents/skills/
+    skills_dir = work_dir / ".agents" / "skills"
+    skills_section = ""
+    if skills_dir.is_dir():
+        available_skills = [
+            s.name for s in skills_dir.iterdir()
+            if s.is_dir() and (s / "SKILL.md").exists()
+        ]
+        if available_skills:
+            skills_section = (
+                "\nSpecialized Domain Skills in `.agents/skills/`:\n"
+                + "\n".join([f"- `{s}`: Read `.agents/skills/{s}/SKILL.md` before generating relevant deliverables." for s in available_skills])
+                + "\n"
+            )
+
     # PRE-REASONED EXECUTION PLAN block — injected at the top of the prompt
     # so AGY receives concrete, risk-aware instructions as its very first directive.
     thinker_plan_block = (
@@ -141,7 +156,8 @@ def _build_agy_prompt(
         f"Citation Style: {citation_style}"
         f"{directives_block}{voice_block}{academic_block}{retry_block}\n"
         f"{files_section}"
-        f"{pdf_section}\n"
+        f"{pdf_section}"
+        f"{skills_section}\n"
         f"Full Assignment Specification & Requirements:\n{build_spec}\n\n"
         f"EXECUTION DIRECTIVES:\n"
         f"1. STRICTLY FOLLOW THE SPEC: Only produce files explicitly required by the build specification above.\n"
@@ -465,6 +481,15 @@ def coder_node(state: AgentState) -> Dict[str, Any]:
         base = os.path.join(os.path.dirname(__file__), "..", "..", "work_dirs")
         work_dir = Path(get_task_work_dir(str(Path(base).resolve()), task_id, title))
     work_dir.mkdir(parents=True, exist_ok=True)
+
+    # Mirror repo .agents (skills & rules) into work_dir so agy CLI auto-discovers them
+    repo_agents = Path(__file__).resolve().parents[2] / ".agents"
+    if repo_agents.is_dir():
+        dest_agents = work_dir / ".agents"
+        try:
+            shutil.copytree(repo_agents, dest_agents, dirs_exist_ok=True)
+        except Exception as e:
+            print(f"[LangGraph:Coder] Warning: Could not mirror .agents into workspace: {e}")
 
 
     plan = state.get("plan", {})

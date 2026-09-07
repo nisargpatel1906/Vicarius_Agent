@@ -17,6 +17,11 @@ import textwrap
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 
+# Ensure project root is in sys.path so 'worker' package imports work from any invocation directory
+_project_root = str(Path(__file__).resolve().parent.parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
 import pytz
 import psutil
 from dotenv import load_dotenv
@@ -1660,6 +1665,21 @@ _default_handle_task_failure = handle_task_failure
 
 
 if __name__ == "__main__":
+    # Prevent duplicate worker instances immediately before starting servers or logging
+    log_dir = Path(__file__).resolve().parent.parent / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    pid_file = log_dir / "worker.pid"
+    if pid_file.exists():
+        try:
+            old_pid = int(pid_file.read_text().strip())
+            if psutil.pid_exists(old_pid) and old_pid != os.getpid():
+                p = psutil.Process(old_pid)
+                if "python" in p.name().lower():
+                    # Silently exit without error popup or port conflict
+                    sys.exit(0)
+        except Exception:
+            pass
+
     print(f"=== Vicarius Agent Local Worker Started ===")
     print(f"Timezone: {TIMEZONE_STR} | AI Model: {OPENROUTER_AI_MODEL} | Timeout: {JOB_TIMEOUT_MINUTES}m")
 
@@ -1673,22 +1693,7 @@ if __name__ == "__main__":
     daemon_mode = "--daemon" in sys.argv or "-d" in sys.argv or os.getenv("WORKER_DAEMON", "false").lower() == "true"
 
     if daemon_mode:
-        log_dir = Path(__file__).resolve().parent.parent / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
         log_file_path = log_dir / "worker_daemon.log"
-
-        # Prevent duplicate worker instances
-        pid_file = log_dir / "worker.pid"
-        if pid_file.exists():
-            try:
-                old_pid = int(pid_file.read_text().strip())
-                if psutil.pid_exists(old_pid) and old_pid != os.getpid():
-                    p = psutil.Process(old_pid)
-                    if "python" in p.name().lower():
-                        print(f"[Worker] Another worker instance is already running (PID {old_pid}). Exiting gracefully.")
-                        sys.exit(0)
-            except Exception:
-                pass
         pid_file.write_text(str(os.getpid()))
 
         # Safe logging tee for silent background runs (handles pythonw.exe where stdout is None)
