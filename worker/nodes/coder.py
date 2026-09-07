@@ -617,6 +617,12 @@ def coder_node(state: AgentState) -> Dict[str, Any]:
         if llm_resp is None:
             print(f"[LangGraph:Coder] Step {step}: All LLM providers failed. Stopping loop.")
             stdout_log += "Agent loop interrupted: all LLM providers unavailable.\n"
+            report_progress(
+                task_id,
+                "building",
+                f"⚠️ All LLM providers offline at step {step}. Returning partial output for verification...",
+                state,
+            )
             break
 
         if llm_resp.has_tool_calls:

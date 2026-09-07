@@ -1548,22 +1548,56 @@ def run_worker_cycle() -> bool:
 
     # Step 3: Check system load & concurrency (and preferred window for heavy tasks)
     if not check_system_load_and_concurrency(task.get("due_date"), weight=task.get("weight", "light")):
-        # Return task back to queued
-        sb = get_supabase()
-        sb.table("tasks").update({
-            "status": "queued",
-            "worker_id": None,
-            "claimed_at": None,
-        }).eq("id", task["id"]).execute()
+        # Return task back to queued — with retry so a momentary Supabase blip
+        # doesn't leave the task stuck in "claimed" state forever.
+        for _unclaim_attempt in range(3):
+            try:
+                sb = get_supabase()
+                sb.table("tasks").update({
+                    "status": "queued",
+                    "worker_id": None,
+                    "claimed_at": None,
+                }).eq("id", task["id"]).execute()
+                break
+            except Exception as _ue:
+                if _unclaim_attempt < 2:
+                    time.sleep(2 * (_unclaim_attempt + 1))
+                else:
+                    print(f"[Worker] WARNING: Could not return task {task['id']} to queued after 3 attempts: {_ue}", file=sys.stderr)
         return False
 
     # Step 4: Execute via LangGraph StateGraph agentic workflow (decoupled nodes, typed state, zero hardcoding)
     from worker.graph import build_vicarius_graph
     from worker.state import create_initial_state
 
+    task_id = task["id"]
     initial_state = create_initial_state(task, max_attempts=MAX_FIX_ATTEMPTS, base_work_dir=str(BASE_WORK_DIR))
     graph = build_vicarius_graph()
-    final_state = graph.invoke(initial_state)
+    try:
+        final_state = graph.invoke(initial_state)
+    except Exception as graph_err:
+        # If any LangGraph node raises an unhandled exception the task would
+        # otherwise be stuck in "claimed" forever. Mark it failed immediately.
+        err_msg = f"LangGraph pipeline crash for task '{task.get('title')}': {graph_err}"
+        print(f"[Worker] CRITICAL: {err_msg}", file=sys.stderr)
+        log_system_event("error", "worker", err_msg)
+        try:
+            sb = get_supabase()
+            sb.table("tasks").update({
+                "status": "failed",
+                "error_message": str(graph_err)[:500],
+                "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            }).eq("id", task_id).execute()
+        except Exception as _sb_err:
+            print(f"[Worker] Could not mark task failed in Supabase: {_sb_err}", file=sys.stderr)
+        import html as _html
+        send_telegram_notification(
+            f"🔴 <b>Pipeline Crash</b>\n"
+            f"Task: <code>{_html.escape(task.get('title', task_id))}</code>\n"
+            f"Error: <i>{_html.escape(str(graph_err)[:200])}</i>\n"
+            f"🆔 <code>{task_id}</code>"
+        )
+        return False
 
     return True
 

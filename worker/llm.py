@@ -469,6 +469,10 @@ def call_llm_structured(
 
         for or_attempt in range(1, max_openrouter_attempts + 1):
             tier_name = "Primary" if or_attempt == 1 else f"Fallback {or_attempt - 1}"
+            # Brief backoff between consecutive attempts to avoid burning
+            # through retries instantly when the provider is under load.
+            if or_attempt > 1:
+                _time.sleep(2)
             if _is_rate_limited("openrouter"):
                 print(f"[LLM-Engine] OpenRouter is in rate-limit cooldown window. Skipping {tier_name}.")
                 break
@@ -491,7 +495,7 @@ def call_llm_structured(
                                 "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                                 "Content-Type": "application/json",
                                 "HTTP-Referer": os.getenv("APP_URL", "https://github.com/nisargpatel1906/Vicarius_Agent"),
-                                "X-Title": "Vicarius Academic Agent",
+                                "X-Title": os.getenv("APP_TITLE", "Vicarius Agent"),
                             },
                             json=body_with_tools,
                             timeout=OPENROUTER_TIMEOUT,
@@ -531,7 +535,7 @@ def call_llm_structured(
                         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                         "Content-Type": "application/json",
                         "HTTP-Referer": os.getenv("APP_URL", "https://github.com/nisargpatel1906/Vicarius_Agent"),
-                        "X-Title": "Vicarius Academic Agent",
+                        "X-Title": os.getenv("APP_TITLE", "Vicarius Agent"),
                     },
                     json=body,
                     timeout=OPENROUTER_TIMEOUT,

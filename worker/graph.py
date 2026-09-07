@@ -57,10 +57,18 @@ def route_after_verify(state: AgentState) -> Literal["deliver", "diagnose"]:
 
 
 def route_after_diagnose(state: AgentState) -> Literal["coder", "escalate"]:
-    """Routes back to coder if retries remain and error is fixable, else escalates to human."""
-    attempt     = state.get("attempt", 1)
+    """Routes back to coder if retries remain and error is fixable, else escalates to human.
+    Includes an infinite-loop guard: if attempt equals or exceeds max_attempts, always escalate.
+    """
+    attempt      = state.get("attempt", 1)
     max_attempts = state.get("max_attempts", 4)
     agent_fixable = state.get("agent_fixable", True)
+
+    # Hard cap: never exceed max_attempts regardless of agent_fixable flag.
+    # Also guards against a future diagnoser_node bug where attempt is not incremented.
+    if attempt > max_attempts:
+        print(f"[LangGraph:Router] attempt={attempt} > max_attempts={max_attempts}. Force escalating.")
+        return "escalate"
 
     if attempt <= max_attempts and agent_fixable:
         return "coder"

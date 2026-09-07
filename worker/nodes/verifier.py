@@ -265,10 +265,20 @@ def verifier_node(state: AgentState) -> Dict[str, Any]:
         if p.exists() and p not in produced_paths:
             produced_paths.append(p)
 
-    # If produced_paths is empty, scan work_dir for files
+    # If produced_paths is empty, scan work_dir for known deliverable file types.
+    # Deliberately excludes .gitignore, __pycache__, *.db, *.pid, and other
+    # non-deliverable artifacts so they are never passed to the LLM judge.
+    _DELIVERABLE_EXTS = {
+        ".py", ".js", ".ts", ".tsx", ".html", ".css", ".json", ".md",
+        ".txt", ".docx", ".pptx", ".pdf", ".ipynb", ".zip", ".apk",
+        ".kt", ".java", ".xml", ".gradle", ".sh", ".sql", ".csv",
+        ".yaml", ".yml", ".toml", ".ini", ".env.example",
+    }
     if not produced_paths and work_dir.exists():
         for item in work_dir.iterdir():
-            if item.is_file() and not item.name.startswith("."):
+            if (item.is_file()
+                    and not item.name.startswith(".")
+                    and item.suffix.lower() in _DELIVERABLE_EXTS):
                 produced_paths.append(item)
 
     stdout_output = state.get("last_execution_stdout", "") or ""
