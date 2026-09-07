@@ -51,13 +51,17 @@ def diagnoser_node(state: AgentState) -> Dict[str, Any]:
 
     print(f"\n[LangGraph:Diagnoser] Performing Reflexion root-cause analysis for attempt {attempt}/{max_attempts}...")
 
-    # Record current attempt
-    history.append({
-        "attempt": attempt,
-        "feedback": feedback,
-        "score": state.get("verification_score", 0.0),
-        "outcome": "failed",
-    })
+    # Record current attempt — guard against duplicates if this attempt was
+    # already logged (e.g. task was re-claimed after a crash and state was
+    # partially restored from checkpoint).
+    already_logged = any(entry.get("attempt") == attempt for entry in history)
+    if not already_logged:
+        history.append({
+            "attempt": attempt,
+            "feedback": feedback,
+            "score": state.get("verification_score", 0.0),
+            "outcome": "failed",
+        })
 
     # Check deadline constraint
     due_date = state.get("due_date") or task.get("due_date")

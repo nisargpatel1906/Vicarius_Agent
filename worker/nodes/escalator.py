@@ -144,8 +144,17 @@ def escalate_node(state: AgentState) -> Dict[str, Any]:
 
     print(f"[LangGraph:Escalator] Waiting up to {review_timeout_seconds}s ({review_timeout_mins}m) for student reply via Telegram...")
 
+    # Polling loop: wait for student reply on Telegram via Supabase status check.
+    # Uses exponential backoff (5s → 10s → 20s → 30s cap) instead of a fixed 5s
+    # interval to avoid burning through Supabase connection quota (60 → ~30 calls max).
+    poll_interval = 5
+    MAX_POLL_INTERVAL = 30
+
     while time.time() - start_time < review_timeout_seconds:
-        time.sleep(5)
+        time.sleep(poll_interval)
+        # Grow the interval exponentially up to the cap
+        poll_interval = min(poll_interval * 2, MAX_POLL_INTERVAL)
+
         if sb and task_id:
             try:
                 task_check = sb.table("tasks").select("status").eq("id", task_id).maybe_single().execute()

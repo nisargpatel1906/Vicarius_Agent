@@ -405,21 +405,29 @@ def extractor_node(state: AgentState) -> Dict[str, Any]:
     # Update database record in Supabase so UI and background systems reflect full requirements and heavy weight
     task_id = state.get("task_id", task.get("id"))
     if task_id and (updates.get("weight") or updates.get("build_spec") or updates.get("task_type")):
-        try:
-            from worker.worker import get_supabase
-            sb = get_supabase()
-            db_patch: Dict[str, Any] = {}
-            if "weight" in updates:
-                db_patch["weight"] = updates["weight"]
-            if "build_spec" in updates:
-                db_patch["build_spec"] = updates["build_spec"]
-            if "task_type" in updates:
-                db_patch["task_type"] = updates["task_type"]
-            if db_patch:
-                sb.table("tasks").update(db_patch).eq("id", task_id).execute()
-                print(f"[LangGraph:Extractor] Synced updated metadata to Supabase task {task_id}: {list(db_patch.keys())}")
-        except Exception as db_err:
-            print(f"[LangGraph:Extractor] Warning: Could not sync to Supabase: {db_err}")
+        db_patch: Dict[str, Any] = {}
+        if "weight" in updates:
+            db_patch["weight"] = updates["weight"]
+        if "build_spec" in updates:
+            db_patch["build_spec"] = updates["build_spec"]
+        if "task_type" in updates:
+            db_patch["task_type"] = updates["task_type"]
+        if db_patch:
+            # 3-attempt retry with backoff so a momentary Supabase blip does not
+            # silently discard enriched build_spec / weight / task_type updates.
+            import time as _time
+            for _sb_attempt in range(3):
+                try:
+                    from worker.worker import get_supabase
+                    sb = get_supabase()
+                    sb.table("tasks").update(db_patch).eq("id", task_id).execute()
+                    print(f"[LangGraph:Extractor] Synced updated metadata to Supabase task {task_id}: {list(db_patch.keys())}")
+                    break
+                except Exception as db_err:
+                    if _sb_attempt < 2:
+                        _time.sleep(2 * (_sb_attempt + 1))
+                    else:
+                        print(f"[LangGraph:Extractor] Warning: Could not sync to Supabase after 3 attempts: {db_err}")
 
     # Merge updates into task dictionary inside state
     if "task" in state:
