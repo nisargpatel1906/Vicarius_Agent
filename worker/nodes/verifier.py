@@ -13,7 +13,7 @@ import time
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 
 from worker.state import AgentState
 from worker.llm import call_llm, safe_parse_json
@@ -56,15 +56,28 @@ def contains_banned_ai_filler(text: str) -> Tuple[bool, str]:
     return False, ""
 
 
-def run_python_file_check(filepath: Path, timeout: int = 60) -> Tuple[bool, str]:
+def run_python_file_check(filepath: Path, timeout: int = 60, work_dir: Optional[Path] = None) -> Tuple[bool, str]:
     """
     Actually runs a Python file in a subprocess and returns (success, output).
     Handles persistent web servers (Flask, FastAPI, etc.) by verifying compilation and clean startup.
-    This gives real pass/fail based on exit code, not just LLM opinion.
+    Sets PYTHONPATH to include both the project work_dir and the file's parent directory
+    so imports succeed regardless of directory depth.
+    Supports running test files via pytest if available.
     """
     try:
         content = filepath.read_text(encoding="utf-8", errors="ignore")
         is_server = bool(re.search(r"app\.run\(|uvicorn\.run\(|socketio\.run\(|http\.server|run_simple\(", content))
+
+        target_cwd = str((work_dir or filepath.parent).resolve())
+        pythonpath_entries = []
+        if work_dir and work_dir.exists():
+            pythonpath_entries.append(str(work_dir.resolve()))
+        if filepath.parent.exists() and str(filepath.parent.resolve()) not in pythonpath_entries:
+            pythonpath_entries.append(str(filepath.parent.resolve()))
+        if os.environ.get("PYTHONPATH"):
+            pythonpath_entries.append(os.environ["PYTHONPATH"])
+        combined_pythonpath = os.pathsep.join(pythonpath_entries)
+        run_env = {**os.environ, "PYTHONPATH": combined_pythonpath}
 
         if is_server:
             # 1. Test compilation & syntax
@@ -73,8 +86,8 @@ def run_python_file_check(filepath: Path, timeout: int = 60) -> Tuple[bool, str]
                 capture_output=True,
                 text=True,
                 timeout=15,
-                cwd=str(filepath.parent.resolve()),
-                env={**os.environ, "PYTHONPATH": str(filepath.parent.resolve())},
+                cwd=target_cwd,
+                env=run_env,
             )
             if comp_res.returncode != 0:
                 return False, f"Server syntax/compilation error: {comp_res.stderr.strip()[:500]}"
@@ -85,8 +98,8 @@ def run_python_file_check(filepath: Path, timeout: int = 60) -> Tuple[bool, str]
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                cwd=str(filepath.parent.resolve()),
-                env={**os.environ, "PYTHONPATH": str(filepath.parent.resolve())},
+                cwd=target_cwd,
+                env=run_env,
             )
             time.sleep(3)
             ret = proc.poll()
@@ -102,13 +115,35 @@ def run_python_file_check(filepath: Path, timeout: int = 60) -> Tuple[bool, str]
                 proc.kill()
             return True, "Server started successfully and bound without crashing"
 
+        # Check if this is a test file (run via pytest if available, else python)
+        is_test = filepath.name.startswith("test_") or "tests" in filepath.parts
+        if is_test:
+            try:
+                pt_res = subprocess.run(
+                    [PYTHON_EXE, "-m", "pytest", str(filepath.resolve()), "-v"],
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    cwd=target_cwd,
+                    env=run_env,
+                )
+                if "No module named pytest" not in pt_res.stderr:
+                    output = ""
+                    if pt_res.stdout.strip():
+                        output += f"STDOUT: {pt_res.stdout.strip()[:1000]}"
+                    if pt_res.stderr.strip():
+                        output += f"\nSTDERR: {pt_res.stderr.strip()[:500]}"
+                    return pt_res.returncode == 0, output
+            except Exception:
+                pass
+
         result = subprocess.run(
             [PYTHON_EXE, str(filepath.resolve())],
             capture_output=True,
             text=True,
             timeout=timeout,
-            cwd=str(filepath.parent.resolve()),
-            env={**os.environ, "PYTHONPATH": str(filepath.parent.resolve())},
+            cwd=target_cwd,
+            env=run_env,
         )
         output = ""
         if result.stdout.strip():
@@ -393,7 +428,7 @@ def verifier_node(state: AgentState) -> Dict[str, Any]:
 
     for f in targets_to_run:
         print(f"[LangGraph:Verifier] Running: {f.name}...")
-        success, output = run_python_file_check(f, timeout=60)
+        success, output = run_python_file_check(f, timeout=60, work_dir=work_dir)
         status = "PASS" if success else "FAIL"
         execution_results.append(f"[{status}] {f.name}: {output[:300]}")
         if not success:

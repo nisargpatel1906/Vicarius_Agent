@@ -141,6 +141,22 @@ def _build_agy_prompt(
 
 
 
+def _is_quota_exhausted(output: str) -> bool:
+    """Checks if CLI output indicates API quota or subscription exhaustion."""
+    if not output:
+        return False
+    low = output.lower()
+    return any(p in low for p in [
+        "individual quota reached",
+        "quota reached",
+        "exceeded your current quota",
+        "upgrade your subscription",
+        "rate limit exceeded",
+        "resource has been exhausted",
+        "quota exceeded",
+    ])
+
+
 def _run_agy_cli(work_dir: Path, prompt: str, timeout_seconds: int = 1800) -> Tuple[bool, str]:
     """Runs Antigravity CLI locally in print mode within the task work directory with real-time live terminal streaming."""
     agy_bin = shutil.which("agy") or os.path.expandvars(r"%LOCALAPPDATA%\agy\agy.EXE") or "agy"
@@ -384,7 +400,7 @@ def _auto_package_submission_zip(
 
 
 def _compute_missing_files(work_dir: Path, planned_files: List[str]) -> Tuple[List[Path], List[str]]:
-    """Accurately computes missing files by matching both relative paths and file basenames."""
+    """Accurately computes missing files by matching relative paths, file basenames, and disk existence."""
     workspace_paths = list_workspace_files(work_dir)
     current_basenames = {p.name.lower() for p in workspace_paths}
     current_relpaths = {str(p.relative_to(work_dir)).replace("\\", "/").lower() for p in workspace_paths}
@@ -395,6 +411,12 @@ def _compute_missing_files(work_dir: Path, planned_files: List[str]) -> Tuple[Li
             continue
         pf_clean = pf.replace("\\", "/").strip().lower()
         pf_name = Path(pf_clean).name.lower()
+
+        # Check direct existence on disk (handles dotfiles or nested paths)
+        direct_target = work_dir / pf.replace("\\", "/").strip()
+        if direct_target.exists():
+            continue
+
         if pf_clean not in current_relpaths and pf_name not in current_basenames:
             missing.append(pf)
     return workspace_paths, missing
@@ -528,6 +550,11 @@ def coder_node(state: AgentState) -> Dict[str, Any]:
             success, agy_out = _run_agy_cli(work_dir, agy_prompt, timeout_seconds=agy_timeout)
             stdout_log += f"\n--- Antigravity CLI Output ({tier_label}) ---\n{agy_out}\n"
 
+            # Quota fail-fast: if CLI ran out of quota/subscription limits, avoid burning retries
+            if _is_quota_exhausted(agy_out):
+                print(f"[LangGraph:Coder] Antigravity CLI quota exhausted ({tier_label}). Fast-failing AGY retries → switching to ReAct agent loop.")
+                break
+
             # Check deliverables produced in workspace
             workspace_paths, missing_files = _compute_missing_files(work_dir, planned_files)
 
@@ -552,15 +579,19 @@ def coder_node(state: AgentState) -> Dict[str, Any]:
                     f"{retry_instructions}"
                 )
 
-        if workspace_paths:
-            print(f"[LangGraph:Coder] Antigravity CLI attempts exhausted. Returning produced files: {[p.name for p in workspace_paths]}")
+        # After AGY loop ends (either exhausted or quota break):
+        workspace_paths, missing_files = _compute_missing_files(work_dir, planned_files)
+        if workspace_paths and not missing_files:
+            print(f"[LangGraph:Coder] All {len(workspace_paths)} planned deliverable(s) present in workspace. Returning.")
             all_files = list_workspace_files(work_dir)
             return {
                 "produced_files": [str(f.resolve()) for f in all_files],
                 "stdout_log": stdout_log,
                 "work_dir": str(work_dir),
-                "tool_call_history": [{"engine": "agy_cli", "status": "partial", "files": [f.name for f in all_files]}],
+                "tool_call_history": [{"engine": "agy_cli", "status": "complete", "files": [f.name for f in all_files]}],
             }
+
+        print(f"[LangGraph:Coder] Antigravity CLI finished. Missing planned deliverables: {missing_files}. Activating ReAct agent loop to complete deliverables...")
 
     # Step B: ReAct Agent Loop (Completes Missing or Alternate Files)
     tool_context = {
@@ -589,6 +620,10 @@ def coder_node(state: AgentState) -> Dict[str, Any]:
         attempt=attempt,
     )
 
+    missing_directive = ""
+    if missing_files:
+        missing_directive = f"\n\nCRITICAL MISSING DELIVERABLES:\nThe following planned files are not yet in the workspace:\n" + "\n".join([f"- `{mf}`" for mf in missing_files]) + "\nYou MUST create each missing deliverable immediately using tool_call blocks."
+
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": (
@@ -596,6 +631,7 @@ def coder_node(state: AgentState) -> Dict[str, Any]:
             f"Course: {course}\n\n"
             f"Start now by calling list_files to see what's in the workspace, "
             f"then immediately create all required deliverables using tool_call blocks."
+            f"{missing_directive}"
         )},
     ]
 

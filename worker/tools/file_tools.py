@@ -43,6 +43,12 @@ def read_file(work_dir: Path, rel_path: str) -> Optional[str]:
     return None
 
 
+ALLOWED_DOTFILES = {
+    ".gitignore", ".env.example", ".dockerignore", ".editorconfig",
+    ".flake8", ".prettierrc", ".eslintrc", ".babelrc", ".npmrc",
+}
+
+
 def list_workspace_files(work_dir: Path) -> List[Path]:
     """Scans and returns all non-junk files produced in the workspace."""
     if not work_dir.exists():
@@ -51,7 +57,7 @@ def list_workspace_files(work_dir: Path) -> List[Path]:
     for root, dirs, files in os.walk(work_dir):
         dirs[:] = [d for d in dirs if d not in JUNK_DIR_PATTERNS and not d.startswith(".")]
         for f in files:
-            if f.startswith(".") or f.endswith(".pyc") or f.endswith(".log"):
+            if (f.startswith(".") and f.lower() not in ALLOWED_DOTFILES) or f.endswith(".pyc") or f.endswith(".log"):
                 continue
             p = Path(root) / f
             files_found.append(p)

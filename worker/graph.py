@@ -22,6 +22,7 @@ Robustness guarantees (deep hardening):
 """
 
 from typing import Literal
+from pathlib import Path
 from langgraph.graph import StateGraph, START, END
 
 from worker.state import AgentState
@@ -130,10 +131,16 @@ def route_after_thinker_validator(
 
 
 def route_after_coder(state: AgentState) -> Literal["verifier", "diagnoser"]:
-    """Routes to verifier if output files exist, else routes directly to diagnoser."""
+    """Routes to verifier if output files exist on disk, else routes directly to diagnoser."""
     produced = state.get("produced_files", [])
     if produced and len(produced) > 0:
         return "verifier"
+    # Secondary check: inspect disk directly in case state list was omitted
+    work_dir_str = state.get("work_dir")
+    if work_dir_str and Path(work_dir_str).exists():
+        from worker.tools.file_tools import list_workspace_files
+        if list_workspace_files(Path(work_dir_str)):
+            return "verifier"
     return "diagnoser"
 
 
@@ -146,14 +153,19 @@ def route_after_verify(state: AgentState) -> Literal["deliver", "diagnose"]:
 
 def route_after_diagnose(state: AgentState) -> Literal["coder", "escalate"]:
     """Routes back to coder if retries remain and error is fixable, else escalates to human.
-    Includes an infinite-loop guard: if attempt equals or exceeds max_attempts, always escalate.
+    Includes an infinite-loop guard: if attempt exceeds max_attempts, always escalate.
     """
-    attempt      = state.get("attempt", 1)
-    max_attempts = state.get("max_attempts", 4)
-    agent_fixable = state.get("agent_fixable", True)
+    try:
+        attempt = int(state.get("attempt") or 1)
+    except (ValueError, TypeError):
+        attempt = 1
+    try:
+        max_attempts = int(state.get("max_attempts") or 4)
+    except (ValueError, TypeError):
+        max_attempts = 4
+    agent_fixable = bool(state.get("agent_fixable", True))
 
     # Hard cap: never exceed max_attempts regardless of agent_fixable flag.
-    # Also guards against a future diagnoser_node bug where attempt is not incremented.
     if attempt > max_attempts:
         print(f"[LangGraph:Router] attempt={attempt} > max_attempts={max_attempts}. Force escalating.")
         return "escalate"

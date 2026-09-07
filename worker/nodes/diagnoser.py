@@ -157,8 +157,17 @@ def diagnoser_node(state: AgentState) -> Dict[str, Any]:
 
     from worker.tools.progress import report_progress
     task_id = state.get("task_id", task.get("id"))
-    diag_note = f"Diagnoser: Root cause identified ({root_cause[:80]}). Self-healing fix queued for Attempt {attempt + 1}/{max_attempts}..."
-    report_progress(task_id, "building", diag_note, {**state, "attempt": attempt + 1})
+
+    if attempt >= max_attempts:
+        agent_fixable = False
+        diag_note = f"Diagnoser: Max fix attempts ({max_attempts}) reached. Escalating to student for human review..."
+        report_progress(task_id, "building", diag_note, {**state, "attempt": attempt + 1, "agent_fixable": False})
+    elif not agent_fixable:
+        diag_note = f"Diagnoser: Root cause identified ({root_cause[:60]}). Error requires human input. Escalating..."
+        report_progress(task_id, "building", diag_note, {**state, "attempt": attempt + 1, "agent_fixable": False})
+    else:
+        diag_note = f"Diagnoser: Root cause identified ({root_cause[:80]}). Self-healing fix queued for Attempt {attempt + 1}/{max_attempts}..."
+        report_progress(task_id, "building", diag_note, {**state, "attempt": attempt + 1})
 
     return {
         "attempt": attempt + 1,
