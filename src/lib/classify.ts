@@ -442,14 +442,23 @@ export async function classifyAndExtractTask(task: Task): Promise<Classification
   const rawBody = rawData.raw_body || task.title;
   const courseNotes = await queryAethosCourseNotes(task.course || 'General');
 
+  const now = new Date();
+  const nowIstStr = now.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    dateStyle: 'full',
+    timeStyle: 'medium',
+  });
+  const nowIso = now.toISOString();
+
   // C1 System Prompt from IMPLEMENT.md
   const systemPrompt = `You are the classification and extraction stage of an academic task agent for a single university student. Your only job: read one piece of coursework (an email or Classroom item, plus any extracted attachment text) and output a strict JSON object describing what must be produced. You do not write the deliverable here.
+CURRENT REFERENCE TIME (Asia/Kolkata): ${nowIstStr} (ISO: ${nowIso})
 
 Think step by step internally, then output ONLY the JSON — no prose, no code fence.
 
 Rules:
 - REQUIREMENTS must be atomic and preserved in the SAME ORDER as the source. If the source has 5 numbered questions, output 5 requirements, R1..R5, in that order, each self-contained. Never merge, reorder, or summarize away a requirement.
-- DUE DATE: resolve relative dates ("by next Friday", "in 2 weeks") against the item's posted date, expressed in Asia/Kolkata (IST), ISO 8601. If several dates appear, choose the submission deadline. If none is findable, use null.
+- DUE DATE: resolve relative dates ("by next Friday", "in 2 weeks") against the current reference date (${nowIstStr}) or item's posted date, expressed in Asia/Kolkata (IST), ISO 8601. If several dates appear, choose the submission deadline. If none is findable or not mentioned, use null (do NOT invent or hallucinate dates).
 - CONFIDENCE rubric: 0.9–1.0 = task type and every requirement are unambiguous; 0.7–0.9 = minor ambiguity; 0.5–0.7 = a specific thing is unclear (say what in flag_reason); <0.5 = you are largely guessing. Do not inflate.
 - WEIGHT: ml_training => heavy. code_project => heavy only if large/complex (full-stack, distributed, large dataset), else medium. research => medium. document/presentation/handwritten => light. Override if the text clearly implies a longer runtime.
 - SUCCESS CRITERIA: capture any explicit, checkable target verbatim (accuracy range, word count, slide count, required sections). null if none stated.
@@ -621,6 +630,20 @@ ${courseNotes.join('\n')}
   const kbMatches = await queryKnowledgeBase(task.title + " " + rawBody, parsed.course || task.course, 3);
   const ragContext = kbMatches.map((m: any) => `Source: ${m.title}\n${m.content}`);
 
+  let resolvedDueDate: string | null = task.due_date || null;
+  if (parsed.due_date) {
+    try {
+      const parsedTime = new Date(parsed.due_date).getTime();
+      if (!isNaN(parsedTime) && parsedTime > Date.now() + 15 * 60 * 1000) {
+        resolvedDueDate = new Date(parsed.due_date).toISOString();
+      } else {
+        console.warn(`[Classify] Parsed due_date ${parsed.due_date} is in the past; preserving existing due_date ${task.due_date}`);
+      }
+    } catch (e) {
+      resolvedDueDate = task.due_date || null;
+    }
+  }
+
   const buildSpec = generateBuildSpec(
     task.title,
     parsed.course || task.course || 'Course',
@@ -632,13 +655,13 @@ ${courseNotes.join('\n')}
     courseNotes,
     ragContext,
     weight,
-    parsed.due_date || task.due_date || null
+    resolvedDueDate
   );
 
   return {
     task_type: taskType,
     course: parsed.course || task.course || 'Course',
-    due_date: parsed.due_date || task.due_date || null,
+    due_date: resolvedDueDate,
     confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.9,
     weight,
     extracted_requirements: {

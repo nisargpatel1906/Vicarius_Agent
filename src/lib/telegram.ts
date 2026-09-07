@@ -162,8 +162,18 @@ export async function createTaskFromTelegram(promptText: string, attachmentMeta?
   const supabase = getSupabaseAdmin();
   const rawBody = promptText.trim();
 
+  const now = new Date();
+  const nowIstStr = now.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    dateStyle: 'full',
+    timeStyle: 'medium',
+  });
+  const nowIso = now.toISOString();
+
   let parsed: any = null;
   const systemPrompt = `You are the Vicarius Academic Task Parser for a Computer Engineering / AI-ML student.
+CURRENT REFERENCE TIME (Asia/Kolkata): ${nowIstStr} (ISO: ${nowIso})
+
 Extract the structured task details into strict JSON:
 {
   "title": string (concise, descriptive academic title),
@@ -171,7 +181,7 @@ Extract the structured task details into strict JSON:
   "task_type": "document" | "presentation" | "code_project" | "ml_training" | "research" | "handwritten",
   "weight": "light" | "medium" | "heavy",
   "confidence": number (confidence score from 0.0 to 1.0; e.g. 0.95 for clear prompt, 0.50 if ambiguous),
-  "due_date": string in ISO 8601 with Asia/Kolkata timezone offset (+05:30) (e.g. "2026-09-10T18:00:00+05:30". If not specified, default to 3 days from now at 18:00:00+05:30),
+  "due_date": string in ISO 8601 with Asia/Kolkata timezone offset (+05:30) ONLY IF the student explicitly specified a deadline or timeframe (e.g. "due tomorrow", "by Friday", "by 15th Sept"). If no deadline or date was explicitly provided in the prompt, you MUST return null. NEVER invent or hallucinate a date,
   "requirements": string[] (list of key instructions),
   "success_criteria": string (verification criteria),
   "build_spec": string (detailed prompt instructions for the build agent. If the task involves UI, web app, frontend, or presentation, MUST mandate using docx/DESIGN.md Cognitive Heritage design tokens: surface #fff8f4, primary #705728, on-surface #231a0f, typography Noto Serif + Manrope)
@@ -330,12 +340,27 @@ Extract the structured task details into strict JSON:
     slideCount = parseInt(sm[1], 10);
   }
   
-  // Default due date: 3 days ahead at 18:00 IST
-  const defaultDue = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
-  const dueDate = parsed.due_date || defaultDue.toISOString();
+  // Default deadline: exactly 3 calendar days ahead at 18:00:00 IST (+05:30)
+  const target3Days = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+  const targetDateStr = target3Days.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }); // YYYY-MM-DD
+  const defaultDueIso = new Date(`${targetDateStr}T18:00:00+05:30`).toISOString();
+
+  let dueDate: string = defaultDueIso;
+  if (parsed?.due_date) {
+    try {
+      const parsedTime = new Date(parsed.due_date).getTime();
+      // Sanity check: must be a valid future timestamp (at least 15 minutes into the future)
+      if (!isNaN(parsedTime) && parsedTime > Date.now() + 15 * 60 * 1000) {
+        dueDate = new Date(parsed.due_date).toISOString();
+      } else {
+        console.warn(`[Telegram] Parsed due_date ${parsed.due_date} is in the past or invalid; resetting to default ${defaultDueIso}`);
+      }
+    } catch (e) {
+      console.warn(`[Telegram] Error parsing due_date ${parsed.due_date}, defaulting to ${defaultDueIso}`);
+    }
+  }
 
   const taskId = crypto.randomUUID();
-  const nowIso = new Date().toISOString();
 
   const { error } = await supabase.from('tasks').insert({
     id: taskId,
