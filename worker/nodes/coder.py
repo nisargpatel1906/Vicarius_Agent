@@ -25,7 +25,7 @@ def _get_silent_kwargs() -> dict:
         si.wShowWindow = subprocess.SW_HIDE
         return {
             "startupinfo": si,
-            "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) | 0x00000008,
         }
     return {}
 
