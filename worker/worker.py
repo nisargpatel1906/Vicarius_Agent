@@ -22,6 +22,20 @@ import psutil
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
+# Windows silent background subprocess execution helper (guarantees zero console/taskbar flash)
+def _get_silent_kwargs() -> dict:
+    if sys.platform == "win32":
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = subprocess.SW_HIDE
+        return {
+            "startupinfo": si,
+            "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        }
+    return {}
+
+SUBPROCESS_WINDOW_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+
 # Load environment variables
 load_dotenv()
 
@@ -90,7 +104,8 @@ def check_gpu_availability() -> Tuple[bool, str]:
             ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=5,
+            **_get_silent_kwargs(),
         )
         if res.returncode == 0 and res.stdout.strip():
             gpu_name = res.stdout.strip().splitlines()[0]
@@ -253,7 +268,14 @@ def check_antigravity_cli_version() -> bool:
     """Verify installed agy CLI matches ANTIGRAVITY_PINNED_VERSION (PRD 6.3 / 7)."""
     try:
         agy_bin = shutil.which("agy") or shutil.which("agy.exe") or "agy"
-        result = subprocess.run([agy_bin, "--version"], capture_output=True, text=True, timeout=10, shell=(sys.platform == "win32"))
+        result = subprocess.run(
+            [agy_bin, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            shell=False,
+            **_get_silent_kwargs(),
+        )
         output = result.stdout.strip()
         version_match = re.search(r"(\d+\.\d+\.\d+)", output)
         installed_version = version_match.group(1) if version_match else output
@@ -503,7 +525,8 @@ def run_agy_cli(task_work_dir: Path, task: Dict[str, Any], timeout_seconds: int 
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
-            shell=(sys.platform == "win32"),
+            shell=False,
+            **_get_silent_kwargs(),
         )
         combined_lines = []
         if proc.stdout:

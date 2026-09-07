@@ -15,6 +15,20 @@ import sys
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
 
+# Windows silent background subprocess execution helper (guarantees zero console/taskbar flash)
+def _get_silent_kwargs() -> dict:
+    if sys.platform == "win32":
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = subprocess.SW_HIDE
+        return {
+            "startupinfo": si,
+            "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        }
+    return {}
+
+SUBPROCESS_WINDOW_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+
 from worker.state import AgentState
 from worker.llm import call_llm, safe_parse_json
 
@@ -101,6 +115,7 @@ def run_python_file_check(filepath: Path, timeout: int = 60, work_dir: Optional[
                 timeout=15,
                 cwd=target_cwd,
                 env=run_env,
+                **_get_silent_kwargs(),
             )
             if comp_res.returncode != 0:
                 return False, f"Server syntax/compilation error: {comp_res.stderr.strip()[:500]}"
@@ -113,6 +128,7 @@ def run_python_file_check(filepath: Path, timeout: int = 60, work_dir: Optional[
                 text=True,
                 cwd=target_cwd,
                 env=run_env,
+                **_get_silent_kwargs(),
             )
             time.sleep(3)
             ret = proc.poll()
@@ -139,6 +155,7 @@ def run_python_file_check(filepath: Path, timeout: int = 60, work_dir: Optional[
                     timeout=timeout,
                     cwd=target_cwd,
                     env=run_env,
+                    **_get_silent_kwargs(),
                 )
                 if "No module named pytest" not in pt_res.stderr:
                     output = ""
@@ -157,6 +174,7 @@ def run_python_file_check(filepath: Path, timeout: int = 60, work_dir: Optional[
             timeout=timeout,
             cwd=target_cwd,
             env=run_env,
+            **_get_silent_kwargs(),
         )
         output = ""
         if result.stdout.strip():

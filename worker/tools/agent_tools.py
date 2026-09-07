@@ -19,6 +19,20 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+# Windows silent background subprocess execution helper (guarantees zero console/taskbar flash)
+def _get_silent_kwargs() -> dict:
+    if sys.platform == "win32":
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = subprocess.SW_HIDE
+        return {
+            "startupinfo": si,
+            "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        }
+    return {}
+
+SUBPROCESS_WINDOW_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+
 # ─────────────────────────────────────────────
 # TOOL RESULT HELPERS
 # ─────────────────────────────────────────────
@@ -213,6 +227,7 @@ def tool_run_python(work_dir: Path, code: str, timeout: int = 60) -> str:
             timeout=timeout,
             cwd=str(work_dir),
             env={**os.environ, "PYTHONPATH": str(work_dir)},
+            **_get_silent_kwargs(),
         )
         out = result.stdout.strip()
         err = result.stderr.strip()
@@ -251,6 +266,7 @@ def tool_run_python_file(work_dir: Path, filename: str, timeout: int = 90) -> st
             timeout=timeout,
             cwd=str(work_dir),
             env={**os.environ, "PYTHONPATH": str(work_dir)},
+            **_get_silent_kwargs(),
         )
         out = result.stdout.strip()
         err = result.stderr.strip()

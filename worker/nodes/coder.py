@@ -17,6 +17,20 @@ import subprocess
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 
+# Windows silent background subprocess execution helper (guarantees zero console/taskbar flash)
+def _get_silent_kwargs() -> dict:
+    if sys.platform == "win32":
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = subprocess.SW_HIDE
+        return {
+            "startupinfo": si,
+            "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        }
+    return {}
+
+SUBPROCESS_WINDOW_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+
 from worker.state import AgentState
 from worker.llm import call_llm_structured, LLMResponse, ToolCall
 from worker.tools.agent_tools import dispatch_tool, TOOL_SCHEMAS
@@ -193,6 +207,7 @@ def _run_agy_cli(work_dir: Path, prompt: str, timeout_seconds: int = 1800) -> Tu
             errors="replace",
             bufsize=1,
             shell=False,
+            **_get_silent_kwargs(),
         )
         combined_lines = []
         if proc.stdout:

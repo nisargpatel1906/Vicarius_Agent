@@ -151,18 +151,45 @@ def _parse_openai_tool_calls(choices: List[Dict]) -> List[ToolCall]:
     if not choices:
         return tool_calls
     message = choices[0].get("message", {})
-    for tc in message.get("tool_calls", []):
-        args = tc.get("function", {}).get("arguments", "{}")
-        if isinstance(args, str):
+    raw_calls = message.get("tool_calls", [])
+
+    for tc in raw_calls:
+        func = tc.get("function", {})
+        raw_args = func.get("arguments") or tc.get("arguments") or tc.get("args") or "{}"
+        args = {}
+        if isinstance(raw_args, dict):
+            args = raw_args
+        elif isinstance(raw_args, str):
             try:
-                args = json.loads(args)
+                args = json.loads(raw_args)
             except Exception:
-                args = {}
+                # Handle unescaped newlines or formatting in code strings
+                try:
+                    import ast
+                    args = ast.literal_eval(raw_args)
+                except Exception:
+                    pass
+                if not isinstance(args, dict) or not args:
+                    p_match = re.search(r'"(?:path|filename)"\s*:\s*"([^"]+)"', raw_args)
+                    c_match = re.search(r'"(?:content|text|code)"\s*:\s*"([\s\S]*)"\s*}?\s*$', raw_args)
+                    if p_match and c_match:
+                        args = {"path": p_match.group(1), "content": c_match.group(1)}
+                    elif p_match:
+                        args = {"path": p_match.group(1)}
+
         tool_calls.append(ToolCall(
             id=tc.get("id", f"tc_{len(tool_calls)}"),
-            name=tc.get("function", {}).get("name", ""),
-            arguments=args,
+            name=func.get("name", "") or tc.get("name", ""),
+            arguments=args if isinstance(args, dict) else {},
         ))
+
+    # Fallback: If tool_calls has empty arguments but message content has text tool calls, use text tool calls
+    if tool_calls and all(not tc.arguments for tc in tool_calls):
+        content_text = message.get("content") or ""
+        text_calls = _parse_text_tool_calls(content_text)
+        if text_calls and any(tc.arguments for tc in text_calls):
+            return text_calls
+
     return tool_calls
 
 
