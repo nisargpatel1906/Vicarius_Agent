@@ -1713,27 +1713,64 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
     }
   }
 
+  // 2a-natural: Direct natural language task creation request (e.g. "Make a ppt on...", "Create a presentation about...", "Build me a deck for...")
+  // Evaluated BEFORE free-text fix fallback (2b) so user requests for new deliverables are never hijacked as fixes to older failed tasks!
+  const isNaturalLanguageTaskCreation = (() => {
+    if (!text || text.startsWith('/') || fixReplyTo) return false;
+    const clean = text.trim();
+    // Guard: instructions like "make it 8 slides", "change it to dark", "update it" are modifications, not new creations
+    if (/^(?:please\s+)?(?:make|change|turn|update|set|switch)\s+it\b/i.test(clean)) return false;
+
+    // Pattern 1: Action verb + deliverable type (e.g., "Make a ppt on...", "Create a presentation about...", "Build a report on...")
+    const verbNounPattern = /^(?:please\s+)?(?:make|create|build|generate|write|prepare|develop|code|design|draft)\s+(?:me\s+)?(?:a\s+|an\s+)?(?:\d+[\s-]*(?:slide|page|part)\s+)?(?:new\s+)?(?:ppt|presentation|powerpoint|deck|slides?|report|paper|project|doc|docx|document|notebook|app|script|calculator|assignment)\b/i;
+
+    // Pattern 2: Action verb + topic preposition (e.g., "make a ppt about...", "create slides for...", "build something on...")
+    const verbTopicPattern = /^(?:please\s+)?(?:make|create|prepare|generate|build|draft)\s+(?:me\s+)?(?:a\s+|an\s+)?.*?\b(?:on|about|for|regarding)\b/i;
+
+    // Pattern 3: Deliverable type leading (e.g., "ppt on mobile gaming...", "presentation on AI...", "10 slide deck about...")
+    const nounLeadingPattern = /^(?:(?:\d+[\s-]*(?:slide|page)\s+)?(?:ppt|presentation|deck|slides?|report|paper|project|document))\s+(?:on|about|for|regarding)\s+/i;
+
+    return verbNounPattern.test(clean) || verbTopicPattern.test(clean) || nounLeadingPattern.test(clean);
+  })();
+
+  if (isNaturalLanguageTaskCreation) {
+    try {
+      await reply('⏳ <i>Analyzing requirements and creating task...</i>');
+      const confirmation = await createTaskFromTelegram(text);
+      await reply(confirmation);
+    } catch (e: any) {
+      await reply(`❌ Failed to create task: ${escapeHtml(e.message)}`);
+    }
+    return { handled: true, responseText: 'Task created from natural language prompt' };
+  }
+
   // 2b. Free-text fallback: user typed an instruction WITHOUT using the Telegram "Reply" button.
   // We apply the instruction to whichever task is currently flagged/failed, or the most recent task
   // if the instruction clearly asks to extend/modify deliverables.
   if (text && !text.startsWith('/') && !fixReplyTo) {
-    const looksLikeInstruction = text.length > 15 && /\b(?:add|fix|change|update|remove|include|append|more|slides?|topic|section|make|create|redo|rebuild|retry)\b/i.test(text);
+    // Note: removed 'make' and 'create' so creation requests are never treated as fix instructions!
+    const looksLikeInstruction = text.length > 15 && /\b(?:add|fix|change|update|remove|include|append|more|redo|rebuild|retry|modify|adjust)\b/i.test(text);
     if (looksLikeInstruction) {
-      // First check flagged/failed tasks
+      // First check flagged/failed tasks — MUST have been updated within the last 2 hours
+      // to avoid hijacking stale tasks that failed days/weeks ago!
+      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
       const { data: activeFlaggedTask } = await supabase
         .from('tasks')
         .select('id, title, status')
         .in('status', ['flagged', 'failed'])
+        .gt('updated_at', twoHoursAgo)
         .order('updated_at', { ascending: false })
         .limit(1)
         .maybeSingle();
       
       const targetTask = activeFlaggedTask || (await (async () => {
-        // If append/extend slides or sections is requested, grab the most recent task
+        // If append/extend slides or sections is requested, grab the most recent task (within 24 hours)
         if (/\b(?:add|append|more|additional|extra)\b.{0,30}\b(?:slide|slides|page|section)\b/i.test(text)) {
+          const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
           const { data: recentTask } = await supabase
             .from('tasks')
             .select('id, title, status')
+            .gt('updated_at', oneDayAgo)
             .order('updated_at', { ascending: false })
             .limit(1)
             .maybeSingle();

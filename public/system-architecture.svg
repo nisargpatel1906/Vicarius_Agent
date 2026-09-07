@@ -1,0 +1,419 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1560 990" width="100%" height="100%">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&amp;family=Noto+Serif:wght@600;700;800&amp;family=Fira+Code:wght@500;600&amp;display=swap');
+
+      .font-serif { font-family: 'Noto Serif', Georgia, serif; }
+      .font-sans { font-family: 'Manrope', -apple-system, BlinkMacSystemFont, sans-serif; }
+      .font-mono { font-family: 'Fira Code', monospace; }
+    </style>
+
+    <!-- Filters -->
+    <filter id="royalShadow" x="-10%" y="-10%" width="125%" height="125%">
+      <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#231a0f" flood-opacity="0.07"/>
+      <feDropShadow dx="0" dy="1" stdDeviation="3" flood-color="#231a0f" flood-opacity="0.03"/>
+    </filter>
+
+    <linearGradient id="canvasGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fff9f5"/>
+      <stop offset="50%" stop-color="#fff3e8"/>
+      <stop offset="100%" stop-color="#fbebdd"/>
+    </linearGradient>
+
+    <linearGradient id="headerRibbon" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#644e24"/>
+      <stop offset="35%" stop-color="#8b6f3e"/>
+      <stop offset="70%" stop-color="#a8894d"/>
+      <stop offset="100%" stop-color="#5a4316"/>
+    </linearGradient>
+
+    <linearGradient id="vicariusGold" x1="136" y1="140" x2="878" y2="884" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#c6a76c"/>
+      <stop offset="35%" stop-color="#8b6f3e"/>
+      <stop offset="70%" stop-color="#705728"/>
+      <stop offset="100%" stop-color="#4a3713"/>
+    </linearGradient>
+
+    <!-- Official Vicarius Logo Symbol -->
+    <g id="vicarius-crest">
+      <path d="M497.945 140.384C535.884 138.739 590.412 142.664 627.381 146.754C696.414 154.04 764.369 169.363 829.848 192.413C870.416 206.4 871.205 203.658 878.62 246.663C900.64 374.306 884.069 518.111 775.102 602.831C775.483 581.077 775.501 566.353 772.029 544.432C780.07 534.928 787.567 524.982 794.493 514.637C846.656 435.754 848.55 331.329 830.338 241.382C745.64 210.865 677.975 196.091 587.248 188.776C613.765 216.403 631.297 247.596 644.986 282.958C655.656 312.684 660.606 336.22 662.029 367.87C643.708 355.126 632.285 349.828 612.378 340.542C603.639 289.292 578.128 240.574 538.513 206.499C538.513 206.499 521.903 191.592 510.938 191.695C500.298 191.796 484.249 206.688 484.249 206.688C479.318 210.615 474.391 215.448 470.113 220.064C427.011 265.964 404.294 327.338 407.124 390.238C409.822 444.284 430.496 495.879 465.865 536.833C475.945 548.453 487.536 558.768 498.851 569.178C486.917 578.187 467.758 585.62 453.637 590.405C422.272 561.805 397.707 526.545 381.747 487.212C353.167 418.184 353.322 340.605 382.178 271.693C401.341 225.757 432.575 185.862 472.57 156.236C479.674 151.019 490.094 143.65 497.945 140.384Z" fill="url(#vicariusGold)"/>
+      <path d="M463.23 141.265C464.341 141.183 465.705 141.345 466.855 141.423C465.438 144.978 460.463 148.195 457.283 150.471C441.3 161.91 428.099 176.26 414.76 190.679C397.944 193.319 378.426 194.95 360.484 197.703C299.828 207.011 249.952 220.449 192.612 241.478C192.293 242.808 191.993 244.143 191.712 245.482C173.706 330.639 177.85 440.176 228.191 514.149C344.429 684.955 571.538 618.853 611.698 423.819C629.52 435.549 636.827 442.371 651.377 457.349C646.727 472.737 642.946 483.383 636.437 498.058C626.266 520.118 613.529 540.901 598.48 559.973C509.295 671.148 355.15 692.978 243.604 599.919C178.898 545.94 146.463 472.524 138.438 389.7C136.771 372.163 135.958 354.556 136.002 336.94C136.204 313.095 141.083 226.171 155.304 210.022C164.113 200.019 184.184 195.531 196.735 191.229C282.646 161.635 372.434 144.802 463.23 141.265Z" fill="url(#vicariusGold)"/>
+      <path d="M505.279 335.252C561.276 333.482 621.706 353.111 665.71 387.767C718.471 429.457 752.221 490.643 759.338 557.513C766.962 624.659 747.58 692.08 705.471 744.932C664.54 795.997 605.987 835.133 549.736 867.306C540.172 872.782 525.594 883.098 514.598 883.959C489.282 885.936 391.403 815.379 368.577 795.635C326.61 759.328 295.127 722.785 276.533 669.38C273.12 659.572 268.314 646.88 267.57 636.536L268.797 635.811L272.463 637.434C289.789 647.143 304.219 653.162 322.585 660.288C334.703 689.741 346.176 708.924 368.298 731.905C409.999 775.229 459.33 807.021 511.842 835.577C585.326 794.157 670.986 740.698 701.718 658.221C720.764 606.232 718.57 548.837 695.617 498.454C647.497 393.435 525.73 354.402 422.382 402.032C420.798 383.572 421.357 369.21 423.693 351.03C453.136 340.688 474.516 336.743 505.279 335.252Z" fill="url(#vicariusGold)"/>
+      <path d="M371.78 253.605L373.663 253.744C373.659 254.552 358.105 297.119 356.368 302.678C330.914 307.653 309.782 313.177 284.831 320.077C284.004 362.456 287.796 389.268 298.046 429.685C286.346 444.866 275.917 464.835 268.154 482.479C266.558 478.764 265.025 474.823 263.495 471.062C256.18 452.36 250.522 433.052 246.583 413.361C240.055 381.641 232.414 316.478 245.328 288.582C251.796 274.609 353.009 256.61 371.78 253.605Z" fill="url(#vicariusGold)"/>
+      <path d="M648.322 253.41C685.744 257.509 727.074 269.131 763.417 279.133C784.34 284.89 783.361 305.994 784.023 323.9C785.881 374.664 777.133 422.629 759.773 470.185C758.522 473.86 756.437 478.681 754.968 482.395C744.461 460.255 738.433 450.005 725.215 429.257C735.758 384.725 738.614 366.254 737.961 320.2C714.989 312.967 690.195 307.37 666.544 302.702C660.57 283.069 656.798 272.142 648.322 253.41Z" fill="url(#vicariusGold)"/>
+      <path d="M345.43 398.194C346.745 399.929 346.913 405.195 347.144 407.767C348.556 423.468 351.758 438.293 355.248 453.632C348.786 463.085 342.984 470.388 336.794 480.655C320.123 508.491 310.575 540.007 308.993 572.414C301.333 568.299 295.145 563.804 288.146 558.681C280.133 552.306 272.856 546.556 266.02 538.903C279.73 480.087 299.871 439.694 345.43 398.194Z" fill="url(#vicariusGold)"/>
+      <path d="M698.508 596.82L699.297 597.037C702.153 603.394 692.752 639.764 690.195 647.95C642.158 663.842 589.315 660.641 541.957 644.034C537.488 642.393 533.1 640.543 528.695 638.739C546.635 627.428 557.514 621.311 573.288 606.211C616.638 615.318 657.134 615.388 698.508 596.82Z" fill="url(#vicariusGold)"/>
+      <path d="M687.594 517.73C696.043 532.179 699.333 564.167 699.977 581.04C686.569 588.015 661.603 593.944 646.663 596.659L634.96 598.091C657.125 568.466 669.1 549.504 687.594 517.73Z" fill="url(#vicariusGold)"/>
+      <path d="M334.889 517.653C337.018 519.32 347.362 538.069 349.634 541.915C361.442 561.898 374.112 579.425 387.789 598.134L377.907 596.974C355.688 592.336 343.698 589.078 322.767 580.274C323.727 556.514 327.142 540.116 334.889 517.653Z" fill="url(#vicariusGold)"/>
+      <path d="M511.532 238.042C497.735 238.042 481.98 239.108 466.142 240.699L439.378 290.757C463.867 287.843 489.864 285.578 511.532 285.578C533.465 285.578 559.75 287.812 584.558 290.698L553.308 240.379C538.7 238.967 524.274 238.042 511.532 238.042Z" fill="url(#vicariusGold)"/>
+      <path d="M511.532 793.022C457.598 793.046 360.012 672.995 360.012 672.995L436.069 686.661C436.069 686.661 489.547 749.052 508.561 749.052C527.576 749.052 579.865 686.661 579.865 686.661L657.111 672.995C657.111 672.995 565.445 792.999 511.532 793.022Z" fill="url(#vicariusGold)"/>
+    </g>
+
+    <!-- Markers -->
+    <marker id="arrGold" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#8b6f3e"/>
+    </marker>
+    <marker id="arrGreen" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#276a3c"/>
+    </marker>
+    <marker id="arrRed" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#ba1a1a"/>
+    </marker>
+    <marker id="arrBlue" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#229ed9"/>
+    </marker>
+    <marker id="arrDark" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#4d463a"/>
+    </marker>
+  </defs>
+
+  <!-- Background Canvas -->
+  <rect width="1560" height="990" fill="url(#canvasGrad)"/>
+
+  <!-- Ornate Frame -->
+  <rect x="24" y="24" width="1512" height="942" rx="16" fill="none" stroke="#d1c5b6" stroke-width="1.4"/>
+  <rect x="30" y="30" width="1500" height="930" rx="12" fill="none" stroke="#705728" stroke-width="0.8" stroke-opacity="0.4"/>
+  
+  <g fill="#705728">
+    <circle cx="30" cy="30" r="3"/>
+    <circle cx="1530" cy="30" r="3"/>
+    <circle cx="30" cy="960" r="3"/>
+    <circle cx="1530" cy="960" r="3"/>
+  </g>
+
+  <!-- Giant Subtle Background Logo Watermark -->
+  <g transform="translate(620, 220) scale(0.60)" opacity="0.038">
+    <use href="#vicarius-crest"/>
+  </g>
+
+  <!-- Blueprint Mesh -->
+  <g opacity="0.12">
+    <path d="M 0,80 L 1560,80 M 0,180 L 1560,180 M 0,280 L 1560,280 M 0,380 L 1560,380 M 0,480 L 1560,480 M 0,580 L 1560,580 M 0,680 L 1560,680 M 0,780 L 1560,780 M 0,880 L 1560,880" stroke="#7f7669" stroke-width="0.5" stroke-dasharray="3 6"/>
+    <path d="M 100,0 L 100,990 M 300,0 L 300,990 M 500,0 L 500,990 M 700,0 L 700,990 M 900,0 L 900,990 M 1100,0 L 1100,990 M 1300,0 L 1300,990 M 1500,0 L 1500,990" stroke="#7f7669" stroke-width="0.5" stroke-dasharray="3 6"/>
+  </g>
+
+  <!-- ==================== TOP HEADER BANNER WITH EMBEDDED LOGO ==================== -->
+  <g id="header" transform="translate(50, 44)">
+    <rect x="0" y="0" width="1460" height="92" rx="14" fill="#ffffff" stroke="#d1c5b6" stroke-width="1.6" filter="url(#royalShadow)"/>
+    <path d="M 0,14 Q 0,0 14,0 L 18,0 L 18,92 L 14,92 Q 0,92 0,78 Z" fill="url(#headerRibbon)"/>
+
+    <!-- Official Logo Crest Badge -->
+    <g transform="translate(34, 13)">
+      <rect x="0" y="0" width="66" height="66" rx="12" fill="#fdebd9" stroke="#8b6f3e" stroke-width="1.5"/>
+      <g transform="translate(6, 6) scale(0.053)">
+        <use href="#vicarius-crest"/>
+      </g>
+    </g>
+
+    <text x="118" y="38" class="font-serif" font-size="22.5" font-weight="700" fill="#231a0f">HYBRID CLOUD &amp; LOCAL WORKSTATION TOPOLOGY</text>
+    <text x="118" y="64" class="font-sans" font-size="13" font-weight="500" fill="#4d463a">
+      Serverless Vercel Edge Tier <tspan fill="#8b6f3e">•</tspan> Supabase pgvector HNSW Storage <tspan fill="#8b6f3e">•</tspan> Hardware-Accelerated Local Daemon
+    </text>
+
+    <g transform="translate(1120, 22)">
+      <rect x="0" y="0" width="150" height="46" rx="7" fill="#fdebd9" stroke="#8b6f3e" stroke-width="1.2"/>
+      <text x="75" y="19" class="font-sans" font-size="10" font-weight="800" fill="#705728" text-anchor="middle" letter-spacing="0.06em">DEPLOYMENT</text>
+      <text x="75" y="35" class="font-sans" font-size="12" font-weight="700" fill="#231a0f" text-anchor="middle">Hybrid Model</text>
+
+      <rect x="165" y="0" width="165" height="46" rx="7" fill="#e8f5e9" stroke="#276a3c" stroke-width="1.2"/>
+      <text x="247" y="19" class="font-sans" font-size="10" font-weight="800" fill="#276a3c" text-anchor="middle" letter-spacing="0.06em">SECURITY</text>
+      <text x="247" y="35" class="font-sans" font-size="12" font-weight="700" fill="#231a0f" text-anchor="middle">Stealth 404 Guard</text>
+    </g>
+  </g>
+
+  <!-- ==================== TIER 1: CLOUD SERVICES & EDGE RUNTIME (LEFT COLUMN) ==================== -->
+  <g id="tier-cloud" transform="translate(50, 160)">
+    <rect x="0" y="0" width="440" height="760" rx="14" fill="#ffffff" stroke="#d1c5b6" stroke-width="1.6" filter="url(#royalShadow)"/>
+    
+    <rect x="0" y="0" width="440" height="50" rx="14 14 0 0" fill="#fdebd9"/>
+    <text x="18" y="31" class="font-serif" font-size="16" font-weight="700" fill="#231a0f">1. Cloud Tier (Vercel Serverless)</text>
+    <text x="325" y="31" class="font-sans" font-size="10.5" font-weight="800" fill="#705728">EDGE RUNTIME</text>
+
+    <!-- Component 1.1: Next.js 15 App Router -->
+    <g transform="translate(10, 70)">
+      <rect x="0" y="0" width="420" height="152" rx="10" fill="#fff8f4" stroke="#d1c5b6" stroke-width="1.2"/>
+      <rect x="14" y="14" width="80" height="20" rx="4" fill="#705728"/>
+      <text x="54" y="28" class="font-sans" font-size="10.5" font-weight="800" fill="#ffffff" text-anchor="middle">FRONTEND</text>
+      <text x="106" y="29" class="font-serif" font-size="15.5" font-weight="700" fill="#231a0f">Next.js 15 App Router</text>
+
+      <line x1="14" y1="42" x2="406" y2="42" stroke="#ebdccb" stroke-width="1"/>
+      <text x="14" y="62" class="font-sans" font-size="11.5" font-weight="700" fill="#705728">• Cognitive Heritage UI Design System</text>
+      <text x="24" y="78" class="font-sans" font-size="10.5" font-weight="500" fill="#4d463a">Parchment palette (#fff8f4), Noto Serif &amp; Manrope</text>
+      <text x="14" y="98" class="font-sans" font-size="11.5" font-weight="700" fill="#705728">• Operations Command Components</text>
+      <text x="24" y="114" class="font-sans" font-size="10.5" font-weight="500" fill="#4d463a">TaskFlow Timeline, ProfileEditor, AgentWorld Canvas</text>
+      <text x="14" y="134" class="font-sans" font-size="11" font-weight="800" fill="#ba1a1a">• Stealth 404 Fail-Closed Edge Middleware</text>
+    </g>
+
+    <!-- Component 1.2: Serverless API Endpoints -->
+    <g transform="translate(10, 238)">
+      <rect x="0" y="0" width="420" height="162" rx="10" fill="#fff8f4" stroke="#d1c5b6" stroke-width="1.2"/>
+      <rect x="14" y="14" width="70" height="20" rx="4" fill="#8b6f3e"/>
+      <text x="49" y="28" class="font-sans" font-size="10.5" font-weight="800" fill="#ffffff" text-anchor="middle">REST APIS</text>
+      <text x="96" y="29" class="font-serif" font-size="15.5" font-weight="700" fill="#231a0f">Serverless REST &amp; Hooks</text>
+
+      <line x1="14" y1="42" x2="406" y2="42" stroke="#ebdccb" stroke-width="1"/>
+      <text x="14" y="62" class="font-mono" font-size="11" font-weight="600" fill="#231a0f">POST /api/webhooks/google</text>
+      <text x="220" y="62" class="font-sans" font-size="10" font-weight="500" fill="#705728">Pub/Sub push notifications</text>
+
+      <text x="14" y="82" class="font-mono" font-size="11" font-weight="600" fill="#231a0f">POST /api/telegram</text>
+      <text x="175" y="82" class="font-sans" font-size="10" font-weight="500" fill="#705728">Bot C2 &amp; Next.js after()</text>
+
+      <text x="14" y="102" class="font-mono" font-size="11" font-weight="600" fill="#231a0f">POST /api/ingest</text>
+      <text x="160" y="102" class="font-sans" font-size="10" font-weight="500" fill="#705728">Classroom/Gmail sync</text>
+
+      <text x="14" y="122" class="font-mono" font-size="11" font-weight="600" fill="#231a0f">GET  /api/briefing</text>
+      <text x="175" y="122" class="font-sans" font-size="10" font-weight="500" fill="#705728">Daily 08:00 IST report</text>
+
+      <text x="14" y="142" class="font-mono" font-size="11" font-weight="600" fill="#231a0f">POST /api/questions</text>
+      <text x="185" y="142" class="font-sans" font-size="10" font-weight="500" fill="#705728">Clarification answers bridge</text>
+    </g>
+
+    <!-- Component 1.3: Schedulers & Automations -->
+    <g transform="translate(10, 416)">
+      <rect x="0" y="0" width="420" height="132" rx="10" fill="#fff8f4" stroke="#d1c5b6" stroke-width="1.2"/>
+      <rect x="14" y="14" width="94" height="20" rx="4" fill="#4d463a"/>
+      <text x="61" y="28" class="font-sans" font-size="10" font-weight="800" fill="#ffffff" text-anchor="middle">SCHEDULING</text>
+      <text x="120" y="29" class="font-serif" font-size="15.5" font-weight="700" fill="#231a0f">External Triggers</text>
+
+      <line x1="14" y1="42" x2="406" y2="42" stroke="#ebdccb" stroke-width="1"/>
+      <text x="14" y="62" class="font-sans" font-size="11" font-weight="600" fill="#231a0f">• GitHub Actions Scheduled Workflows:</text>
+      <text x="24" y="78" class="font-sans" font-size="10.5" font-weight="500" fill="#4d463a">.github/workflows/ingest_cron.yml (Every 6h)</text>
+      <text x="24" y="94" class="font-sans" font-size="10.5" font-weight="500" fill="#4d463a">.github/workflows/morning_briefing.yml (08:00 IST)</text>
+      <text x="14" y="114" class="font-sans" font-size="11" font-weight="600" fill="#231a0f">• Vercel Crons backup schedules (vercel.json)</text>
+    </g>
+
+    <!-- Component 1.4: Multi-Provider LLM Tier -->
+    <g transform="translate(10, 564)">
+      <rect x="0" y="0" width="420" height="176" rx="10" fill="#fdebd9" stroke="#8b6f3e" stroke-width="1.5"/>
+      <text x="14" y="24" class="font-sans" font-size="11.5" font-weight="800" fill="#705728">AI MODELS &amp; FAILOVER CHAIN</text>
+
+      <g transform="translate(14, 36)">
+        <rect x="0" y="0" width="392" height="36" rx="6" fill="#ffffff" stroke="#d1c5b6" stroke-width="1"/>
+        <text x="12" y="22" class="font-sans" font-size="11" font-weight="700" fill="#231a0f">Google AI Studio:</text>
+        <text x="125" y="22" class="font-sans" font-size="10.5" font-weight="500" fill="#4d463a">Gemini 2.0 Flash + Text Embeddings</text>
+      </g>
+
+      <g transform="translate(14, 78)">
+        <rect x="0" y="0" width="392" height="36" rx="6" fill="#ffffff" stroke="#d1c5b6" stroke-width="1"/>
+        <text x="12" y="22" class="font-sans" font-size="11" font-weight="700" fill="#231a0f">Groq Cloud:</text>
+        <text x="95" y="22" class="font-sans" font-size="10.5" font-weight="500" fill="#4d463a">Llama 3.3 70B Versatile + Whisper Audio</text>
+      </g>
+
+      <g transform="translate(14, 120)">
+        <rect x="0" y="0" width="392" height="36" rx="6" fill="#ffffff" stroke="#d1c5b6" stroke-width="1"/>
+        <text x="12" y="22" class="font-sans" font-size="11" font-weight="700" fill="#231a0f">OpenRouter:</text>
+        <text x="105" y="22" class="font-sans" font-size="10.5" font-weight="500" fill="#4d463a">Minimax-M3 / DeepSeek Failover</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- ==================== TIER 2: DATABASE & SHARED STATE (CENTER COLUMN) ==================== -->
+  <g id="tier-database" transform="translate(550, 160)">
+    <rect x="0" y="0" width="460" height="760" rx="14" fill="#ffffff" stroke="#3ecf8e" stroke-width="2" filter="url(#royalShadow)"/>
+    
+    <rect x="0" y="0" width="460" height="50" rx="14 14 0 0" fill="#e6fcf1"/>
+    <text x="18" y="31" class="font-serif" font-size="16" font-weight="700" fill="#0d6832">2. State &amp; Memory Tier (Supabase)</text>
+    <text x="315" y="31" class="font-sans" font-size="10.5" font-weight="800" fill="#276a3c">POSTGRES + VECTOR</text>
+
+    <!-- Schema Tables Group -->
+    <g transform="translate(10, 70)">
+      <rect x="0" y="0" width="440" height="410" rx="10" fill="#fff8f4" stroke="#d1c5b6" stroke-width="1.2"/>
+      <text x="14" y="26" class="font-sans" font-size="12" font-weight="800" fill="#705728">RELATIONAL ENTITIES (supabase/schema.sql)</text>
+
+      <!-- Table 1: Tasks -->
+      <g transform="translate(14, 38)">
+        <rect x="0" y="0" width="412" height="86" rx="6" fill="#ffffff" stroke="#d1c5b6" stroke-width="1"/>
+        <text x="12" y="20" class="font-mono" font-size="12" font-weight="700" fill="#231a0f">public.tasks</text>
+        <text x="110" y="20" class="font-sans" font-size="10.5" font-weight="600" fill="#705728">UNIQUE(source, external_id)</text>
+        <line x1="12" y1="28" x2="400" y2="28" stroke="#ebdccb" stroke-width="1"/>
+        <text x="12" y="44" class="font-sans" font-size="10" font-weight="500" fill="#4d463a">• task_type: document, presentation, handwritten, code, research, ml</text>
+        <text x="12" y="58" class="font-sans" font-size="10" font-weight="500" fill="#4d463a">• weight: light (15m), medium (45m), heavy (240m GPU)</text>
+        <text x="12" y="72" class="font-sans" font-size="10" font-weight="700" fill="#276a3c">• status: new, extracting, queued, claimed, building, verifying, done</text>
+      </g>
+
+      <!-- Table 2: Deliverables & Questions -->
+      <g transform="translate(14, 134)">
+        <rect x="0" y="0" width="412" height="68" rx="6" fill="#ffffff" stroke="#d1c5b6" stroke-width="1"/>
+        <text x="12" y="20" class="font-mono" font-size="12" font-weight="700" fill="#231a0f">public.deliverables &amp; public.questions</text>
+        <line x1="12" y1="28" x2="400" y2="28" stroke="#ebdccb" stroke-width="1"/>
+        <text x="12" y="44" class="font-sans" font-size="10" font-weight="500" fill="#4d463a">• File artifacts, drive_link, delivered_via (telegram/email)</text>
+        <text x="12" y="58" class="font-sans" font-size="10" font-weight="500" fill="#4d463a">• Interactive human questions, answer_text, status: pending/answered</text>
+      </g>
+
+      <!-- Table 3: System Events & Profile -->
+      <g transform="translate(14, 212)">
+        <rect x="0" y="0" width="412" height="68" rx="6" fill="#ffffff" stroke="#d1c5b6" stroke-width="1"/>
+        <text x="12" y="20" class="font-mono" font-size="12" font-weight="700" fill="#231a0f">public.system_events &amp; public.profile</text>
+        <line x1="12" y1="28" x2="400" y2="28" stroke="#ebdccb" stroke-width="1"/>
+        <text x="12" y="44" class="font-sans" font-size="10" font-weight="500" fill="#4d463a">• Structured error telemetry, audit trails, and worker heartbeats</text>
+        <text x="12" y="58" class="font-sans" font-size="10" font-weight="500" fill="#4d463a">• Student profile vault: writing tone, semester, citation guidelines</text>
+      </g>
+
+      <!-- Vector Table: Knowledge Base -->
+      <g transform="translate(14, 290)">
+        <rect x="0" y="0" width="412" height="106" rx="6" fill="#fdf6ea" stroke="#8b6f3e" stroke-width="1.4"/>
+        <text x="12" y="20" class="font-mono" font-size="12" font-weight="800" fill="#705728">public.knowledge_base (pgvector)</text>
+        <line x1="12" y1="28" x2="400" y2="28" stroke="#ebdccb" stroke-width="1"/>
+        <text x="12" y="44" class="font-sans" font-size="10.5" font-weight="700" fill="#231a0f">• 768-Dimensional HNSW Vector Indexing</text>
+        <text x="12" y="60" class="font-sans" font-size="10" font-weight="500" fill="#4d463a">• cosine similarity search function: match_knowledge()</text>
+        <text x="12" y="74" class="font-sans" font-size="10" font-weight="500" fill="#4d463a">• Academic coursework, syllabi, past high-scoring submissions</text>
+        <text x="12" y="88" class="font-sans" font-size="10" font-weight="600" fill="#705728">• Connected Aethos Memory MCP semantic graphs</text>
+      </g>
+    </g>
+
+    <!-- Cloud APIs Hub Box -->
+    <g transform="translate(10, 496)">
+      <rect x="0" y="0" width="440" height="244" rx="10" fill="#f8ebdc" stroke="#d1c5b6" stroke-width="1.2"/>
+      <text x="14" y="24" class="font-sans" font-size="12" font-weight="800" fill="#705728">GOOGLE WORKSPACE &amp; TELEGRAM APIS</text>
+
+      <rect x="14" y="36" width="200" height="44" rx="6" fill="#ffffff" stroke="#d1c5b6" stroke-width="1"/>
+      <text x="24" y="55" class="font-sans" font-size="11" font-weight="700" fill="#231a0f">Google Classroom</text>
+      <text x="24" y="70" class="font-sans" font-size="9.5" font-weight="500" fill="#0f9d58">CourseWork &amp; Materials</text>
+
+      <rect x="226" y="36" width="200" height="44" rx="6" fill="#ffffff" stroke="#d1c5b6" stroke-width="1"/>
+      <text x="236" y="55" class="font-sans" font-size="11" font-weight="700" fill="#231a0f">Gmail Academic</text>
+      <text x="236" y="70" class="font-sans" font-size="9.5" font-weight="500" fill="#ea4335">Pub/Sub Filtered Feed</text>
+
+      <rect x="14" y="90" width="200" height="44" rx="6" fill="#ffffff" stroke="#d1c5b6" stroke-width="1"/>
+      <text x="24" y="109" class="font-sans" font-size="11" font-weight="700" fill="#231a0f">Google Drive</text>
+      <text x="24" y="124" class="font-sans" font-size="9.5" font-weight="500" fill="#4285f4">Deliverable Folders &amp; Links</text>
+
+      <rect x="226" y="90" width="200" height="44" rx="6" fill="#ffffff" stroke="#d1c5b6" stroke-width="1"/>
+      <text x="236" y="109" class="font-sans" font-size="11" font-weight="700" fill="#231a0f">Google Calendar</text>
+      <text x="236" y="124" class="font-sans" font-size="9.5" font-weight="500" fill="#4285f4">Events &amp; 24h Email Alerts</text>
+
+      <rect x="14" y="144" width="412" height="44" rx="6" fill="#ffffff" stroke="#229ed9" stroke-width="1.2"/>
+      <text x="24" y="163" class="font-sans" font-size="11" font-weight="700" fill="#231a0f">Telegram Bot API (C2)</text>
+      <text x="24" y="178" class="font-sans" font-size="9.5" font-weight="500" fill="#229ed9">Owner Chat Gate • Voice Whisper • Inline Buttons • File Dispatch</text>
+
+      <rect x="14" y="196" width="412" height="36" rx="6" fill="#ffffff" stroke="#705728" stroke-width="1"/>
+      <text x="24" y="218" class="font-sans" font-size="10.5" font-weight="700" fill="#705728">Google Cloud Pub/Sub: Real-time event push subscriptions</text>
+    </g>
+  </g>
+
+  <!-- ==================== TIER 3: LOCAL WORKSTATION RUNTIME (RIGHT COLUMN) ==================== -->
+  <g id="tier-workstation" transform="translate(1070, 160)">
+    <rect x="0" y="0" width="440" height="760" rx="14" fill="#ffffff" stroke="#705728" stroke-width="2.2" filter="url(#royalShadow)"/>
+    
+    <rect x="0" y="0" width="440" height="50" rx="14 14 0 0" fill="#fdebd9"/>
+    
+    <!-- Mini Logo Badge -->
+    <g transform="translate(16, 12) scale(0.026)">
+      <use href="#vicarius-crest"/>
+    </g>
+
+    <text x="48" y="31" class="font-serif" font-size="16" font-weight="700" fill="#231a0f">3. Local Hardware Workstation</text>
+    <text x="315" y="31" class="font-sans" font-size="10.5" font-weight="800" fill="#705728">EXECUTION HOST</text>
+
+    <!-- Component 3.1: Windows Background Daemon -->
+    <g transform="translate(10, 70)">
+      <rect x="0" y="0" width="420" height="152" rx="10" fill="#fff8f4" stroke="#d1c5b6" stroke-width="1.2"/>
+      <rect x="14" y="14" width="105" height="20" rx="4" fill="#705728"/>
+      <text x="66" y="28" class="font-sans" font-size="10" font-weight="800" fill="#ffffff" text-anchor="middle">WORKER DAEMON</text>
+      <text x="130" y="29" class="font-serif" font-size="15.5" font-weight="700" fill="#231a0f">worker.py Polling Core</text>
+
+      <line x1="14" y1="42" x2="406" y2="42" stroke="#ebdccb" stroke-width="1"/>
+      <text x="14" y="62" class="font-sans" font-size="11" font-weight="600" fill="#231a0f">• Windows Task Scheduler / VBS launcher</text>
+      <text x="24" y="78" class="font-sans" font-size="10.5" font-weight="500" fill="#4d463a">Silent boot via scripts/start_worker_silent.vbs</text>
+      <text x="14" y="98" class="font-sans" font-size="11" font-weight="600" fill="#231a0f">• Process Health &amp; Sleep Prevention</text>
+      <text x="24" y="114" class="font-sans" font-size="10.5" font-weight="500" fill="#4d463a">PID tracking (logs/worker.pid), Windows ES_CONTINUOUS</text>
+      <text x="14" y="134" class="font-sans" font-size="11" font-weight="700" fill="#276a3c">• Polling with exponential backoff on idle</text>
+    </g>
+
+    <!-- Component 3.2: Google Antigravity Execution Core -->
+    <g transform="translate(10, 238)">
+      <rect x="0" y="0" width="420" height="162" rx="10" fill="#fff8f4" stroke="#8b6f3e" stroke-width="1.5"/>
+      <rect x="14" y="14" width="134" height="20" rx="4" fill="#8b6f3e"/>
+      <text x="81" y="28" class="font-sans" font-size="10" font-weight="800" fill="#ffffff" text-anchor="middle">PRIMARY RUNTIME</text>
+      <text x="158" y="29" class="font-serif" font-size="15.5" font-weight="700" fill="#231a0f">Antigravity CLI (agy)</text>
+
+      <line x1="14" y1="42" x2="406" y2="42" stroke="#ebdccb" stroke-width="1"/>
+      <text x="14" y="62" class="font-sans" font-size="11" font-weight="600" fill="#705728">• Pinned Binary Verification</text>
+      <text x="24" y="78" class="font-sans" font-size="10.5" font-weight="500" fill="#4d463a">Worker checks version against ANTIGRAVITY_PINNED_VERSION</text>
+      <text x="14" y="98" class="font-sans" font-size="11" font-weight="600" fill="#705728">• Isolated Task Working Directories</text>
+      <text x="24" y="114" class="font-sans" font-size="10.5" font-weight="500" fill="#4d463a">Creates clean work_dirs/{task_id}/ scratch sandbox</text>
+      <text x="14" y="134" class="font-sans" font-size="11" font-weight="700" fill="#231a0f">• Full Local Filesystem Access &amp; Tool Invocations</text>
+    </g>
+
+    <!-- Component 3.3: Local Machine Learning & GPU Stack -->
+    <g transform="translate(10, 416)">
+      <rect x="0" y="0" width="420" height="152" rx="10" fill="#fff8f4" stroke="#d1c5b6" stroke-width="1.2"/>
+      <rect x="14" y="14" width="120" height="20" rx="4" fill="#4d463a"/>
+      <text x="74" y="28" class="font-sans" font-size="10" font-weight="800" fill="#ffffff" text-anchor="middle">ML ACCELERATION</text>
+      <text x="144" y="29" class="font-serif" font-size="15.5" font-weight="700" fill="#231a0f">PyTorch &amp; Hardware Stack</text>
+
+      <line x1="14" y1="42" x2="406" y2="42" stroke="#ebdccb" stroke-width="1"/>
+      <text x="14" y="62" class="font-sans" font-size="11" font-weight="600" fill="#231a0f">• Dedicated Hardware Acceleration (NVIDIA CUDA)</text>
+      <text x="24" y="78" class="font-sans" font-size="10.5" font-weight="500" fill="#4d463a">Executes PyTorch (torch, torchvision), scikit-learn</text>
+      <text x="14" y="98" class="font-sans" font-size="11" font-weight="600" fill="#231a0f">• Document Generation Engines</text>
+      <text x="24" y="114" class="font-sans" font-size="10.5" font-weight="500" fill="#4d463a">python-docx, python-pptx, openpyxl, reportlab</text>
+      <text x="14" y="134" class="font-sans" font-size="11" font-weight="700" fill="#705728">• Heavy Task Nighttime Preference (23:00 - 07:00 IST)</text>
+    </g>
+
+    <!-- Component 3.4: ask_human Two-Way HTTP Bridge -->
+    <g transform="translate(10, 584)">
+      <rect x="0" y="0" width="420" height="148" rx="10" fill="#fdebd9" stroke="#8b6f3e" stroke-width="1.5"/>
+      <rect x="14" y="14" width="134" height="20" rx="4" fill="#8b6f3e"/>
+      <text x="81" y="28" class="font-sans" font-size="10" font-weight="800" fill="#ffffff" text-anchor="middle">LOCAL HTTP BRIDGE</text>
+      <text x="158" y="29" class="font-serif" font-size="15.5" font-weight="700" fill="#231a0f">ask_human_server.py</text>
+
+      <line x1="14" y1="42" x2="406" y2="42" stroke="#ebdccb" stroke-width="1"/>
+      <text x="14" y="62" class="font-sans" font-size="11" font-weight="700" fill="#705728">Bound to 127.0.0.1:8765</text>
+      <text x="14" y="80" class="font-sans" font-size="10.5" font-weight="500" fill="#4d463a">• Agents call HTTP POST to suspend when uncertain</text>
+      <text x="14" y="96" class="font-sans" font-size="10.5" font-weight="500" fill="#4d463a">• Dispatches interactive inline button menu to Telegram</text>
+      <text x="14" y="112" class="font-sans" font-size="10.5" font-weight="500" fill="#4d463a">• Automatically resumes pipeline the instant student taps</text>
+      <text x="14" y="128" class="font-sans" font-size="10.5" font-weight="800" fill="#ba1a1a">• 20-minute safety timeout before fallback choice</text>
+    </g>
+  </g>
+
+  <!-- ==================== PROTOCOL BRIDGES (BETWEEN TIERS) ==================== -->
+  <!-- Gap 1: Between Tier 1 (x: 50..490) and Tier 2 (x: 550..1010) -->
+  <g id="gap-1-bridges">
+    <!-- Bridge 1.1: HTTPS REST & Ingestion -->
+    <path d="M 490,290 L 550,290" fill="none" stroke="#276a3c" stroke-width="2.4" marker-end="url(#arrGreen)"/>
+    <rect x="495" y="278" width="50" height="22" rx="4" fill="#e8f5e9" stroke="#276a3c" stroke-width="1" filter="url(#royalShadow)"/>
+    <text x="520" y="293" class="font-sans" font-size="9" font-weight="800" fill="#276a3c" text-anchor="middle">HTTPS</text>
+
+    <!-- Bridge 1.2: Realtime Database Events / CDC -->
+    <path d="M 550,350 L 490,350" fill="none" stroke="#705728" stroke-width="2.4" marker-end="url(#arrGold)"/>
+    <rect x="495" y="338" width="50" height="22" rx="4" fill="#fdebd9" stroke="#8b6f3e" stroke-width="1" filter="url(#royalShadow)"/>
+    <text x="520" y="353" class="font-sans" font-size="8.5" font-weight="800" fill="#705728" text-anchor="middle">EVENTS</text>
+
+    <!-- Bridge 1.3: pgvector Similarity Search -->
+    <path d="M 490,490 L 550,490" fill="none" stroke="#8b6f3e" stroke-width="2.4" marker-end="url(#arrGold)"/>
+    <rect x="495" y="478" width="50" height="22" rx="4" fill="#fdf6ea" stroke="#8b6f3e" stroke-width="1" filter="url(#royalShadow)"/>
+    <text x="520" y="493" class="font-sans" font-size="8.5" font-weight="800" fill="#705728" text-anchor="middle">VECTOR</text>
+  </g>
+
+  <!-- Gap 2: Between Tier 2 (x: 550..1010) and Tier 3 (x: 1070..1510) -->
+  <g id="gap-2-bridges">
+    <!-- Bridge 2.1: Worker Polling & Task Claim -->
+    <path d="M 1010,290 L 1070,290" fill="none" stroke="#705728" stroke-width="2.4" marker-end="url(#arrGold)"/>
+    <rect x="1015" y="278" width="50" height="22" rx="4" fill="#fdebd9" stroke="#8b6f3e" stroke-width="1" filter="url(#royalShadow)"/>
+    <text x="1040" y="293" class="font-sans" font-size="9" font-weight="800" fill="#705728" text-anchor="middle">CLAIM</text>
+
+    <!-- Bridge 2.2: Deliverables & Status Updates -->
+    <path d="M 1070,350 L 1010,350" fill="none" stroke="#276a3c" stroke-width="2.4" marker-end="url(#arrGreen)"/>
+    <rect x="1015" y="338" width="50" height="22" rx="4" fill="#e8f5e9" stroke="#276a3c" stroke-width="1" filter="url(#royalShadow)"/>
+    <text x="1040" y="353" class="font-sans" font-size="9" font-weight="800" fill="#276a3c" text-anchor="middle">STATUS</text>
+
+    <!-- Bridge 2.3: ask_human Two-Way HTTP Sync -->
+    <path d="M 1070,490 L 1010,490" fill="none" stroke="#229ed9" stroke-width="2.4" marker-end="url(#arrBlue)"/>
+    <rect x="1015" y="478" width="50" height="22" rx="4" fill="#e8f4fd" stroke="#229ed9" stroke-width="1" filter="url(#royalShadow)"/>
+    <text x="1040" y="493" class="font-sans" font-size="8.5" font-weight="800" fill="#229ed9" text-anchor="middle">BRIDGE</text>
+  </g>
+
+  <!-- Footer with Logo Monogram -->
+  <g id="footer" transform="translate(50, 945)">
+    <line x1="0" y1="0" x2="1460" y2="0" stroke="#d1c5b6" stroke-width="1"/>
+    <g transform="translate(0, 10) scale(0.016)">
+      <use href="#vicarius-crest"/>
+    </g>
+    <text x="26" y="23" class="font-sans" font-size="11.5" font-weight="600" fill="#7f7669">
+      Vicarius Agent • System Architecture Topology • Hybrid Cloud Ingestion &amp; Dedicated Workstation Execution
+    </text>
+    <text x="1460" y="23" class="font-sans" font-size="11.5" font-weight="700" fill="#705728" text-anchor="end">
+      Cognitive Heritage Specification (docx/DESIGN.md)
+    </text>
+  </g>
+</svg>

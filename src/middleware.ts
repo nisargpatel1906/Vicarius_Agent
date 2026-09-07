@@ -10,13 +10,12 @@ export function middleware(req: NextRequest) {
   const { pathname, searchParams } = req.nextUrl;
   const method = req.method.toUpperCase();
 
-  // 1. Static asset exemptions (only Next.js runtime chunks & public icons)
+  // 1. Static asset exemptions (only Next.js runtime chunks & public assets/diagrams)
   if (
     pathname.startsWith('/_next/static') ||
     pathname.startsWith('/_next/image') ||
+    pathname.endsWith('.svg') ||
     pathname === '/favicon.ico' ||
-    pathname === '/icon.svg' ||
-    pathname === '/logo.svg' ||
     pathname === '/not-found'
   ) {
     return NextResponse.next();

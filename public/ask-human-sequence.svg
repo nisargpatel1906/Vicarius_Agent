@@ -1,0 +1,260 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1560 960" width="100%" height="100%">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&amp;family=Noto+Serif:wght@600;700;800&amp;family=Fira+Code:wght@500;600&amp;display=swap');
+
+      .font-serif { font-family: 'Noto Serif', Georgia, serif; }
+      .font-sans { font-family: 'Manrope', -apple-system, BlinkMacSystemFont, sans-serif; }
+      .font-mono { font-family: 'Fira Code', monospace; }
+    </style>
+
+    <!-- Filters -->
+    <filter id="royalShadow" x="-10%" y="-10%" width="125%" height="125%">
+      <feDropShadow dx="0" dy="5" stdDeviation="10" flood-color="#231a0f" flood-opacity="0.07"/>
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#231a0f" flood-opacity="0.04"/>
+    </filter>
+
+    <linearGradient id="canvasGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fff9f5"/>
+      <stop offset="50%" stop-color="#fff3e8"/>
+      <stop offset="100%" stop-color="#fbebdd"/>
+    </linearGradient>
+
+    <linearGradient id="headerRibbon" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#644e24"/>
+      <stop offset="35%" stop-color="#8b6f3e"/>
+      <stop offset="70%" stop-color="#a8894d"/>
+      <stop offset="100%" stop-color="#5a4316"/>
+    </linearGradient>
+
+    <linearGradient id="vicariusGold" x1="136" y1="140" x2="878" y2="884" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#c6a76c"/>
+      <stop offset="35%" stop-color="#8b6f3e"/>
+      <stop offset="70%" stop-color="#705728"/>
+      <stop offset="100%" stop-color="#4a3713"/>
+    </linearGradient>
+
+    <!-- Official Vicarius Logo Symbol -->
+    <g id="vicarius-crest">
+      <path d="M497.945 140.384C535.884 138.739 590.412 142.664 627.381 146.754C696.414 154.04 764.369 169.363 829.848 192.413C870.416 206.4 871.205 203.658 878.62 246.663C900.64 374.306 884.069 518.111 775.102 602.831C775.483 581.077 775.501 566.353 772.029 544.432C780.07 534.928 787.567 524.982 794.493 514.637C846.656 435.754 848.55 331.329 830.338 241.382C745.64 210.865 677.975 196.091 587.248 188.776C613.765 216.403 631.297 247.596 644.986 282.958C655.656 312.684 660.606 336.22 662.029 367.87C643.708 355.126 632.285 349.828 612.378 340.542C603.639 289.292 578.128 240.574 538.513 206.499C538.513 206.499 521.903 191.592 510.938 191.695C500.298 191.796 484.249 206.688 484.249 206.688C479.318 210.615 474.391 215.448 470.113 220.064C427.011 265.964 404.294 327.338 407.124 390.238C409.822 444.284 430.496 495.879 465.865 536.833C475.945 548.453 487.536 558.768 498.851 569.178C486.917 578.187 467.758 585.62 453.637 590.405C422.272 561.805 397.707 526.545 381.747 487.212C353.167 418.184 353.322 340.605 382.178 271.693C401.341 225.757 432.575 185.862 472.57 156.236C479.674 151.019 490.094 143.65 497.945 140.384Z" fill="url(#vicariusGold)"/>
+      <path d="M463.23 141.265C464.341 141.183 465.705 141.345 466.855 141.423C465.438 144.978 460.463 148.195 457.283 150.471C441.3 161.91 428.099 176.26 414.76 190.679C397.944 193.319 378.426 194.95 360.484 197.703C299.828 207.011 249.952 220.449 192.612 241.478C192.293 242.808 191.993 244.143 191.712 245.482C173.706 330.639 177.85 440.176 228.191 514.149C344.429 684.955 571.538 618.853 611.698 423.819C629.52 435.549 636.827 442.371 651.377 457.349C646.727 472.737 642.946 483.383 636.437 498.058C626.266 520.118 613.529 540.901 598.48 559.973C509.295 671.148 355.15 692.978 243.604 599.919C178.898 545.94 146.463 472.524 138.438 389.7C136.771 372.163 135.958 354.556 136.002 336.94C136.204 313.095 141.083 226.171 155.304 210.022C164.113 200.019 184.184 195.531 196.735 191.229C282.646 161.635 372.434 144.802 463.23 141.265Z" fill="url(#vicariusGold)"/>
+      <path d="M505.279 335.252C561.276 333.482 621.706 353.111 665.71 387.767C718.471 429.457 752.221 490.643 759.338 557.513C766.962 624.659 747.58 692.08 705.471 744.932C664.54 795.997 605.987 835.133 549.736 867.306C540.172 872.782 525.594 883.098 514.598 883.959C489.282 885.936 391.403 815.379 368.577 795.635C326.61 759.328 295.127 722.785 276.533 669.38C273.12 659.572 268.314 646.88 267.57 636.536L268.797 635.811L272.463 637.434C289.789 647.143 304.219 653.162 322.585 660.288C334.703 689.741 346.176 708.924 368.298 731.905C409.999 775.229 459.33 807.021 511.842 835.577C585.326 794.157 670.986 740.698 701.718 658.221C720.764 606.232 718.57 548.837 695.617 498.454C647.497 393.435 525.73 354.402 422.382 402.032C420.798 383.572 421.357 369.21 423.693 351.03C453.136 340.688 474.516 336.743 505.279 335.252Z" fill="url(#vicariusGold)"/>
+      <path d="M371.78 253.605L373.663 253.744C373.659 254.552 358.105 297.119 356.368 302.678C330.914 307.653 309.782 313.177 284.831 320.077C284.004 362.456 287.796 389.268 298.046 429.685C286.346 444.866 275.917 464.835 268.154 482.479C266.558 478.764 265.025 474.823 263.495 471.062C256.18 452.36 250.522 433.052 246.583 413.361C240.055 381.641 232.414 316.478 245.328 288.582C251.796 274.609 353.009 256.61 371.78 253.605Z" fill="url(#vicariusGold)"/>
+      <path d="M648.322 253.41C685.744 257.509 727.074 269.131 763.417 279.133C784.34 284.89 783.361 305.994 784.023 323.9C785.881 374.664 777.133 422.629 759.773 470.185C758.522 473.86 756.437 478.681 754.968 482.395C744.461 460.255 738.433 450.005 725.215 429.257C735.758 384.725 738.614 366.254 737.961 320.2C714.989 312.967 690.195 307.37 666.544 302.702C660.57 283.069 656.798 272.142 648.322 253.41Z" fill="url(#vicariusGold)"/>
+      <path d="M345.43 398.194C346.745 399.929 346.913 405.195 347.144 407.767C348.556 423.468 351.758 438.293 355.248 453.632C348.786 463.085 342.984 470.388 336.794 480.655C320.123 508.491 310.575 540.007 308.993 572.414C301.333 568.299 295.145 563.804 288.146 558.681C280.133 552.306 272.856 546.556 266.02 538.903C279.73 480.087 299.871 439.694 345.43 398.194Z" fill="url(#vicariusGold)"/>
+      <path d="M698.508 596.82L699.297 597.037C702.153 603.394 692.752 639.764 690.195 647.95C642.158 663.842 589.315 660.641 541.957 644.034C537.488 642.393 533.1 640.543 528.695 638.739C546.635 627.428 557.514 621.311 573.288 606.211C616.638 615.318 657.134 615.388 698.508 596.82Z" fill="url(#vicariusGold)"/>
+      <path d="M687.594 517.73C696.043 532.179 699.333 564.167 699.977 581.04C686.569 588.015 661.603 593.944 646.663 596.659L634.96 598.091C657.125 568.466 669.1 549.504 687.594 517.73Z" fill="url(#vicariusGold)"/>
+      <path d="M334.889 517.653C337.018 519.32 347.362 538.069 349.634 541.915C361.442 561.898 374.112 579.425 387.789 598.134L377.907 596.974C355.688 592.336 343.698 589.078 322.767 580.274C323.727 556.514 327.142 540.116 334.889 517.653Z" fill="url(#vicariusGold)"/>
+      <path d="M511.532 238.042C497.735 238.042 481.98 239.108 466.142 240.699L439.378 290.757C463.867 287.843 489.864 285.578 511.532 285.578C533.465 285.578 559.75 287.812 584.558 290.698L553.308 240.379C538.7 238.967 524.274 238.042 511.532 238.042Z" fill="url(#vicariusGold)"/>
+      <path d="M511.532 793.022C457.598 793.046 360.012 672.995 360.012 672.995L436.069 686.661C436.069 686.661 489.547 749.052 508.561 749.052C527.576 749.052 579.865 686.661 579.865 686.661L657.111 672.995C657.111 672.995 565.445 792.999 511.532 793.022Z" fill="url(#vicariusGold)"/>
+    </g>
+
+    <!-- Markers for Exact Color Matching -->
+    <marker id="arrGold" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#8b6f3e"/>
+    </marker>
+    <marker id="arrGreen" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#276a3c"/>
+    </marker>
+    <marker id="arrRed" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#ba1a1a"/>
+    </marker>
+    <marker id="arrBlue" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#229ed9"/>
+    </marker>
+  </defs>
+
+  <!-- Background Base Canvas -->
+  <rect width="1560" height="960" fill="url(#canvasGrad)"/>
+
+  <!-- Ornate Frame -->
+  <rect x="24" y="24" width="1512" height="912" rx="16" fill="none" stroke="#d1c5b6" stroke-width="1.4"/>
+  <rect x="30" y="30" width="1500" height="900" rx="12" fill="none" stroke="#705728" stroke-width="0.8" stroke-opacity="0.4"/>
+  
+  <g fill="#705728">
+    <circle cx="30" cy="30" r="3"/>
+    <circle cx="1530" cy="30" r="3"/>
+    <circle cx="30" cy="930" r="3"/>
+    <circle cx="1530" cy="930" r="3"/>
+  </g>
+
+  <!-- Subtle Logo Watermark in Background -->
+  <g transform="translate(620, 210) scale(0.60)" opacity="0.038">
+    <use href="#vicarius-crest"/>
+  </g>
+
+  <!-- Blueprint Mesh -->
+  <g opacity="0.12">
+    <path d="M 0,80 L 1560,80 M 0,180 L 1560,180 M 0,280 L 1560,280 M 0,380 L 1560,380 M 0,480 L 1560,480 M 0,580 L 1560,580 M 0,680 L 1560,680 M 0,780 L 1560,780 M 0,880 L 1560,880" stroke="#7f7669" stroke-width="0.5" stroke-dasharray="3 6"/>
+    <path d="M 100,0 L 100,960 M 300,0 L 300,960 M 500,0 L 500,960 M 700,0 L 700,960 M 900,0 L 900,960 M 1100,0 L 1100,960 M 1300,0 L 1300,960 M 1500,0 L 1500,960" stroke="#7f7669" stroke-width="0.5" stroke-dasharray="3 6"/>
+  </g>
+
+  <!-- ==================== TOP HEADER BANNER ==================== -->
+  <g id="header" transform="translate(50, 44)">
+    <rect x="0" y="0" width="1460" height="92" rx="14" fill="#ffffff" stroke="#d1c5b6" stroke-width="1.6" filter="url(#royalShadow)"/>
+    <path d="M 0,14 Q 0,0 14,0 L 18,0 L 18,92 L 14,92 Q 0,92 0,78 Z" fill="url(#headerRibbon)"/>
+
+    <!-- Official Logo Badge -->
+    <g transform="translate(34, 13)">
+      <rect x="0" y="0" width="66" height="66" rx="12" fill="#fdebd9" stroke="#8b6f3e" stroke-width="1.5"/>
+      <g transform="translate(6, 6) scale(0.053)">
+        <use href="#vicarius-crest"/>
+      </g>
+    </g>
+
+    <text x="118" y="38" class="font-serif" font-size="22.5" font-weight="700" fill="#231a0f">TWO-WAY CLARIFICATION (ASK_HUMAN) SEQUENCE FLOW</text>
+    <text x="118" y="64" class="font-sans" font-size="13" font-weight="500" fill="#4d463a">
+      Local HTTP Bridge (:8765) <tspan fill="#8b6f3e">•</tspan> Telegram Interactive Inline Menus <tspan fill="#8b6f3e">•</tspan> Zero-Guessing Execution Suspension
+    </text>
+
+    <g transform="translate(1120, 22)">
+      <rect x="0" y="0" width="150" height="46" rx="7" fill="#fdebd9" stroke="#8b6f3e" stroke-width="1.2"/>
+      <text x="75" y="19" class="font-sans" font-size="10" font-weight="800" fill="#705728" text-anchor="middle" letter-spacing="0.06em">TIMEOUT</text>
+      <text x="75" y="35" class="font-sans" font-size="12" font-weight="700" fill="#231a0f" text-anchor="middle">20 Mins Safety</text>
+
+      <rect x="165" y="0" width="165" height="46" rx="7" fill="#e8f5e9" stroke="#276a3c" stroke-width="1.2"/>
+      <text x="247" y="19" class="font-sans" font-size="10" font-weight="800" fill="#276a3c" text-anchor="middle" letter-spacing="0.06em">PROTOCOL</text>
+      <text x="247" y="35" class="font-sans" font-size="12" font-weight="700" fill="#231a0f" text-anchor="middle">HTTP Bridge :8765</text>
+    </g>
+  </g>
+
+  <!-- ==================== PARTICIPANTS (LIFELINE HEADERS) ==================== -->
+  <!-- Participant 1: Center X = 215 (Left: 110, Width: 210) -->
+  <g transform="translate(110, 160)">
+    <rect x="0" y="0" width="210" height="56" rx="8" fill="#ffffff" stroke="#705728" stroke-width="1.6" filter="url(#royalShadow)"/>
+    <text x="105" y="25" class="font-sans" font-size="13" font-weight="800" fill="#705728" text-anchor="middle">Coder Node</text>
+    <text x="105" y="44" class="font-mono" font-size="10" font-weight="500" fill="#4d463a" text-anchor="middle">worker/nodes/coder.py</text>
+  </g>
+
+  <!-- Participant 2: Center X = 515 (Left: 400, Width: 230) -->
+  <g transform="translate(400, 160)">
+    <rect x="0" y="0" width="230" height="56" rx="8" fill="#fdebd9" stroke="#8b6f3e" stroke-width="1.8" filter="url(#royalShadow)"/>
+    <text x="115" y="25" class="font-sans" font-size="13" font-weight="800" fill="#705728" text-anchor="middle">ask_human HTTP Server</text>
+    <text x="115" y="44" class="font-mono" font-size="10.5" font-weight="700" fill="#8b6f3e" text-anchor="middle">127.0.0.1:8765</text>
+  </g>
+
+  <!-- Participant 3: Center X = 815 (Left: 710, Width: 210) -->
+  <g transform="translate(710, 160)">
+    <rect x="0" y="0" width="210" height="56" rx="8" fill="#ffffff" stroke="#3ecf8e" stroke-width="1.6" filter="url(#royalShadow)"/>
+    <text x="105" y="25" class="font-sans" font-size="13" font-weight="800" fill="#231a0f" text-anchor="middle">Supabase DB</text>
+    <text x="105" y="44" class="font-mono" font-size="10" font-weight="600" fill="#0d6832" text-anchor="middle">questions &amp; tasks tables</text>
+  </g>
+
+  <!-- Participant 4: Center X = 1115 (Left: 1010, Width: 210) -->
+  <g transform="translate(1010, 160)">
+    <rect x="0" y="0" width="210" height="56" rx="8" fill="#ffffff" stroke="#229ed9" stroke-width="1.6" filter="url(#royalShadow)"/>
+    <text x="105" y="25" class="font-sans" font-size="13" font-weight="800" fill="#229ed9" text-anchor="middle">Telegram Bot</text>
+    <text x="105" y="44" class="font-mono" font-size="10" font-weight="500" fill="#4d463a" text-anchor="middle">Inline Keyboard UI</text>
+  </g>
+
+  <!-- Participant 5: Center X = 1395 (Left: 1300, Width: 190) -->
+  <g transform="translate(1300, 160)">
+    <rect x="0" y="0" width="190" height="56" rx="8" fill="#fff8f4" stroke="#705728" stroke-width="1.6" filter="url(#royalShadow)"/>
+    <text x="95" y="25" class="font-sans" font-size="13" font-weight="800" fill="#231a0f" text-anchor="middle">Nisarg Patel</text>
+    <text x="95" y="44" class="font-sans" font-size="10" font-weight="700" fill="#705728" text-anchor="middle">Operator (Telegram/Web)</text>
+  </g>
+
+  <!-- ==================== VERTICAL LIFELINES (PRECISION ALIGNED) ==================== -->
+  <line x1="215" y1="216" x2="215" y2="880" stroke="#d1c5b6" stroke-width="1.5" stroke-dasharray="4 6"/>
+  <line x1="515" y1="216" x2="515" y2="880" stroke="#8b6f3e" stroke-width="1.5" stroke-dasharray="4 6"/>
+  <line x1="815" y1="216" x2="815" y2="880" stroke="#3ecf8e" stroke-width="1.5" stroke-dasharray="4 6"/>
+  <line x1="1115" y1="216" x2="1115" y2="880" stroke="#229ed9" stroke-width="1.5" stroke-dasharray="4 6"/>
+  <line x1="1395" y1="216" x2="1395" y2="880" stroke="#705728" stroke-width="1.5" stroke-dasharray="4 6"/>
+
+  <!-- ==================== SEQUENCE INTERACTIONS (ALL IN CANVAS SPACE) ==================== -->
+
+  <!-- Worker Thread Suspension Box (Scenario A): centered at X=215, width=20 -> left=205 -->
+  <rect x="205" y="250" width="20" height="385" rx="4" fill="#fdebd9" stroke="#8b6f3e" stroke-width="1.6"/>
+  <text x="215" y="442" class="font-sans" font-size="10.5" font-weight="800" fill="#705728" text-anchor="middle" transform="rotate(-90, 215, 442)">THREAD SUSPENDED (AWAITING HTTP)</text>
+
+  <!-- Step 1: Coder calls ask_human (225 -> 515) -->
+  <g id="seq-step-1">
+    <path d="M 225,260 L 515,260" fill="none" stroke="#8b6f3e" stroke-width="2.4" marker-end="url(#arrGold)"/>
+    <rect x="245" y="246" width="250" height="26" rx="4" fill="#ffffff" stroke="#d1c5b6" stroke-width="1"/>
+    <text x="370" y="263" class="font-mono" font-size="10.5" font-weight="600" fill="#705728" text-anchor="middle">POST /ask { question, options, task_id }</text>
+  </g>
+
+  <!-- Step 2: Server creates question in Supabase (515 -> 815) -->
+  <g id="seq-step-2">
+    <path d="M 515,315 L 815,315" fill="none" stroke="#8b6f3e" stroke-width="2.4" marker-end="url(#arrGold)"/>
+    <rect x="535" y="301" width="260" height="26" rx="4" fill="#ffffff" stroke="#d1c5b6" stroke-width="1"/>
+    <text x="665" y="318" class="font-sans" font-size="10.5" font-weight="700" fill="#231a0f" text-anchor="middle">INSERT questions &amp; UPDATE status='needs_info'</text>
+  </g>
+
+  <!-- Step 3: Server sends Telegram message (515 -> 1115) -->
+  <g id="seq-step-3">
+    <path d="M 515,370 L 1115,370" fill="none" stroke="#229ed9" stroke-width="2.4" marker-end="url(#arrBlue)"/>
+    <rect x="675" y="356" width="280" height="26" rx="4" fill="#ffffff" stroke="#229ed9" stroke-width="1"/>
+    <text x="815" y="373" class="font-sans" font-size="11" font-weight="700" fill="#229ed9" text-anchor="middle">sendMessage (InlineKeyboard reply buttons)</text>
+  </g>
+
+  <!-- Step 4: Telegram push to user (1115 -> 1395) -->
+  <g id="seq-step-4">
+    <path d="M 1115,425 L 1395,425" fill="none" stroke="#229ed9" stroke-width="2.4" marker-end="url(#arrBlue)"/>
+    <rect x="1145" y="411" width="220" height="26" rx="4" fill="#e8f4fd" stroke="#229ed9" stroke-width="1"/>
+    <text x="1255" y="428" class="font-sans" font-size="10.5" font-weight="700" fill="#229ed9" text-anchor="middle">Push Notification with Button Choices</text>
+  </g>
+
+  <!-- ==================== SCENARIO A: USER RESPONDS WITHIN 20 MINUTES ==================== -->
+  <g id="scenario-a">
+    <!-- Outer Container (Canvas Coordinates) -->
+    <rect x="50" y="475" width="1460" height="190" rx="10" fill="#f4faf5" stroke="#276a3c" stroke-width="1.8" stroke-dasharray="6 4"/>
+    <rect x="66" y="487" width="290" height="22" rx="4" fill="#276a3c"/>
+    <text x="211" y="502" class="font-sans" font-size="10.5" font-weight="800" fill="#ffffff" text-anchor="middle">SCENARIO A: USER RESPONDS WITHIN 20 MINUTES</text>
+
+    <!-- 5a. User taps inline button (1395 -> 1115) -->
+    <path d="M 1395,520 L 1115,520" fill="none" stroke="#276a3c" stroke-width="2.4" marker-end="url(#arrGreen)"/>
+    <rect x="1165" y="506" width="180" height="26" rx="4" fill="#ffffff" stroke="#276a3c" stroke-width="1"/>
+    <text x="1255" y="523" class="font-sans" font-size="10.5" font-weight="700" fill="#276a3c" text-anchor="middle">User taps option button</text>
+
+    <!-- 5b. Webhook routes answer back to Supabase (1115 -> 815) -->
+    <path d="M 1115,555 L 815,555" fill="none" stroke="#276a3c" stroke-width="2.4" marker-end="url(#arrGreen)"/>
+    <rect x="855" y="541" width="220" height="26" rx="4" fill="#ffffff" stroke="#276a3c" stroke-width="1"/>
+    <text x="965" y="558" class="font-sans" font-size="10.5" font-weight="700" fill="#276a3c" text-anchor="middle">UPDATE questions status='answered'</text>
+
+    <!-- 5c. Server signals ask_human HTTP endpoint (815 -> 515) -->
+    <path d="M 815,590 L 515,590" fill="none" stroke="#276a3c" stroke-width="2.4" marker-end="url(#arrGreen)"/>
+    <rect x="560" y="576" width="210" height="26" rx="4" fill="#ffffff" stroke="#276a3c" stroke-width="1"/>
+    <text x="665" y="593" class="font-sans" font-size="10.5" font-weight="700" fill="#276a3c" text-anchor="middle">Unblocks HTTP 200 OK with answer</text>
+
+    <!-- 5d. Coder receives answer and resumes (515 -> 225) -->
+    <path d="M 515,625 L 225,625" fill="none" stroke="#276a3c" stroke-width="2.6" marker-end="url(#arrGreen)"/>
+    <rect x="250" y="611" width="230" height="26" rx="4" fill="#e8f5e9" stroke="#276a3c" stroke-width="1.4"/>
+    <text x="365" y="628" class="font-sans" font-size="11" font-weight="800" fill="#276a3c" text-anchor="middle">Coder Resumes with User Choice</text>
+  </g>
+
+  <!-- ==================== SCENARIO B: 20-MINUTE TIMEOUT EXPIRED ==================== -->
+  <g id="scenario-b">
+    <rect x="50" y="685" width="1460" height="130" rx="10" fill="#fff5f5" stroke="#ba1a1a" stroke-width="1.4" stroke-dasharray="6 4"/>
+    <rect x="66" y="697" width="290" height="22" rx="4" fill="#ba1a1a"/>
+    <text x="211" y="712" class="font-sans" font-size="10.5" font-weight="800" fill="#ffffff" text-anchor="middle">SCENARIO B: 20-MINUTE TIMEOUT EXPIRED</text>
+
+    <!-- Worker Thread Timeout Suspension Bar (Scenario B) -->
+    <rect x="205" y="705" width="20" height="80" rx="4" fill="#ffdad6" stroke="#ba1a1a" stroke-width="1.4"/>
+    <text x="215" y="745" class="font-sans" font-size="8.5" font-weight="800" fill="#ba1a1a" text-anchor="middle" transform="rotate(-90, 215, 745)">TIMEOUT</text>
+
+    <!-- Fallback returned to Coder (515 -> 225 - lands squarely on Scenario B activation box) -->
+    <path d="M 515,745 L 225,745" fill="none" stroke="#ba1a1a" stroke-width="2.4" marker-end="url(#arrRed)"/>
+    <rect x="250" y="731" width="230" height="26" rx="4" fill="#ffdad6" stroke="#ba1a1a" stroke-width="1"/>
+    <text x="365" y="748" class="font-sans" font-size="10.5" font-weight="800" fill="#ba1a1a" text-anchor="middle">Server Returns Lowest-Risk Fallback</text>
+
+    <!-- Context Text in Scenario B -->
+    <text x="540" y="734" class="font-sans" font-size="11" font-weight="700" fill="#ba1a1a">• Question status updated to 'timed_out'</text>
+    <text x="540" y="752" class="font-sans" font-size="10.5" font-weight="500" fill="#4d463a">• Logs warning event in system_events table</text>
+    <text x="540" y="770" class="font-sans" font-size="10.5" font-weight="700" fill="#705728">• Notifies student on Telegram: "Proceeding with standard academic default"</text>
+  </g>
+
+  <!-- ==================== FOOTER WITH LOGO MONOGRAM ==================== -->
+  <g id="footer" transform="translate(50, 920)">
+    <line x1="0" y1="0" x2="1460" y2="0" stroke="#d1c5b6" stroke-width="1"/>
+    <g transform="translate(0, 8) scale(0.016)">
+      <use href="#vicarius-crest"/>
+    </g>
+    <text x="26" y="21" class="font-sans" font-size="11.5" font-weight="600" fill="#7f7669">
+      Vicarius Agent • ask_human Server Architecture (worker/ask_human_server.py) • Strict Two-Way Human-In-The-Loop Protocol
+    </text>
+    <text x="1460" y="21" class="font-sans" font-size="11.5" font-weight="700" fill="#705728" text-anchor="end">
+      Cognitive Heritage Specification (docx/DESIGN.md)
+    </text>
+  </g>
+</svg>
