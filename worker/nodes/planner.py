@@ -26,6 +26,10 @@ def planner_node(state: AgentState) -> Dict[str, Any]:
 
     print(f"\n[LangGraph:Planner] Formulating dynamic execution blueprint for '{title}' ({task_type})...")
 
+    from worker.tools.progress import report_progress
+    task_id = state.get("task_id", task.get("id"))
+    report_progress(task_id, "claimed", f"Planner: Formulating execution blueprint and deliverable specifications for '{title}'...", state)
+
     # If execute_build is mocked by a test suite, avoid extraneous network calls
     import sys
     w_mod = sys.modules.get("worker.worker")

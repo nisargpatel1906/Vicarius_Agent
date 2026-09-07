@@ -251,10 +251,13 @@ def verifier_node(state: AgentState) -> Dict[str, Any]:
     """
     task = state.get("task", {})
     title = state.get("title", task.get("title", "Assignment"))
-    produced_paths = [Path(p) for p in state.get("produced_files", [])]
-    stdout_output = state.get("stdout_log", "")
+    task_id = state.get("task_id", task.get("id"))
+    attempt = state.get("attempt", 1)
 
     print(f"\n[LangGraph:Verifier] Verifying deliverables for '{title}' ({len(produced_paths)} files)...")
+
+    from worker.tools.progress import report_progress
+    report_progress(task_id, "verifying", f"Verifier: Evaluating academic quality, code execution, and rubric checks (Attempt {attempt})...", state)
 
     # Check if verify_build was patched on worker.worker (e.g. during test runs)
     import sys
@@ -384,6 +387,9 @@ def verifier_node(state: AgentState) -> Dict[str, Any]:
     # 5. LLM Judge Quality Review
     passed, score, feedback = run_llm_judge(task, produced_paths, stdout_output, exec_summary)
     print(f"[LangGraph:Verifier] Judge result: passed={passed}, score={score:.2f}, feedback: {feedback[:120]}")
+
+    status_note = f"Verifier: Score {score*100:.0f}% — {'Passed' if passed else 'Failed (routing to Reflexion Diagnoser)'}."
+    report_progress(task_id, "verifying", status_note, {**state, "verification_passed": passed, "verification_score": score})
 
     summary = f"Produced {len(produced_paths)} deliverable file(s): {', '.join([f.name for f in produced_paths])}."
     return {

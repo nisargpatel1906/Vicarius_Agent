@@ -202,6 +202,11 @@ def thinker_node(state: AgentState) -> Dict[str, Any]:
     retry_label = f" [Quality Retry #{thinker_retries}]" if thinker_retries > 0 else ""
     print(f"\n[LangGraph:Thinker] Reasoning about '{title}' before prompt generation...{retry_label}")
 
+    from worker.tools.progress import report_progress
+    task_id = state.get("task_id", task.get("id"))
+    thinker_note = f"Thinker: Deep reasoning on architecture & rubric{retry_label}..."
+    report_progress(task_id, "claimed", thinker_note, state)
+
     # Pull student profile
     user_prof: Dict[str, Any] = {}
     try:
@@ -320,6 +325,9 @@ def thinker_validator_node(state: AgentState) -> Dict[str, Any]:
 
     needs_retry = (score < QUALITY_THRESHOLD) and (retries < MAX_THINKER_RETRIES)
 
+    from worker.tools.progress import report_progress
+    task_id = state.get("task_id", state.get("task", {}).get("id"))
+
     if needs_retry:
         retry_note = (
             "The following quality issues MUST be fixed:\n"
@@ -327,6 +335,7 @@ def thinker_validator_node(state: AgentState) -> Dict[str, Any]:
         )
         print(f"[LangGraph:ThinkerValidator] Score {score:.2f} < {QUALITY_THRESHOLD} → "
               f"Retry {retries + 1}/{MAX_THINKER_RETRIES}")
+        report_progress(task_id, "claimed", f"Thinker Validator: Plan score {(score*100):.0f}% < 85% threshold — Retrying {retries + 1}/{MAX_THINKER_RETRIES}...", {**state, "thinker_quality_score": score, "thinker_retries": retries + 1})
         return {
             "thinker_needs_retry":    True,
             "thinker_retries":        retries + 1,
@@ -337,8 +346,10 @@ def thinker_validator_node(state: AgentState) -> Dict[str, Any]:
         if score < QUALITY_THRESHOLD:
             print(f"[LangGraph:ThinkerValidator] Score {score:.2f} still below threshold "
                   f"but max retries ({MAX_THINKER_RETRIES}) exhausted — proceeding.")
+            report_progress(task_id, "claimed", f"Thinker Validator: Proceeding with plan (score {(score*100):.0f}%)...", {**state, "thinker_quality_score": score})
         else:
             print(f"[LangGraph:ThinkerValidator] ✅ Plan accepted (score={score:.2f}).")
+            report_progress(task_id, "claimed", f"Thinker Validator: Plan accepted (score {(score*100):.0f}%)...", {**state, "thinker_quality_score": score})
         return {
             "thinker_needs_retry":    False,
             "thinker_retry_note":     "",

@@ -121,6 +121,8 @@ def deliver_node(state: AgentState) -> Dict[str, Any]:
         try:
             sb.table("tasks").update({
                 "status": "done",
+                "progress_note": "Task completed and delivered to Google Drive.",
+                "last_progress_at": now_iso,
                 "result_summary": result_summary,
                 "updated_at": now_iso,
             }).eq("id", task_id).execute()

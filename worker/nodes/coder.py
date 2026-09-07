@@ -430,9 +430,14 @@ def coder_node(state: AgentState) -> Dict[str, Any]:
 
     plan = state.get("plan", {})
     attempt = state.get("attempt", 1)
+    max_attempts = state.get("max_attempts", 4)
     retry_instructions = state.get("retry_instructions", "")
 
+    retry_str = f" [Retry {attempt}/{max_attempts}]" if attempt > 1 else ""
     print(f"\n[LangGraph:Coder] Starting execution for '{title}' (Attempt {attempt})...")
+
+    from worker.tools.progress import report_progress
+    report_progress(task_id, "building", f"Coder: Running Antigravity CLI to build deliverables{retry_str}...", state)
     stdout_log = state.get("stdout_log", "")
 
     # Check if execute_build was patched on worker.worker (e.g. during test runs)

@@ -151,6 +151,11 @@ def diagnoser_node(state: AgentState) -> Dict[str, Any]:
     print(f"[LangGraph:Diagnoser] Root cause: {root_cause[:100]}")
     print(f"[LangGraph:Diagnoser] Fix instructions: {retry_instructions[:120]}")
 
+    from worker.tools.progress import report_progress
+    task_id = state.get("task_id", task.get("id"))
+    diag_note = f"Diagnoser: Root cause identified ({root_cause[:80]}). Self-healing fix queued for Attempt {attempt + 1}/{max_attempts}..."
+    report_progress(task_id, "building", diag_note, {**state, "attempt": attempt + 1})
+
     return {
         "attempt": attempt + 1,
         "attempt_history": history,

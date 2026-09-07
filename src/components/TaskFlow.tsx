@@ -244,6 +244,32 @@ export function TaskFlow({ tasks, selectedTask, onSelectTask }: TaskFlowProps) {
     if (tracedTask) fetchTrace(tracedTask);
   }, [tracedTask, fetchTrace]);
 
+  // Live real-time background polling while selected task is in active execution
+  const isTaskActive = Boolean(
+    trace?.task?.status &&
+    ['new', 'extracting', 'queued', 'claimed', 'building', 'verifying'].includes(trace.task.status)
+  );
+
+  useEffect(() => {
+    if (!tracedTask || !isTaskActive) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/task-trace/${tracedTask.id}`, {
+          headers: { 'x-dashboard-secret': process.env.NEXT_PUBLIC_DASHBOARD_SECRET || '' },
+        });
+        const json = await res.json();
+        if (json.success && json.data) {
+          setTrace(json.data as TaskTrace);
+        }
+      } catch {
+        // silent fail on background poll
+      }
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [tracedTask, isTaskActive]);
+
   // Sync external selectedTask prop
   useEffect(() => {
     if (selectedTask && selectedTask.id !== tracedTask?.id) {
@@ -424,6 +450,112 @@ export function TaskFlow({ tasks, selectedTask, onSelectTask }: TaskFlowProps) {
                 </div>
               )}
             </div>
+
+            {/* ── Live Pipeline Activity Banner ── */}
+            {['extracting', 'claimed', 'building', 'verifying', 'queued'].includes(trace.task.status) && (
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 14,
+                  padding: '12px 18px',
+                  background: 'var(--surface-container-high)',
+                  border: '1.5px solid var(--primary)',
+                  borderRadius: 10,
+                  boxShadow: '0 2px 8px rgba(112, 87, 40, 0.08)',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: 1 }}>
+                  <div style={{ position: 'relative', width: 12, height: 12, flexShrink: 0 }}>
+                    <span
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        height: '100%',
+                        borderRadius: '50%',
+                        backgroundColor: '#10b981',
+                        opacity: 0.75,
+                        animation: 'pulsePill 1.8s infinite ease-in-out',
+                      }}
+                    />
+                    <span
+                      style={{
+                        position: 'relative',
+                        display: 'inline-block',
+                        width: 12,
+                        height: 12,
+                        borderRadius: '50%',
+                        backgroundColor: '#059669',
+                      }}
+                    />
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span
+                        style={{
+                          fontFamily: "'Manrope', sans-serif",
+                          fontSize: '11px',
+                          fontWeight: 800,
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.06em',
+                          color: 'var(--primary)',
+                        }}
+                      >
+                        Live Agent Pipeline
+                      </span>
+                      {trace.task.extracted_requirements?.attempt && (
+                        <span
+                          style={{
+                            fontSize: '10px',
+                            fontWeight: 700,
+                            padding: '1px 7px',
+                            borderRadius: 6,
+                            background: 'var(--surface)',
+                            color: 'var(--primary)',
+                            border: '1px solid var(--outline-variant)',
+                          }}
+                        >
+                          Attempt {trace.task.extracted_requirements.attempt} of{' '}
+                          {trace.task.extracted_requirements.max_attempts || 4}
+                        </span>
+                      )}
+                    </div>
+                    <p
+                      style={{
+                        margin: '3px 0 0',
+                        fontSize: '0.88rem',
+                        fontWeight: 600,
+                        color: 'var(--on-surface)',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {trace.task.progress_note || 'Autonomous agent executing pipeline stage...'}
+                    </p>
+                  </div>
+                </div>
+                {trace.task.last_progress_at && (
+                  <span
+                    style={{
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      color: 'var(--on-surface-variant)',
+                      flexShrink: 0,
+                      background: 'var(--surface)',
+                      padding: '3px 8px',
+                      borderRadius: 6,
+                      border: '1px solid var(--outline-variant)',
+                    }}
+                  >
+                    Active &middot; {formatRelTime(trace.task.last_progress_at)}
+                  </span>
+                )}
+              </div>
+            )}
 
             {/* ── Pipeline Node Timeline ── */}
             <div>

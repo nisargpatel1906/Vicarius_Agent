@@ -169,9 +169,14 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 15000); // Auto-refresh every 15s
+    // Adaptive auto-refresh: 4s when any task is actively processing, 15s when idle
+    const hasActiveTasks = tasks.some((t) =>
+      ['extracting', 'claimed', 'building', 'verifying', 'queued'].includes(t.status)
+    );
+    const pollInterval = hasActiveTasks ? 4000 : 15000;
+    const interval = setInterval(fetchData, pollInterval);
     return () => clearInterval(interval);
-  }, [showArchived, sortBy]);
+  }, [showArchived, sortBy, tasks]);
 
   // Trigger manual ingestion (PRD Section 6.6)
   const handleTriggerIngest = async () => {

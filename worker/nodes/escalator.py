@@ -198,6 +198,8 @@ def escalate_node(state: AgentState) -> Dict[str, Any]:
         try:
             sb.table("tasks").update({
                 "status": "flagged",
+                "progress_note": f"Flagged for human review — {feedback[:200]}",
+                "last_progress_at": now_iso,
                 "result_summary": f"Flagged after {review_timeout_mins}m timeout (zero deliverables produced) — {feedback[:300]}",
                 "updated_at": now_iso,
             }).eq("id", task_id).execute()

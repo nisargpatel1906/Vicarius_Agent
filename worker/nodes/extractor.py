@@ -261,6 +261,10 @@ def extractor_node(state: AgentState) -> Dict[str, Any]:
 
     print(f"\n[LangGraph:Extractor] Inspecting task attachments & specification for '{title}'...")
 
+    from worker.tools.progress import report_progress
+    task_id = state.get("task_id", task.get("id"))
+    report_progress(task_id, "extracting", f"Extractor: Inspecting coursework requirements and attachments for '{title}'...", state)
+
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
     reqs_meta = task.get("extracted_requirements") or {}
     

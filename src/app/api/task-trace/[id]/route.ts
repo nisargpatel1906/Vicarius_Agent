@@ -111,7 +111,7 @@ function inferPipelineNodes(task: Record<string, any>): PipelineNodeTrace[] {
             ? `Extracted ${req.raw_text.length.toLocaleString()} characters from attachments. Task type: ${task.task_type}. Weight: ${task.weight}.`
             : `Requirements extracted. Task type: ${task.task_type}. Weight: ${task.weight}.`
           : activeStageIdx === 1
-          ? 'Downloading attachments and extracting text...'
+          ? task.progress_note || 'Downloading attachments and extracting text...'
           : 'Waiting for prior stage.',
     },
     {
@@ -127,7 +127,7 @@ function inferPipelineNodes(task: Record<string, any>): PipelineNodeTrace[] {
             ? `Build spec generated (${task.build_spec.length} chars). Success criteria defined.`
             : 'Execution plan complete.'
           : activeStageIdx === 2
-          ? 'Formulating step-by-step execution plan...'
+          ? task.progress_note || 'Formulating step-by-step execution plan...'
           : 'Waiting for prior stage.',
     },
     {
@@ -146,8 +146,8 @@ function inferPipelineNodes(task: Record<string, any>): PipelineNodeTrace[] {
       detail:
         activeStageIdx > 4
           ? `Deep reasoning complete.${thinkerRetries > 0 ? ` Quality retry loop ran ${thinkerRetries}x.` : ''}`
-          : activeStageIdx >= 3
-          ? 'Running deep reasoning loop...'
+          : activeStageIdx >= 3 && activeStageIdx <= 4
+          ? task.progress_note || 'Running deep reasoning loop...'
           : 'Waiting for prior stage.',
       retryCount: thinkerRetries,
       qualityScore: thinkerScore,
@@ -165,7 +165,7 @@ function inferPipelineNodes(task: Record<string, any>): PipelineNodeTrace[] {
             ? `Quality score: ${(thinkerScore * 100).toFixed(0)}% — ${thinkerScore >= 0.85 ? 'Passed' : 'Threshold met after retries'}.`
             : 'Validation passed.'
           : activeStageIdx === 4
-          ? 'Scoring reasoning quality...'
+          ? task.progress_note || 'Scoring reasoning quality...'
           : 'Waiting for prior stage.',
       qualityScore: thinkerScore,
     },
@@ -186,7 +186,7 @@ function inferPipelineNodes(task: Record<string, any>): PipelineNodeTrace[] {
         activeStageIdx > 5
           ? `Deliverables compiled.${attempt > 1 ? ` Took ${attempt} attempt(s) of ${maxAttempts} max.` : ''} ${task.result_summary ? task.result_summary.slice(0, 120) : ''}`
           : activeStageIdx === 5
-          ? `Running Antigravity CLI... Attempt ${attempt} of ${maxAttempts}.`
+          ? task.progress_note || `Running Antigravity CLI... Attempt ${attempt} of ${maxAttempts}.`
           : 'Waiting for prior stage.',
       attemptCount: attempt,
     },
@@ -202,6 +202,8 @@ function inferPipelineNodes(task: Record<string, any>): PipelineNodeTrace[] {
             : 'done'
           : activeStageIdx === 6
           ? 'active'
+          : activeStageIdx === 5 && attempt > 1
+          ? 'retry'
           : 'pending',
       detail:
         activeStageIdx > 6
@@ -211,7 +213,9 @@ function inferPipelineNodes(task: Record<string, any>): PipelineNodeTrace[] {
             ? 'Verification passed.'
             : 'Verification ran.'
           : activeStageIdx === 6
-          ? 'Running rubric checks and citation validation...'
+          ? task.progress_note || 'Running rubric checks and citation validation...'
+          : activeStageIdx === 5 && attempt > 1
+          ? `Previous verification score: ${(verificationScore ? verificationScore * 100 : 0).toFixed(0)}% (Attempt ${attempt - 1} triggered self-healing retry).`
           : 'Waiting for prior stage.',
       qualityScore: verificationScore,
     },
@@ -232,7 +236,7 @@ function inferPipelineNodes(task: Record<string, any>): PipelineNodeTrace[] {
         status === 'done'
           ? `Task delivered successfully. ${task.result_summary ? task.result_summary.slice(0, 120) : 'Check deliverables panel for Drive links.'}`
           : activeStageIdx === 7
-          ? 'Uploading to Google Drive and notifying via Telegram...'
+          ? task.progress_note || 'Uploading to Google Drive and notifying via Telegram...'
           : 'Waiting for verification to pass.',
     },
     {
