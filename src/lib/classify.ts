@@ -20,7 +20,7 @@ export interface ClassificationOutput {
 
 const OPENROUTER_API_URL = process.env.OPENROUTER_API_URL || 'https://openrouter.ai/api/v1/chat/completions';
 const GROQ_API_URL = process.env.GROQ_API_URL || 'https://api.groq.com/openai/v1/chat/completions';
-const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'minimax/minimax-m3:free';
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'inclusionai/ling-3.0-flash-fin:free';
 const OPENROUTER_FALLBACK_MODEL = process.env.OPENROUTER_FALLBACK_MODEL || 'meta-llama/llama-3.3-70b-instruct';
 
 function parseConfidenceScore(content: string): number {
@@ -36,7 +36,7 @@ function parseConfidenceScore(content: string): number {
 
 /**
  * Row 4: Telegram / Web Ingestion & Task Classification
- * Primary: OpenRouter (minimax/minimax-m3:free)
+ * Primary: OpenRouter (inclusionai/ling-3.0-flash-fin:free)
  * Fallback 1: Groq (openai/gpt-oss-120b / qwen3.8-27b)
  * Fallback 2/3: OpenRouter Backup (llama-3.3-70b-instruct) -> Gemini
  * Trigger: OpenRouter error or confidence score < 0.70
@@ -47,7 +47,7 @@ async function callLlmWithFallback(prompt: string, systemPrompt: string): Promis
   const geminiKey = process.env.GEMINI_API_KEY;
   let bestCandidateContent: string | null = null;
 
-  // 1. Primary Model: OpenRouter (minimax/minimax-m3:free)
+  // 1. Primary Model: OpenRouter (inclusionai/ling-3.0-flash-fin:free)
   if (openRouterKey) {
     try {
       const res = await fetch(OPENROUTER_API_URL, {

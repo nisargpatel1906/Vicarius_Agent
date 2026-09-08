@@ -9,7 +9,7 @@ import { rememberCourseCorrection } from './aethos';
 const TELEGRAM_API_BASE = process.env.TELEGRAM_API_BASE || 'https://api.telegram.org/bot';
 const TELEGRAM_FILE_BASE = process.env.TELEGRAM_FILE_BASE || 'https://api.telegram.org/file/bot';
 const OPENROUTER_API_URL = process.env.OPENROUTER_API_URL || 'https://openrouter.ai/api/v1/chat/completions';
-const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'minimax/minimax-m3:free';
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'inclusionai/ling-3.0-flash-fin:free';
 const GROQ_API_URL = process.env.GROQ_API_URL || 'https://api.groq.com/openai/v1/chat/completions';
 const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 const GROQ_WHISPER_URL = process.env.GROQ_WHISPER_URL || 'https://api.groq.com/openai/v1/audio/transcriptions';
@@ -191,7 +191,7 @@ Extract the structured task details into strict JSON:
   const groqKey = process.env.GROQ_API_KEY;
   const geminiKey = process.env.GEMINI_API_KEY;
 
-  // Row 4: Primary Model: OpenRouter (minimax/minimax-m3:free)
+  // Row 4: Primary Model: OpenRouter (inclusionai/ling-3.0-flash-fin:free)
   if (openRouterKey) {
     try {
       const res = await fetch(OPENROUTER_API_URL, {
@@ -2326,7 +2326,7 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
     return { handled: true };
   }
 
-  // 10. Direct AI Model Brain (OpenRouter MiniMax with Native Tool Calling)
+  // 10. Direct AI Model Brain (OpenRouter with Native Tool Calling)
   try {
     const aiResponse = await askAiAssistant(text, incomingChatId);
     await reply(aiResponse);

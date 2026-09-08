@@ -65,7 +65,7 @@ Vicarius Agent is an autonomous academic operations system built for a Computer 
 - **State & Caching**: Supabase tables (`tasks`, `questions`, `deliverables`, `system_events`, `chat_messages`, `profile`, `knowledge_base`)
 
 ### Third-Party APIs & Integrations
-- **AI Models**: Google Gemini (`gemini-2.0-flash`, `gemini-embedding-001`), Groq (`llama-3.3-70b-versatile`, Whisper), OpenRouter (`minimax/minimax-m3:free`, `meta-llama/llama-3.3-70b-instruct`)
+- **AI Models**: Google Gemini (`gemini-2.0-flash`, `gemini-embedding-001`), Groq (`llama-3.3-70b-versatile`, Whisper), OpenRouter (`inclusionai/ling-3.0-flash-fin:free`, `meta-llama/llama-3.3-70b-instruct`)
 - **Google Workspace**: Google Classroom API, Gmail API, Google Drive API, Google Calendar API, Google Cloud Pub/Sub
 - **Messaging**: Telegram Bot API (long-polling / webhook with async Next.js `after()` processing)
 - **External Memory**: Aethos Memory MCP / Supabase integration
@@ -220,7 +220,7 @@ pip install -r requirements.txt
 | `GROQ_API_KEY` | Groq API key for fast classification, extraction, and Whisper audio transcription |
 | `GEMINI_API_KEY` | Google AI Studio API key for multimodal vision extraction and vector embeddings |
 | `OPENROUTER_API_KEY` | OpenRouter API key for LLM failover chains and evaluation judge |
-| `OPENROUTER_MODEL` | Default OpenRouter model identifier (e.g. `minimax/minimax-m3:free`) |
+| `OPENROUTER_MODEL` | Default OpenRouter model identifier (e.g. `inclusionai/ling-3.0-flash-fin:free`) |
 | `TELEGRAM_BOT_TOKEN` | Telegram Bot API authentication token |
 | `TELEGRAM_ALLOWED_CHAT_ID` | Owner's numeric Telegram chat ID for strict single-user authorization gate |
 | `ANTIGRAVITY_PINNED_VERSION` | Exact pinned Antigravity CLI version checked by worker before runs |

@@ -489,9 +489,9 @@ def call_llm_structured(
     # Determine execution strategy based on user matrix
     is_openrouter_only = (preferred_provider == "openrouter_only")
 
-    # ── 1. Primary & Fallback 1: OpenRouter (minimax/minimax-m3:free) ──────
+    # ── 1. Primary & Fallback 1: OpenRouter (inclusionai/ling-3.0-flash-fin:free) ──────
     if OPENROUTER_API_KEY and preferred_provider in (None, "openrouter", "openrouter_only"):
-        openrouter_model = "minimax/minimax-m3:free"
+        openrouter_model = os.getenv("OPENROUTER_MODEL", "inclusionai/ling-3.0-flash-fin:free")
         max_openrouter_attempts = 3 if is_openrouter_only else 2  # 3 attempts for Diagnoser, 2 for general (Primary + Fallback 1)
 
         for or_attempt in range(1, max_openrouter_attempts + 1):

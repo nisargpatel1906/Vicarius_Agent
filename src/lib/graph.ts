@@ -163,7 +163,7 @@ INTENT DEFINITIONS:
   // Try OpenRouter Free Models first
   const openRouterKey = process.env.OPENROUTER_API_KEY;
   if (openRouterKey) {
-    const freeModels = ['minimax/minimax-m3:free', 'google/gemini-2.0-flash-exp:free', 'meta-llama/llama-3.3-70b-instruct:free'];
+    const freeModels = ['inclusionai/ling-3.0-flash-fin:free', 'google/gemini-2.0-flash-exp:free', 'meta-llama/llama-3.3-70b-instruct:free'];
     for (const model of freeModels) {
       try {
         const res = await fetch(OPENROUTER_API_URL, {
@@ -385,11 +385,11 @@ CRITICAL RULES:
 
   let responseContent = '';
 
-  // Primary: OpenRouter Free Models (minimax/minimax-m3:free -> google/gemini-2.0-flash-exp:free -> meta-llama/llama-3.3-70b-instruct:free)
+  // Primary: OpenRouter Free Models (inclusionai/ling-3.0-flash-fin:free -> google/gemini-2.0-flash-exp:free -> meta-llama/llama-3.3-70b-instruct:free)
   const openRouterKey = process.env.OPENROUTER_API_KEY;
   if (openRouterKey) {
     const freeModels = [
-      'minimax/minimax-m3:free',
+      'inclusionai/ling-3.0-flash-fin:free',
       'google/gemini-2.0-flash-exp:free',
       'meta-llama/llama-3.3-70b-instruct:free',
     ];
