@@ -98,7 +98,7 @@ def deliver_node(state: AgentState) -> Dict[str, Any]:
                     "file_name": f.name,
                     "file_type": ext,
                     "drive_link": drive_link,
-                    "delivered_via": "both" if drive_link else "local",
+                    "delivered_via": "both" if drive_link else "telegram",
                 }).execute()
             except Exception as de:
                 print(f"[Deliverer] Deliverable record error for '{f.name}': {de}")
