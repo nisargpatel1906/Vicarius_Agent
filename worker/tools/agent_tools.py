@@ -468,7 +468,7 @@ def tool_package_zip(work_dir: Path, archive_name: str, include_files: Optional[
     If include_files is specified, only those files are included.
     Otherwise, all workspace files (excluding build caches) are included.
     Automatically wraps files inside an inner folder matching the archive stem
-    (e.g. DLCV_2025_STUDENT_ID_sub1/file.ext) to comply with academic submission standards.
+    (e.g. DLCV_2025_<ENROLLMENT_NO>_sub1/file.ext) to comply with academic submission standards.
     """
     import zipfile as zf
 

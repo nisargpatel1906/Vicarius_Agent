@@ -2,7 +2,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { VicariusLogo } from '@/components/VicariusLogo';
-import { MenuIcon, CloseIcon, ClockIcon, ZapIcon, ClassroomIcon, UserIcon, ExternalLinkIcon } from '@/components/Icons';
+import { MenuIcon, CloseIcon, ClockIcon, ZapIcon, ClassroomIcon, UserIcon, ExternalLinkIcon, LogOutIcon } from '@/components/Icons';
+import { createClient } from '@/lib/supabase/client';
 
 interface DashboardHeaderProps {
   isAuthorized?: boolean;
@@ -12,6 +13,44 @@ export function DashboardHeader({ isAuthorized = true }: DashboardHeaderProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [currentTime, setCurrentTime] = useState<string>('');
   const [polling, setPolling] = useState(false);
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
+  const [institution, setInstitution] = useState<string>('Academic Operations');
+
+  // Supabase Auth session listener
+  useEffect(() => {
+    try {
+      const supabase = createClient();
+      supabase.auth.getUser().then(({ data: { user } }) => {
+        if (user?.email) {
+          setCurrentUserEmail(user.email);
+        }
+      });
+      const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+        setCurrentUserEmail(session?.user?.email || null);
+      });
+      return () => subscription.unsubscribe();
+    } catch {}
+  }, []);
+
+  // Fetch dynamic profile to resolve active university
+  useEffect(() => {
+    fetch('/api/profile')
+      .then((r) => r.json())
+      .then((res) => {
+        if (res?.data?.university) {
+          setInstitution(res.data.university);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleSignOut = async () => {
+    try {
+      const supabase = createClient();
+      await supabase.auth.signOut();
+    } catch {}
+    window.location.href = '/login';
+  };
 
   // Live IST Clock
   useEffect(() => {
@@ -144,7 +183,7 @@ export function DashboardHeader({ isAuthorized = true }: DashboardHeaderProps) {
                 marginTop: 2,
               }}
             >
-              Cognitive Heritage Pipeline &bull; Academic Institution
+              Cognitive Heritage Pipeline &bull; {institution}
             </p>
           </div>
         </a>
@@ -214,6 +253,42 @@ export function DashboardHeader({ isAuthorized = true }: DashboardHeaderProps) {
             <span style={{ fontWeight: 600, color: 'var(--on-surface)' }}>
               Autonomous System Active
             </span>
+          </div>
+
+          {/* User Status & Sign Out */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              background: 'var(--surface-container-low)',
+              padding: '6px 12px',
+              borderRadius: 4,
+              border: '1px solid var(--outline-variant)',
+              fontSize: '0.8rem',
+            }}
+          >
+            <UserIcon size={14} color="var(--primary)" />
+            <span style={{ fontWeight: 600, color: 'var(--on-surface)' }}>
+              {currentUserEmail ? currentUserEmail.split('@')[0] : 'Operator'}
+            </span>
+            <button
+              type="button"
+              onClick={handleSignOut}
+              title="Sign Out"
+              style={{
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                padding: '2px 4px',
+                color: 'var(--outline)',
+                marginLeft: 2,
+              }}
+            >
+              <LogOutIcon size={13} />
+            </button>
           </div>
         </div>
 
@@ -386,6 +461,31 @@ export function DashboardHeader({ isAuthorized = true }: DashboardHeaderProps) {
                 <span>{polling ? 'Polling Classroom & Gmail...' : 'Poll Sources Now'}</span>
               </button>
 
+              {/* Mobile Drawer Logout */}
+              <button
+                type="button"
+                onClick={handleSignOut}
+                style={{
+                  width: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                  marginTop: 10,
+                  padding: '10px',
+                  background: 'transparent',
+                  border: '1px solid var(--outline-variant)',
+                  borderRadius: 4,
+                  color: 'var(--on-surface-variant)',
+                  fontSize: '0.84rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                <LogOutIcon size={14} />
+                <span>Sign Out ({currentUserEmail ? currentUserEmail : 'Operator'})</span>
+              </button>
+
               <div
                 style={{
                   textAlign: 'center',
@@ -394,7 +494,7 @@ export function DashboardHeader({ isAuthorized = true }: DashboardHeaderProps) {
                   marginTop: 14,
                 }}
               >
-                Vicarius Academic Agent &bull; Academic Institution
+                Vicarius Academic Agent &bull; {institution}
               </div>
             </div>
           </div>

@@ -173,7 +173,7 @@ function inferPipelineNodes(task: Record<string, any>): PipelineNodeTrace[] {
       order: 5,
       id: 'coder',
       name: 'Coder Node — Antigravity CLI',
-      subtitle: `agy CLI on Nisarg's PC + fallback ReAct tool loop`,
+      subtitle: `agy CLI on Local Worker + fallback ReAct tool loop`,
       status:
         activeStageIdx > 5
           ? attempt > 1
@@ -268,8 +268,8 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  if (!isRequestAuthorized(req)) {
-    return NextResponse.json({ error: 'Not Found' }, { status: 404 });
+  if (!await isRequestAuthorized(req)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const { id } = await params;

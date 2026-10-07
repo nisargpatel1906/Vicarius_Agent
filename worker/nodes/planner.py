@@ -49,10 +49,10 @@ def planner_node(state: AgentState) -> Dict[str, Any]:
         print(f"[LangGraph:Planner] Warning: Profile fetch error: {e}")
         user_prof = {}
 
-    student_name = user_prof.get("full_name") or user_prof.get("name") or "Nisarg Patel"
-    student_enrollment = user_prof.get("enrollment_no") or "STUDENT_ID"
-    student_program = user_prof.get("program") or "B.Tech, Computer Engineering (AIML)"
-    student_uni = user_prof.get("university") or "Academic Institution"
+    student_name = user_prof.get("full_name") or user_prof.get("name") or os.getenv("STUDENT_NAME", "Student")
+    student_enrollment = user_prof.get("enrollment_no") or os.getenv("STUDENT_ENROLLMENT_NO", "")
+    student_program = user_prof.get("program") or os.getenv("STUDENT_PROGRAM", "Undergraduate Degree")
+    student_uni = user_prof.get("university") or os.getenv("STUDENT_UNIVERSITY", "Academic Institution")
     custom_directives = user_prof.get("custom_instructions", "")
     skills_list = user_prof.get("skills", [])
     skills_str = ", ".join(skills_list) if isinstance(skills_list, list) else str(skills_list)

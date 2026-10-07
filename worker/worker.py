@@ -121,19 +121,29 @@ def check_gpu_availability() -> Tuple[bool, str]:
     return False, "No dedicated GPU detected (CPU-only execution)."
 
 def get_user_profile() -> Dict[str, Any]:
-    """Pulls student profile from Supabase profile table (PRD Section 5 & 6.2)."""
+    """Pulls student profile from Supabase profile table for the authorized owner."""
     try:
         sb = get_supabase()
+        owner_email = os.getenv("OWNER_EMAIL") or (os.getenv("ALLOWED_EMAILS", "").split(",")[0].strip() if os.getenv("ALLOWED_EMAILS") else "")
+        if owner_email:
+            res = sb.table("profile").select("*").eq("email", owner_email).limit(1).execute()
+            if res.data and len(res.data) > 0:
+                return res.data[0]
+        # Query where user_id is set
+        res = sb.table("profile").select("*").not_.is_("user_id", "null").order("created_at", desc=False).limit(1).execute()
+        if res.data and len(res.data) > 0:
+            return res.data[0]
+        # Fallback to first profile row
         res = sb.table("profile").select("*").limit(1).execute()
         if res.data and len(res.data) > 0:
             return res.data[0]
     except Exception as e:
         print(f"[Worker] Could not fetch profile from Supabase: {e}")
     return {
-        "full_name": "Nisarg Patel",
-        "university": "Academic Institution",
-        "program": "B.Tech, Computer Engineering (AIML)",
-        "current_semester": "Semester 4",
+        "full_name": os.getenv("STUDENT_NAME", "Student"),
+        "university": os.getenv("STUDENT_UNIVERSITY", "Academic Institution"),
+        "program": os.getenv("STUDENT_PROGRAM", "Undergraduate Degree"),
+        "current_semester": os.getenv("STUDENT_SEMESTER", "Semester 1"),
         "default_citation_style": "IEEE",
     }
 
@@ -169,15 +179,29 @@ def log_system_event(level: str, component: str, message: str) -> None:
         print(f"[SystemEvent-Error] Could not log event: {e}", file=sys.stderr)
 
 
+def get_authorized_telegram_chat_id() -> Optional[str]:
+    """Resolves authorized Telegram chat ID from database profile or environment."""
+    try:
+        prof = get_user_profile()
+        if prof and prof.get("telegram_id"):
+            return str(prof["telegram_id"]).strip()
+    except Exception:
+        pass
+    if TELEGRAM_ALLOWED_CHAT_ID:
+        return str(TELEGRAM_ALLOWED_CHAT_ID).strip()
+    return None
+
+
 def send_telegram_notification(message: str, parse_mode: str = "HTML") -> bool:
     """Send alert to authorized Telegram chat ID with automatic plain text fallback."""
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_ALLOWED_CHAT_ID:
+    chat_id = get_authorized_telegram_chat_id()
+    if not TELEGRAM_BOT_TOKEN or not chat_id:
         return False
     try:
         import requests
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         resp = requests.post(url, json={
-            "chat_id": TELEGRAM_ALLOWED_CHAT_ID,
+            "chat_id": chat_id,
             "text": message,
             "parse_mode": parse_mode,
             "disable_web_page_preview": True
@@ -190,7 +214,7 @@ def send_telegram_notification(message: str, parse_mode: str = "HTML") -> bool:
         print(f"[Telegram-Warning] Parse mode {parse_mode} failed ({resp.status_code}: {resp.text}). Retrying with plain text...", file=sys.stderr)
         clean_text = re.sub(r"<[^>]+>", "", message).replace("*", "").replace("_", "")
         fallback_resp = requests.post(url, json={
-            "chat_id": TELEGRAM_ALLOWED_CHAT_ID,
+            "chat_id": chat_id,
             "text": clean_text,
             "disable_web_page_preview": True
         }, timeout=10)
@@ -202,13 +226,14 @@ def send_telegram_notification(message: str, parse_mode: str = "HTML") -> bool:
 
 def send_telegram_photo(photo_path: Path, caption: Optional[str] = None) -> bool:
     """Send photo/screenshot alert to authorized Telegram chat ID (PRD 8 / TASK_TYPES.md)."""
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_ALLOWED_CHAT_ID or not photo_path.exists():
+    chat_id = get_authorized_telegram_chat_id()
+    if not TELEGRAM_BOT_TOKEN or not chat_id or not photo_path.exists():
         return False
     try:
         import requests
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
         with open(photo_path, "rb") as f:
-            data = {"chat_id": TELEGRAM_ALLOWED_CHAT_ID}
+            data = {"chat_id": chat_id}
             if caption:
                 data["caption"] = caption
                 data["parse_mode"] = "HTML"
@@ -503,8 +528,13 @@ def run_agy_cli(task_work_dir: Path, task: Dict[str, Any], timeout_seconds: int 
     build_spec = task.get("build_spec", "")
     timeout_str = f"{max(5, timeout_seconds // 60)}m0s"
 
+    user_prof = get_user_profile()
+    student_name = user_prof.get("full_name") or "Student"
+    student_program = user_prof.get("program") or "Undergraduate Degree"
+    student_uni = user_prof.get("university") or "Academic Institution"
+
     prompt = (
-        f"You are building an academic code project for student Nisarg Patel (B.Tech CE-AIML, Academic Institution).\n"
+        f"You are building an academic code project for student {student_name} ({student_program}, {student_uni}).\n"
         f"Project Title: {title}\nCourse: {course}\n"
         f"Requirements:\n{build_spec}\n"
     )
@@ -1027,10 +1057,24 @@ def verify_build(task: Dict[str, Any], stdout_output: str, produced_files: List[
 
 
 def get_google_credentials():
-    """Get authenticated Google OAuth2 credentials from .env."""
+    """Get authenticated Google OAuth2 credentials from Supabase or .env."""
     client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
     client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET")
-    refresh_token = os.getenv("GOOGLE_OAUTH_REFRESH_TOKEN")
+    refresh_token = None
+
+    # 1. Try reading from google_credentials table via Supabase service key
+    try:
+        sb = get_supabase()
+        res = sb.table("google_credentials").select("refresh_token").order("updated_at", desc=True).limit(1).execute()
+        if res.data and len(res.data) > 0:
+            refresh_token = res.data[0].get("refresh_token")
+    except Exception as e:
+        print(f"[GoogleAuth] Notice: Could not read google_credentials from Supabase: {e}")
+
+    # 2. Fallback to GOOGLE_OAUTH_REFRESH_TOKEN env var
+    if not refresh_token:
+        refresh_token = os.getenv("GOOGLE_OAUTH_REFRESH_TOKEN")
+
     if client_id and client_secret and refresh_token:
         try:
             from google.oauth2.credentials import Credentials

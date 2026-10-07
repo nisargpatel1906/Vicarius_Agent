@@ -74,7 +74,13 @@ export async function GET(request: Request) {
       timeZone: "Asia/Kolkata", weekday: "long", day: "numeric", month: "long", year: "numeric",
     });
 
-    const studentName = process.env.STUDENT_NAME || 'Student';
+    let studentName = 'Student';
+    try {
+      const { data: prof } = await supabase.from('profile').select('preferred_name, full_name').limit(1).maybeSingle();
+      if (prof) {
+        studentName = prof.preferred_name || prof.full_name || studentName;
+      }
+    } catch {}
     let msg = `\u{1F305} <b>Good Morning, ${studentName}!</b>\n\u{1F4C5} <b>${todayStr}</b>\n\n`;
 
     // Escalation section for stuck queue items

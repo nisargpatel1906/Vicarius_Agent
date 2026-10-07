@@ -14,10 +14,23 @@ TARGET_TZ = pytz.timezone("Asia/Kolkata")
 
 
 def get_google_credentials():
-    """Get authenticated Google OAuth2 credentials from environment variables."""
+    """Get authenticated Google OAuth2 credentials from Supabase or environment variables."""
     client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
     client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET")
-    refresh_token = os.getenv("GOOGLE_OAUTH_REFRESH_TOKEN")
+    refresh_token = None
+
+    try:
+        from worker.worker import get_supabase
+        sb = get_supabase()
+        res = sb.table("google_credentials").select("refresh_token").order("updated_at", desc=True).limit(1).execute()
+        if res.data and len(res.data) > 0:
+            refresh_token = res.data[0].get("refresh_token")
+    except Exception:
+        pass
+
+    if not refresh_token:
+        refresh_token = os.getenv("GOOGLE_OAUTH_REFRESH_TOKEN")
+
     if client_id and client_secret and refresh_token:
         try:
             from google.oauth2.credentials import Credentials

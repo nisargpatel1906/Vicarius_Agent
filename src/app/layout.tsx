@@ -23,11 +23,10 @@ export const metadata: Metadata = {
     'Google Classroom Agent',
     'Autonomous Pipeline',
     'Vicarius Agent',
-    'Academic Institution',
     'Antigravity Engine',
   ],
-  authors: [{ name: 'Nisarg Patel' }],
-  creator: 'Nisarg Patel',
+  authors: [{ name: 'Vicarius Academic Operations' }],
+  creator: 'Vicarius Academic Agent',
   icons: {
     icon: [
       { url: '/favicon.ico', sizes: '32x32' },
@@ -116,7 +115,7 @@ export default async function RootLayout({
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <VicariusLogo size={20} variant="mark" fill="var(--primary)" />
                   <span>
-                    <strong>Vicarius Academic Task Agent</strong> &copy; 2026 &bull; Autonomous Pipeline for Academic Institution
+                    <strong>Vicarius Academic Task Agent</strong> &copy; 2026 &bull; Autonomous Academic Operations Pipeline
                   </span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>

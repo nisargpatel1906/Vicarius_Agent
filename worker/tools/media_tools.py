@@ -177,7 +177,7 @@ def build_report_docx(
     markdown_content: str,
     title: str = "Academic Assignment",
     course: str = "Computer Engineering",
-    student_name: str = "Nisarg Patel",
+    student_name: str = "Student",
     institution: str = "Academic Institution",
 ) -> Path:
     """Builds a formal Word document deliverable styled in Cognitive Heritage aesthetic with professional typography."""
@@ -524,7 +524,7 @@ def build_presentation_pptx(
     slides: List[Dict[str, Any]],
     title: str = "Academic Presentation",
     course: str = "General",
-    student_name: str = "Nisarg Patel",
+    student_name: str = "Student",
 ) -> Path:
     """Builds a PowerPoint presentation styled in Cognitive Heritage aesthetic."""
     from pptx import Presentation
@@ -618,7 +618,7 @@ def generate_ui_screenshot(
 
     # Card inputs / status boxes
     draw.rectangle([100, 360, 980, 480], fill=(255, 255, 255), outline=(127, 118, 105), width=2)
-    draw.text((120, 400), "Input: Student Nisarg Patel (B.Tech CE-AIML)", fill=(77, 70, 58))
+    draw.text((120, 400), "Input: Student Workspace (Academic Pipeline)", fill=(77, 70, 58))
 
     draw.rectangle([100, 520, 980, 640], fill=(255, 255, 255), outline=(127, 118, 105), width=2)
     draw.text((120, 560), "Status: Verified & Operational", fill=(77, 70, 58))

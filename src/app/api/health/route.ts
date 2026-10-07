@@ -4,23 +4,31 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase';
-import { ApiResponse, SystemEvent } from '@/lib/types';
-import { isRequestAuthorized } from '@/lib/auth';
+import { ApiResponse } from '@/lib/types';
+import { requireOwner, isOperatorAuthorized } from '@/lib/auth';
 
 export async function GET(req: NextRequest) {
-  if (!isRequestAuthorized(req)) {
-    return NextResponse.json({ error: 'Not Found' }, { status: 404 });
+  const user = await requireOwner(req);
+  const isOperator = isOperatorAuthorized(req);
+  if (!user && !isOperator) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   try {
     const supabase = getSupabaseAdmin();
 
     // 1. Fetch recent system events
-    const { data: events } = await supabase
+    let eventsQuery = supabase
       .from('system_events')
       .select('*')
       .order('created_at', { ascending: false })
       .limit(20);
+
+    if (user?.id) {
+      eventsQuery = eventsQuery.eq('user_id', user.id);
+    }
+
+    const { data: events } = await eventsQuery;
 
     // 2. Determine last ingestion timestamp
     const lastIngestEvent = (events || []).find((e) => e.component === 'ingestion');
@@ -28,19 +36,30 @@ export async function GET(req: NextRequest) {
 
     // 3. Determine last worker check-in timestamp
     const lastWorkerEvent = (events || []).find((e) => e.component === 'worker');
-    const { data: latestTask } = await supabase
+
+    let latestTaskQuery = supabase
       .from('tasks')
       .select('updated_at, claimed_at')
       .order('updated_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(1);
 
+    if (user?.id) {
+      latestTaskQuery = latestTaskQuery.eq('user_id', user.id);
+    }
+
+    const { data: latestTask } = await latestTaskQuery.maybeSingle();
     const lastWorkerTime = lastWorkerEvent?.created_at || latestTask?.updated_at || null;
 
     // 4. Compute rough usage stats from tasks
-    const { data: allTasks } = await supabase
+    let tasksQuery = supabase
       .from('tasks')
       .select('id, task_type, status, created_at');
+
+    if (user?.id) {
+      tasksQuery = tasksQuery.eq('user_id', user.id);
+    }
+
+    const { data: allTasks } = await tasksQuery;
 
     const totalTasks = allTasks?.length || 0;
     const completedTasks = allTasks?.filter((t) => t.status === 'done').length || 0;
@@ -50,7 +69,7 @@ export async function GET(req: NextRequest) {
 
     const usage = {
       groq: {
-        estimatedCalls: totalTasks * 2, // classification + answer parsing
+        estimatedCalls: totalTasks * 2,
         dailyLimit: groqDailyLimit,
         usagePercent: Math.min(100, Math.round(((totalTasks * 2) / groqDailyLimit) * 100)),
       },

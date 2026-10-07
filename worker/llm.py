@@ -521,7 +521,7 @@ def call_llm_structured(
                             headers={
                                 "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                                 "Content-Type": "application/json",
-                                "HTTP-Referer": os.getenv("APP_URL", "https://github.com/nisargpatel1906/Vicarius_Agent"),
+                                "HTTP-Referer": os.getenv("APP_URL", "https://vicarius.agent"),
                                 "X-Title": os.getenv("APP_TITLE", "Vicarius Agent"),
                             },
                             json=body_with_tools,
@@ -561,7 +561,7 @@ def call_llm_structured(
                     headers={
                         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                         "Content-Type": "application/json",
-                        "HTTP-Referer": os.getenv("APP_URL", "https://github.com/nisargpatel1906/Vicarius_Agent"),
+                        "HTTP-Referer": os.getenv("APP_URL", "https://vicarius.agent"),
                         "X-Title": os.getenv("APP_TITLE", "Vicarius Agent"),
                     },
                     json=body,

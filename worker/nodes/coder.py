@@ -526,10 +526,10 @@ def coder_node(state: AgentState) -> Dict[str, Any]:
     except Exception:
         pass
 
-    student_name = user_prof.get("full_name") or user_prof.get("name") or "Nisarg Patel"
-    student_enrollment = user_prof.get("enrollment_no") or "STUDENT_ID"
-    student_program = user_prof.get("program") or "B.Tech, Computer Engineering (AIML)"
-    student_uni = user_prof.get("university") or "Academic Institution"
+    student_name = user_prof.get("full_name") or user_prof.get("name") or os.getenv("STUDENT_NAME", "Student")
+    student_enrollment = user_prof.get("enrollment_no") or os.getenv("STUDENT_ENROLLMENT_NO", "")
+    student_program = user_prof.get("program") or os.getenv("STUDENT_PROGRAM", "Undergraduate Degree")
+    student_uni = user_prof.get("university") or os.getenv("STUDENT_UNIVERSITY", "Academic Institution")
     custom_directives = user_prof.get("custom_instructions", "")
     writing_voice = user_prof.get("writing_voice_sample", "")
     academic_level = user_prof.get("academic_level_note", "")

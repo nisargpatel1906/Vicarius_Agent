@@ -14,9 +14,6 @@ const GROQ_API_URL = process.env.GROQ_API_URL || 'https://api.groq.com/openai/v1
 const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 const GROQ_WHISPER_URL = process.env.GROQ_WHISPER_URL || 'https://api.groq.com/openai/v1/audio/transcriptions';
 const OPENAI_WHISPER_URL = process.env.OPENAI_WHISPER_URL || 'https://api.openai.com/v1/audio/transcriptions';
-const STUDENT_NAME = process.env.STUDENT_NAME || 'Nisarg Patel';
-const STUDENT_UNIVERSITY = process.env.STUDENT_UNIVERSITY || 'Academic Institution';
-const STUDENT_PROGRAM = process.env.STUDENT_PROGRAM || 'Computer Engineering / AI-ML';
 
 export interface TelegramUpdate {
   update_id: number;
@@ -77,8 +74,26 @@ export async function sendTelegramMessage(
   targetChatId?: string | number
 ): Promise<boolean> {
   const token = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
-  const rawChatId = targetChatId || process.env.TELEGRAM_ALLOWED_CHAT_ID;
-  const chatId = rawChatId ? String(rawChatId).replace(/['"\r\n\s]/g, '') : '';
+  let chatId = targetChatId ? String(targetChatId).replace(/['"\r\n\s]/g, '') : '';
+
+  if (!chatId) {
+    try {
+      const supabase = getSupabaseAdmin();
+      const { data: profile } = await supabase
+        .from('profile')
+        .select('telegram_id')
+        .not('telegram_id', 'is', null)
+        .limit(1)
+        .maybeSingle();
+      if (profile?.telegram_id) {
+        chatId = String(profile.telegram_id).trim();
+      }
+    } catch {}
+  }
+
+  if (!chatId && process.env.TELEGRAM_ALLOWED_CHAT_ID) {
+    chatId = process.env.TELEGRAM_ALLOWED_CHAT_ID.replace(/['"\r\n\s]/g, '');
+  }
 
   if (!token || !chatId) {
     console.warn('Telegram token or chat ID not configured.');
@@ -1575,19 +1590,60 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<{ h
   const rawIncomingId = update.message?.chat.id || update.callback_query?.message?.chat.id || update.message?.from?.id;
   const incomingChatId = rawIncomingId ? String(rawIncomingId).replace(/['"\r\n\s]/g, '') : '';
 
-  // Strict chat-ID authorization: silently ignore unauthorized senders (PRD Section 8 / CLAUDE.md)
   if (!incomingChatId) {
     return { handled: false };
   }
-  if (allowedChatId && incomingChatId !== allowedChatId && !allowedChatId.includes(incomingChatId)) {
-    console.warn(`Unauthorized Telegram sender: ${incomingChatId} (expected: ${allowedChatId})`);
-    return { handled: false };
-  }
-
-  const reply = (msg: string, parseMode: 'Markdown' | 'HTML' = 'HTML') => sendTelegramMessage(msg, parseMode, incomingChatId);
 
   const supabase = getSupabaseAdmin();
   const text = update.message?.text?.trim() || update.message?.caption?.trim() || '';
+  const reply = (msg: string, parseMode: 'Markdown' | 'HTML' = 'HTML') => sendTelegramMessage(msg, parseMode, incomingChatId);
+
+  // 1. Handle /start link_<code> or /connect link_<code> from the setup wizard
+  if (text.startsWith('/start') || text.startsWith('/connect')) {
+    const parts = text.split(/\s+/);
+    const codeArg = parts[1] || '';
+    const cleanCode = codeArg.replace(/^link_/, '').trim();
+    if (cleanCode && cleanCode.length >= 6) {
+      const { data: profiles } = await supabase
+        .from('profile')
+        .select('id, user_id, full_name');
+      const matchedProfile = (profiles || []).find(
+        (p) => p.user_id && p.user_id.toLowerCase().startsWith(cleanCode.toLowerCase())
+      );
+      if (matchedProfile) {
+        await supabase
+          .from('profile')
+          .update({ telegram_id: incomingChatId, updated_at: new Date().toISOString() })
+          .eq('id', matchedProfile.id);
+
+        await reply(
+          `✅ <b>Telegram Linked Successfully!</b>\n\nWelcome, <b>${escapeHtml(matchedProfile.full_name || 'Operator')}</b>! Your Telegram chat is now linked to your Vicarius Agent workspace. You will receive autonomous briefings, questions, and task alerts here.`
+        );
+        return { handled: true, responseText: 'Telegram account linked successfully' };
+      }
+    }
+  }
+
+  // 2. Chat-ID authorization check: check database profile first, then env
+  let isAuthorized = Boolean(
+    allowedChatId && (incomingChatId === allowedChatId || allowedChatId.includes(incomingChatId))
+  );
+
+  if (!isAuthorized) {
+    const { data: matchedProfile } = await supabase
+      .from('profile')
+      .select('id')
+      .eq('telegram_id', incomingChatId)
+      .maybeSingle();
+    if (matchedProfile) {
+      isAuthorized = true;
+    }
+  }
+
+  if (!isAuthorized) {
+    console.warn(`Unauthorized Telegram sender: ${incomingChatId}`);
+    return { handled: false };
+  }
 
   // ── Phase 2A: Voice Message → Transcription → AI ──
   if (update.message?.voice) {

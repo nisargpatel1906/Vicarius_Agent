@@ -15,9 +15,6 @@ import {
 } from './telegram';
 import { rememberCourseCorrection } from './aethos';
 
-const STUDENT_NAME = process.env.STUDENT_NAME || 'Nisarg Patel';
-const STUDENT_UNIVERSITY = process.env.STUDENT_UNIVERSITY || 'Academic Institution';
-const STUDENT_PROGRAM = process.env.STUDENT_PROGRAM || 'Computer Engineering / AI-ML';
 const OPENROUTER_API_URL = process.env.OPENROUTER_API_URL || 'https://openrouter.ai/api/v1/chat/completions';
 
 /**
@@ -367,7 +364,25 @@ async function generateReasoningNode(state: typeof AcademicAgentState.State) {
     return { finalResponse: state.actionTaken };
   }
 
-  const systemInstruction = `You are Vicarius Agent, a world-class autonomous academic intelligence assistant built for ${STUDENT_NAME} at ${STUDENT_UNIVERSITY} (${STUDENT_PROGRAM}).
+  let studentName = 'Student';
+  let studentUniv = 'Academic Institution';
+  let studentProg = 'Undergraduate Degree';
+  try {
+    const supabase = getSupabaseAdmin();
+    const { data: prof } = await supabase
+      .from('profile')
+      .select('full_name, preferred_name, university, program')
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (prof) {
+      studentName = prof.preferred_name || prof.full_name || studentName;
+      studentUniv = prof.university || studentUniv;
+      studentProg = prof.program || studentProg;
+    }
+  } catch {}
+
+  const systemInstruction = `You are Vicarius Agent, a world-class autonomous academic intelligence assistant built for ${studentName} at ${studentUniv} (${studentProg}).
 You are powered by a LangGraph StateGraph engine with live Supabase database grounding.
 
 CURRENT ACTIVE TASKS:

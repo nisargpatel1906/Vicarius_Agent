@@ -5,11 +5,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin, logSystemEvent } from '@/lib/supabase';
 import { ApiResponse } from '@/lib/types';
-import { isRequestAuthorized } from '@/lib/auth';
+import { requireOwner, isOperatorAuthorized } from '@/lib/auth';
 
 export async function POST(req: NextRequest) {
-  if (!isRequestAuthorized(req)) {
-    return NextResponse.json({ error: 'Not Found' }, { status: 404 });
+  const user = await requireOwner(req);
+  const isOperator = isOperatorAuthorized(req);
+  if (!user && !isOperator) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   try {
@@ -27,16 +29,20 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { data, error } = await supabase
+    let query = supabase
       .from('questions')
       .update({
         answer_text: answer.trim(),
         status: 'answered',
         answered_at: new Date().toISOString(),
       })
-      .eq('id', questionId)
-      .select()
-      .single();
+      .eq('id', questionId);
+
+    if (user?.id) {
+      query = query.eq('user_id', user.id);
+    }
+
+    const { data, error } = await query.select().single();
 
     if (error) throw error;
 

@@ -178,15 +178,15 @@ export const CAMPUS_LANDMARKS: CampusLandmark[] = [
   },
   {
     id: 'coder_foundry',
-    name: "Nisarg's Foundry & GPU Workshop",
-    subtitle: 'Local PC & CLI Deliverable Forge',
+    name: "Agent Core Foundry & GPU Workshop",
+    subtitle: 'Local Worker & CLI Deliverable Forge',
     x: 940,
     y: 360,
     stageName: 'Antigravity CLI Code Compilation',
     langGraphNodes: ['coder', 'worker.worker', 'task_work_dir'],
     toolsUsed: ['Antigravity CLI (agy)', 'Python 3.12', 'python-pptx', 'python-docx', 'work_dirs/'],
     brandIcons: ['python', 'microsoftpowerpoint', 'microsoftword'],
-    description: 'Local execution engine on Nisarg\'s physical PC. Compiles standalone Python scripts, synthesizes master 17-slide decks, formats DOCX papers, and generates source assets.',
+    description: 'Dedicated execution engine on the local compute worker. Compiles standalone Python scripts, synthesizes master 17-slide decks, formats DOCX papers, and generates source assets.',
     iconType: 'coder_foundry',
     color: '#705728',
     inputSchema: '{ "script": "generate_deck.py", "output_format": "pptx", "target_slides": 17 }',
@@ -390,8 +390,8 @@ export const SIMULATION_SCENARIOS: Record<string, SimulationScenario> = {
       {
         fromIndex: 6,
         toIndex: 7,
-        actionText: "Walking to Nisarg's Foundry",
-        thought: 'Carrying generated python-pptx builder script to local PC for physical compilation...',
+        actionText: "Walking to Core Foundry",
+        thought: 'Carrying generated python-pptx builder script to local worker for physical compilation...',
         isStationary: false,
         activeNode: 'coder',
         activeModel: 'Antigravity CLI (agy)',
@@ -498,7 +498,7 @@ export const SIMULATION_SCENARIOS: Record<string, SimulationScenario> = {
       {
         fromIndex: 5,
         toIndex: 7,
-        actionText: "Compiling Deck in Nisarg's Foundry",
+        actionText: "Compiling Deck in Core Foundry",
         thought: 'Antigravity CLI synthesizes slides... loop encountered early termination in section 4.',
         isStationary: true,
         activeNode: 'coder',
@@ -940,7 +940,7 @@ export function AgentWorld({
         };
       case 'building':
         return {
-          landmarkIndex: 7, // Nisarg's Foundry & GPU Workshop
+          landmarkIndex: 7, // Core Foundry & GPU Workshop
           action: `Foundry Compiling: "${activeTask.title}"`,
           thought: `Antigravity CLI executing (${activeTask.task_type || 'worker build'}). Synthesizing artifacts in work_dirs/...`,
           node: 'coder',

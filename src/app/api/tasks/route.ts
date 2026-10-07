@@ -5,11 +5,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin, logSystemEvent } from '@/lib/supabase';
 import { ApiResponse, Task } from '@/lib/types';
-import { isRequestAuthorized } from '@/lib/auth';
+import { requireOwner, isOperatorAuthorized } from '@/lib/auth';
 
 export async function GET(req: NextRequest) {
-  if (!isRequestAuthorized(req)) {
-    return NextResponse.json({ error: 'Not Found' }, { status: 404 });
+  const user = await requireOwner(req);
+  const isOperator = isOperatorAuthorized(req);
+  if (!user && !isOperator) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   try {
@@ -28,6 +30,10 @@ export async function GET(req: NextRequest) {
         questions (*),
         deliverables (*)
       `);
+
+    if (user?.id) {
+      query = query.eq('user_id', user.id);
+    }
 
     if (sortBy === 'posted_date_asc') {
       query = query.order('posted_date', { ascending: true, nullsFirst: false });
@@ -77,8 +83,10 @@ export async function GET(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
-  if (!isRequestAuthorized(req)) {
-    return NextResponse.json({ error: 'Not Found' }, { status: 404 });
+  const user = await requireOwner(req);
+  const isOperator = isOperatorAuthorized(req);
+  if (!user && !isOperator) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   try {
@@ -95,7 +103,7 @@ export async function PATCH(req: NextRequest) {
 
     if (action === 'retry') {
       // Requeue a flagged or failed task (PRD Section 6.6)
-      const { data, error } = await supabase
+      let query = supabase
         .from('tasks')
         .update({
           status: 'queued',
@@ -104,9 +112,13 @@ export async function PATCH(req: NextRequest) {
           result_summary: 'Manually requeued from dashboard.',
           updated_at: new Date().toISOString(),
         })
-        .eq('id', id)
-        .select()
-        .single();
+        .eq('id', id);
+
+      if (user?.id) {
+        query = query.eq('user_id', user.id);
+      }
+
+      const { data, error } = await query.select().single();
 
       if (error) throw error;
       await logSystemEvent('info', 'dashboard', `Task ${id} requeued from dashboard.`);
@@ -116,30 +128,38 @@ export async function PATCH(req: NextRequest) {
 
     if (action === 'toggle_archive') {
       const { archived } = updates;
-      const { data, error } = await supabase
+      let query = supabase
         .from('tasks')
         .update({
           archived: typeof archived === 'boolean' ? archived : true,
           updated_at: new Date().toISOString(),
         })
-        .eq('id', id)
-        .select()
-        .single();
+        .eq('id', id);
+
+      if (user?.id) {
+        query = query.eq('user_id', user.id);
+      }
+
+      const { data, error } = await query.select().single();
 
       if (error) throw error;
       return NextResponse.json<ApiResponse>({ success: true, data });
     }
 
     // Generic update
-    const { data, error } = await supabase
+    let query = supabase
       .from('tasks')
       .update({
         ...updates,
         updated_at: new Date().toISOString(),
       })
-      .eq('id', id)
-      .select()
-      .single();
+      .eq('id', id);
+
+    if (user?.id) {
+      query = query.eq('user_id', user.id);
+    }
+
+    const { data, error } = await query.select().single();
 
     if (error) throw error;
     return NextResponse.json<ApiResponse>({ success: true, data });

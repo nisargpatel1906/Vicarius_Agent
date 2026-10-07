@@ -307,13 +307,13 @@ export async function getUserProfile(): Promise<UserProfile> {
   }
   return {
     id: 'default',
-    full_name: process.env.STUDENT_NAME || 'Student',
-    university: process.env.STUDENT_UNIVERSITY || 'University',
-    program: process.env.STUDENT_PROGRAM || 'B.Tech, Computer Engineering (AIML)',
-    current_semester: process.env.STUDENT_SEMESTER || 'Semester 4',
+    full_name: 'Student',
+    university: 'Academic Institution',
+    program: 'Undergraduate Degree',
+    current_semester: 'Semester 1',
     default_citation_style: 'IEEE',
-    academic_level_note: 'Comfortable with rigorous technical depth, distributed systems, machine learning architectures, and academic prose; avoids superficial generalizations.',
-    writing_voice_sample: 'In distributed systems, ensuring high availability often necessitates trade-offs against immediate consistency, as characterized by the CAP theorem. Our evaluation demonstrates that leader-based consensus mechanisms such as Raft offer superior operational simplicity compared to traditional Paxos deployments without sacrificing fault tolerance.',
+    academic_level_note: 'Rigorous technical and academic depth with clear structure and citations.',
+    writing_voice_sample: '',
     updated_at: new Date().toISOString(),
   };
 }

@@ -272,7 +272,7 @@ export function ProfileEditor({
                 onChange={(e) => setProfile({ ...profile, full_name: e.target.value })}
                 className="stationery-input"
                 style={{ width: '100%' }}
-                placeholder="e.g. Nisarg Patel"
+                placeholder="e.g. Alex Morgan"
                 required
               />
             </div>
@@ -287,7 +287,7 @@ export function ProfileEditor({
                 onChange={(e) => setProfile({ ...profile, preferred_name: e.target.value })}
                 className="stationery-input"
                 style={{ width: '100%' }}
-                placeholder="e.g. Nisarg"
+                placeholder="e.g. Alex"
               />
             </div>
 
@@ -301,7 +301,7 @@ export function ProfileEditor({
                 onChange={(e) => setProfile({ ...profile, email: e.target.value })}
                 className="stationery-input"
                 style={{ width: '100%' }}
-                placeholder="student@silveroakuni.ac.in"
+                placeholder="student@university.edu"
               />
             </div>
 
@@ -362,7 +362,7 @@ export function ProfileEditor({
                 onChange={(e) => setProfile({ ...profile, university: e.target.value })}
                 className="stationery-input"
                 style={{ width: '100%' }}
-                placeholder="Academic Institution"
+                placeholder="e.g. University of Technology"
                 required
               />
             </div>
@@ -759,7 +759,7 @@ export function ProfileEditor({
               onChange={(e) => setNewAttrVal(e.target.value)}
               className="stationery-input"
               style={{ flex: 2, minWidth: 240 }}
-              placeholder="Attribute Value (e.g. nisargpatel1906)"
+              placeholder="Attribute Value (e.g. github_username)"
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   e.preventDefault();

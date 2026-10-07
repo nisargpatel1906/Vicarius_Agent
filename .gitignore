@@ -72,3 +72,5 @@ AGENTS.md
 CLAUDE.md
 desktop.ini
 logo 1 (3).ico
+src/app/**/.env*
+setup/pii-patterns.txt
