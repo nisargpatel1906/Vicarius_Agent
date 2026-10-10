@@ -12,21 +12,44 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_SITE_URL || 'https://vicarius-agent.vercel.app'
+  ),
   title: {
-    default: 'Vicarius Agent — Academic Intelligence Pipeline',
+    default: 'Vicarius Agent — Autonomous Academic Operations & LangGraph Multi-Agent Engine',
     template: '%s | Vicarius Agent',
   },
   description:
-    'Personal autonomous AI agent pipeline watching Google Classroom & Gmail, producing verified academic deliverables with Cognitive Heritage precision.',
+    'Open-source autonomous AI agent pipeline watching Google Classroom & Gmail, executing verified academic deliverables via self-healing LangGraph multi-agent workflows, and presenting real-time operations in a Cognitive Heritage dashboard.',
   keywords: [
-    'Academic AI',
-    'Google Classroom Agent',
-    'Autonomous Pipeline',
-    'Vicarius Agent',
-    'Antigravity Engine',
+    'Autonomous AI Agent',
+    'LangGraph Agent Pipeline',
+    'Multi-Agent System',
+    'Google Classroom Automation',
+    'Gmail AI Agent',
+    'Next.js 15 App Router',
+    'Supabase Row-Level Security',
+    'Google Antigravity Engine',
+    'Self-Healing AI',
+    'Reflexion Architecture',
+    'Academic Task Ingestion',
+    'Cognitive Heritage UI',
+    'Open Source AI Operations',
   ],
-  authors: [{ name: 'Vicarius Academic Operations' }],
-  creator: 'Vicarius Academic Agent',
+  authors: [{ name: 'Nisarg Patel', url: 'https://github.com/nisargpatel1906' }],
+  creator: 'Nisarg Patel',
+  publisher: 'Vicarius Academic Operations',
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      'max-video-preview': -1,
+      'max-image-preview': 'large',
+      'max-snippet': -1,
+    },
+  },
   icons: {
     icon: [
       { url: '/favicon.ico', sizes: '32x32' },
@@ -36,18 +59,29 @@ export const metadata: Metadata = {
     apple: '/icon.svg',
   },
   openGraph: {
-    title: 'Vicarius Agent — Academic Intelligence Pipeline',
+    title: 'Vicarius Agent — Autonomous Academic Operations Engine',
     description:
-      'Personal autonomous AI agent pipeline watching Google Classroom & Gmail, producing verified academic deliverables with Quiet Luxury precision.',
+      'Autonomous multi-agent system monitoring Google Classroom & Gmail, synthesizing verified software projects, research papers, and slide decks via LangGraph.',
+    url: 'https://github.com/nisargpatel1906/Vicarius_Agent',
     type: 'website',
-    locale: 'en_IN',
+    locale: 'en_US',
     siteName: 'Vicarius Agent',
+    images: [
+      {
+        url: '/workflow-diagram.svg',
+        width: 1200,
+        height: 630,
+        alt: 'Vicarius Agent Autonomous Pipeline Architecture',
+      },
+    ],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Vicarius Agent — Academic Intelligence Pipeline',
+    title: 'Vicarius Agent — Autonomous Academic Operations Engine',
     description:
-      'Personal autonomous AI agent pipeline watching Google Classroom & Gmail, producing verified academic deliverables.',
+      'Autonomous multi-agent system monitoring Google Classroom & Gmail, synthesizing verified deliverables via LangGraph.',
+    creator: '@nisargpatel1906',
+    images: ['/workflow-diagram.svg'],
   },
 };
 
@@ -65,9 +99,35 @@ export default async function RootLayout({
   // If no security tokens configured (local dev) or if authenticated via cookie
   const isAuthorized = validTokens.length === 0 || (!!token && validTokens.includes(token));
 
+  const jsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'SoftwareApplication',
+    name: 'Vicarius Agent',
+    applicationCategory: 'DeveloperApplication, EducationalApplication',
+    operatingSystem: 'All',
+    offers: {
+      '@type': 'Offer',
+      price: '0',
+      priceCurrency: 'USD',
+    },
+    author: {
+      '@type': 'Person',
+      name: 'Nisarg Patel',
+      url: 'https://github.com/nisargpatel1906',
+    },
+    description:
+      'Autonomous AI agent pipeline watching Google Classroom & Gmail, executing verified academic deliverables via self-healing LangGraph multi-agent workflows.',
+    softwareVersion: '1.0.0',
+    license: 'https://opensource.org/licenses/MIT',
+  };
+
   return (
     <html lang="en">
       <body>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        />
         <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', width: '100%', maxWidth: '100vw', overflowX: 'hidden' }}>
           {isAuthorized && <DashboardHeader isAuthorized={isAuthorized} />}
 
