@@ -22,6 +22,8 @@ export async function middleware(req: NextRequest) {
     pathname.endsWith('.jpg') ||
     pathname.endsWith('.webp') ||
     pathname === '/favicon.ico' ||
+    pathname === '/robots.txt' ||
+    pathname === '/sitemap.xml' ||
     pathname === '/not-found'
   ) {
     return NextResponse.next();
