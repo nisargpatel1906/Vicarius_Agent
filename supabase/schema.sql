@@ -30,10 +30,9 @@ create table if not exists public.profile (
   custom_attributes jsonb default '{}'::jsonb,
   setup_completed boolean not null default false,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  constraint profile_user_id_key unique (user_id)
 );
-
-create unique index if not exists uq_profile_user_id on public.profile (user_id) where user_id is not null;
 
 -- Helper to resolve owner ID for default column values
 create or replace function public.default_owner_id()
