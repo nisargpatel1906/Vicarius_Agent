@@ -1,3 +1,5 @@
+.next/
+.vercel/
 .env*
 .venv/
 venv/
@@ -15,3 +17,4 @@ tests/
 *.pdf
 *.zip
 *.ipynb
+

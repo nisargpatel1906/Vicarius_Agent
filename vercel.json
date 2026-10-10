@@ -3,10 +3,6 @@
     {
       "path": "/api/briefing",
       "schedule": "30 2 * * *"
-    },
-    {
-      "path": "/api/ingest",
-      "schedule": "0 0 */5 * *"
     }
   ]
 }
