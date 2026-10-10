@@ -1,161 +1,252 @@
-# Vicarius Agent
+<div align="center">
 
-> Autonomous Academic Task Ingestion, LangGraph Multi-Agent Execution Pipeline, and Cognitive Heritage Operations Command.
+# 🏛️ Vicarius Agent
 
-[![MIT License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Next.js](https://img.shields.io/badge/Next.js-15.2.1-black)](https://nextjs.org/)
-[![LangGraph](https://img.shields.io/badge/LangGraph-1.2.0+-orange)](https://langchain-ai.github.io/langgraph/)
-[![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL%20%2B%20RLS-emerald)](https://supabase.com/)
+**Autonomous Academic Operations Engine, Self-Healing LangGraph Multi-Agent Pipeline & Cognitive Heritage Dashboard**
 
----
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Next.js 15](https://img.shields.io/badge/Next.js-15.2.1-black?logo=next.js)](https://nextjs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-1.2.0+-FF6F00)](https://langchain-ai.github.io/langgraph/)
+[![Supabase RLS](https://img.shields.io/badge/Supabase-PostgreSQL%20%2B%20RLS-3ECF8E?logo=supabase&logoColor=white)](https://supabase.com/)
+[![Security: PII--Audited](https://img.shields.io/badge/Security-PII--Audited-success.svg)](setup/check-pii.mjs)
 
-## Overview
-
-**Vicarius Agent** is an open-source autonomous academic operations engine designed for engineering and computing students. It automatically monitors and ingests assignments, coursework materials, and announcements from Google Classroom and Gmail, stores and tracks them with strict Row-Level Security in Supabase PostgreSQL, and executes deliverables using a multi-node Python LangGraph agent pipeline paired with Google Antigravity CLI.
-
-Completed deliverables—including functional software projects, Jupyter notebooks, IEEE/APA-formatted research papers, mathematical proofs, and presentation decks—are verified through automated compilation, test execution, and rubric judging before being uploaded to Google Drive, synced to Google Calendar, and dispatched via Telegram.
-
----
-
-## Features
-
-- **Single-Consent Universal Setup**:
-  - One-click "Continue with Google" sign-in grants access to Gmail, Google Classroom, Google Drive, Calendar, and Tasks without manual token copy-pasting.
-  - Automatic token capture and encrypted storage in Supabase `google_credentials` vault.
-- **Strict Row-Level Security (RLS)**:
-  - Fail-closed database isolation ensuring only the authenticated workspace owner can read or write their tasks, deliverables, questions, and academic records.
-  - Anonymous public key has zero read/write access.
-- **Automated Multi-Source Ingestion**:
-  - Continuous ingestion from Google Classroom (coursework, announcements, attachments) and Gmail (filtered academic queries) via scheduled crons.
-  - Ingestion deduplication using composite unique constraints `(source, external_id)`.
-- **Multimodal Requirement Extraction**:
-  - Parses PDFs, Word documents (`.docx`), and scanned assignment images using Gemini 2.0 Flash vision and text extraction.
-  - Semantic chunking and vector embedding storage in Supabase `knowledge_base` with HNSW cosine similarity search.
-- **Self-Reflective LangGraph Worker Pipeline**:
-  - **Extractor Node**: Consolidates assignment files, attachments, and student profile preferences.
-  - **Planner Node**: Constructs structured execution plans and output file manifests.
-  - **Thinker & Validator Nodes**: Formulates reasoning traces scored across 5 quality dimensions with a quality-retry loop.
-  - **Coder Node**: Primary execution via Antigravity CLI (`agy`) with a secondary autonomous ReAct tool loop.
-  - **Verifier Node**: Subprocess execution checking exit codes, deliverable schema validation, anti-AI tone filtering, and LLM Judge scoring.
-  - **Diagnoser Node**: Bounded Reflexion self-healing (up to 4 attempts) with deadline-budget awareness.
-  - **Deliverer Node**: Uploads to Google Drive, schedules Calendar reminder events, and dispatches files to Telegram.
-- **Interactive Operations Command Dashboard**:
-  - Built with Next.js 15 App Router following the **Cognitive Heritage** design system (parchment surfaces `#fff8f4`, warm brass `#705728`, Noto Serif typography).
-  - Live task status tracker, pipeline execution node visualizer, interactive profile vault, and landmark map canvas.
-- **Telegram Mobile Command Center**:
-  - Connect your personal Telegram bot with a single `/start link_<code>` command during setup.
-  - Voice message transcription via Whisper and assignment photo OCR via Gemini Vision.
-  - Daily Morning Briefing at 08:00 IST detailing stuck tasks, imminent deadlines (<12h), and upcoming submissions.
+<p align="center">
+  <a href="#key-features">Key Features</a> •
+  <a href="#system-architecture">Architecture</a> •
+  <a href="#quick-start--self-hosting">5-Minute Quickstart</a> •
+  <a href="#deliverables-supported">Deliverables</a> •
+  <a href="#local-development">Local Setup</a> •
+  <a href="#security--privacy-architecture">Security & RLS</a> •
+  <a href="#license">License</a>
+</p>
 
 ---
 
-## System Architecture
+</div>
+
+## 📌 Executive Summary
+
+**Vicarius Agent** is a production-grade, open-source autonomous academic operations system built for students, researchers, and engineers. It automatically detects and ingests course deliverables, assignments, and announcements from **Google Classroom** and **Gmail**, manages task execution through an autonomous **Python LangGraph StateGraph pipeline** paired with the **Google Antigravity CLI**, and delivers verified, rubric-validated outputs directly to **Google Drive**, **Google Calendar**, and **Telegram**.
+
+Designed from the ground up for privacy, Vicarius Agent enforces **fail-closed PostgreSQL Row-Level Security (RLS)** in Supabase, uses universal single-consent **Google OAuth 2.0**, and keeps personal identity isolated in a database profile vault so that any user can safely fork, self-host, and deploy their own instance in under 10 minutes.
+
+---
+
+## 🚀 Key Features
+
+### 🔐 1. Single-Consent Universal Google OAuth & Setup Wizard
+* **Zero Manual Token Renewals**: Signing in with Google once grants secure offline access to Gmail, Google Classroom, Google Drive, Calendar, and Tasks without copy-pasting tokens or running local renewal scripts.
+* **First-Run Onboarding Wizard (`/setup`)**: Seamless 3-step setup to enter your academic institution, degree, and semester, run live diagnostics across all connected services, and pair your personal Telegram bot with a single `/start link_<code>` command.
+* **Encrypted Token Vault**: Google OAuth refresh tokens are stored in an isolated `google_credentials` table with Row-Level Security accessible strictly by the backend service role.
+
+### 🧠 2. Self-Healing LangGraph Multi-Agent Worker
+* **Extractor Node**: Consolidates assignment briefs, lecture slide attachments, and user citation preferences into structured task states.
+* **Planner Node**: Constructs deterministic step manifests and output schemas.
+* **Thinker & Validator Nodes**: Executes multi-dimensional reasoning loops scored across 5 rubric vectors with dynamic quality retries.
+* **Coder Node**: Synthesizes deliverables utilizing the Google Antigravity CLI (`agy`) with an autonomous fallback ReAct tool loop.
+* **Verifier & LLM Judge**: Performs automated compiler verification, test suite execution, rubric judging, and anti-AI tone scrubbing.
+* **Bounded Reflexion Self-Healing**: Diagnoses compilation and logic failures with up to 4 self-correcting fix attempts governed by deadline-aware budget management.
+* **Deliverer Node**: Automatically uploads completed artifacts to Google Drive, schedules Calendar reminder events, and dispatches attachments to Telegram.
+
+### 🛡️ 3. Enterprise-Grade Security & Row-Level Security (RLS)
+* **100% Fail-Closed Tenant Isolation**: Every table (`profile`, `tasks`, `questions`, `deliverables`, `system_events`, `chat_messages`, `knowledge_base`) enforces `user_id = auth.uid()`.
+* **Zero Cross-User Data Leaks**: Even if someone knows another user's task ID, PostgreSQL returns `[]` (empty set). Anonymous API keys have zero read or write permissions.
+* **Automated PII Scanner (`npm run check:pii`)**: Built-in pre-commit scanner verifies zero personal enrollment numbers, emails, or credentials exist in the codebase.
+
+### 🎨 4. Cognitive Heritage Operations Dashboard
+* **Editorial Aesthetic**: Implements the **Cognitive Heritage** design system (warm parchment tones `#fff8f4`, deep walnut `#231a0f`, brass accents `#705728`, and **Noto Serif** typography).
+* **Live Pipeline Visualizer**: Real-time task progress tracker, interactive question response dialogs for agent clarifications, and student profile editor.
+* **Edge & Serverless Ready**: Next.js 15 App Router running on Vercel with cookie-based SSR sessions powered by `@supabase/ssr`.
+
+### 📱 5. Telegram Mobile Assistant & Daily Briefing
+* **Voice & Photo Ingestion**: Send voice notes (transcribed via Whisper) or photos of handwritten whiteboard problem sets (analyzed via Gemini Vision) directly to your agent.
+* **Daily 08:00 AM Morning Briefing**: Automated push summary detailing urgent tasks (<12h), upcoming deadlines, and pending questions.
+* **Interactive Approvals**: Reply directly to Telegram questions to guide the agent when human decisions are required.
+
+---
+
+## 🏗️ System Architecture
 
 ### 1. End-to-End Autonomous Workflow
-The master workflow diagram maps the end-to-end journey of an academic task: ingestion from Classroom, Gmail, or Telegram, through the self-healing LangGraph worker, to verified egress in Google Drive, Calendar, and Telegram.
+From assignment release to verified delivery across Google Drive, Calendar, and Telegram:
 
-![Vicarius Agent End-to-End Autonomous Workflow](public/workflow-diagram.svg)
+```
+┌─────────────────────────────────┐       ┌───────────────────────────────────┐
+│       Ingestion Sources         │       │        Next.js 15 Web & API       │
+│  • Google Classroom Coursework  │ ────> │  • Webhook & Cron Ingest Engine   │
+│  • Gmail Filtered Queries       │       │  • Supabase SSR Google Auth       │
+│  • Telegram Voice / Photo / Text│       │  • Operations Dashboard (Command) │
+└─────────────────────────────────┘       └─────────────────┬─────────────────┘
+                                                            │
+                                                            ▼
+┌─────────────────────────────────┐       ┌───────────────────────────────────┐
+│     Delivery & Notifications    │       │     PostgreSQL + pgvector (RLS)   │
+│  • Google Drive Dedicated Folder│ <───┐ │  • Row-Level Security Isolation   │
+│  • Google Calendar Reminders    │     │ │  • Tasks & Deliverables Tables    │
+│  • Telegram Push Alerts & Files │     │ │  • HNSW Semantic Vector Store     │
+└─────────────────────────────────┘     │ └─────────────────┬─────────────────┘
+                                        │                   │
+                                        │                   ▼
+                     ┌──────────────────┴───────────────────────────────────────┐
+                     │            Python LangGraph Worker Daemon                │
+                     │  Extractor ──> Planner ──> Thinker ──> Coder (AGY CLI)   │
+                     │  Verifier ──> Diagnoser (Reflexion) ──> Deliverer        │
+                     └──────────────────────────────────────────────────────────┘
+```
 
-### 2. LangGraph Worker StateGraph Topology
-A deep-dive into the deterministic StateGraph execution pipeline, showcasing the thinker validation scoring loop, dual-mode Coder (Antigravity CLI + ReAct fallback), 3-tier Verifier gate, and bounded Reflexion self-healing loop.
-
-![LangGraph Multi-Agent StateGraph Pipeline](public/langgraph-agent-pipeline.svg)
-
-### 3. Hybrid Cloud & Workstation Infrastructure
-The complete physical and serverless infrastructure topology: Next.js 15 App Router on Vercel Edge, Supabase PostgreSQL with `pgvector` HNSW index, Google Workspace APIs, and the dedicated hardware-accelerated local workstation daemon.
-
-![Hybrid Cloud & Dedicated Local Workstation Architecture](public/system-architecture.svg)
+Detailed architectural diagrams available in:
+- [Workflow Diagram](public/workflow-diagram.svg)
+- [LangGraph Agent Pipeline](public/langgraph-agent-pipeline.svg)
+- [System Architecture](public/system-architecture.svg)
 
 ---
 
-## Quick Start & Self-Hosting
+## 📦 Deliverables Supported
 
-Ready to deploy your own instance of Vicarius Agent?
-
-👉 **Follow the complete 10-minute setup guide in [SETUP.md](SETUP.md).**
-
-1. **Fork the repository** on GitHub.
-2. **Deploy to Vercel** using the Deploy button or Vercel CLI.
-3. **Initialize Supabase**: Run [`setup/supabase.sql`](setup/supabase.sql) in your Supabase SQL Editor.
-4. **Configure Google OAuth**: Enable Google provider in Supabase Auth and add the callback URL to Google Cloud Console.
-5. **Set Environment Variables**: Set `ALLOWED_EMAILS`, `OWNER_EMAIL`, `SUPABASE_SERVICE_KEY`, and LLM keys in Vercel.
-6. **Launch & Setup**: Open your deployed site, sign in with Google, and complete the 3-step setup wizard!
+| Category | Output Format | Validation & Gates |
+|---|---|---|
+| **Software Projects** | Zip / GitHub Repo / Docker | Automated test suite execution, linter check, exit code 0 |
+| **Academic Papers** | `.docx` / `.pdf` | IEEE / APA citation check, formal academic tone verification |
+| **Executive Presentations**| `.pptx` | Slide typography, structural deck validation, clean rendering |
+| **Jupyter Notebooks** | `.ipynb` | Zero-error kernel execution, inline visualization generation |
+| **Proof & Problem Sets** | Markdown / PDF | Step-by-step mathematical reasoning, sanity validation |
 
 ---
 
-## Local Development
+## ⚡ Quick Start & Self-Hosting
 
-### 1. Clone & Install Dependencies
+Deploy your private academic operations agent in **~10 minutes**.
+
+> 💡 **For full step-by-step instructions with screenshots, read [SETUP.md](SETUP.md).**
+
+### 1. Fork & Clone
 ```bash
 git clone https://github.com/nisargpatel1906/Vicarius_Agent.git
 cd Vicarius_Agent
 npm install
 ```
 
-### 2. Configure Environment
+### 2. Initialize Database (1 Click)
+1. Create a free project at [supabase.com](https://supabase.com).
+2. Open the **SQL Editor** in your Supabase project.
+3. Paste the contents of [`setup/supabase.sql`](setup/supabase.sql) and click **Run**.  
+   *(This creates all tables, triggers, and Row-Level Security policies instantly).*
+
+### 3. Google Cloud OAuth Web Client
+1. Open [Google Cloud Console](https://console.cloud.google.com/) → Enable **Gmail, Classroom, Drive, Calendar, and Tasks APIs**.
+2. Under **Credentials** → **Create Credentials** → **OAuth client ID** (Type: **Web application**).
+3. Set **Authorized redirect URIs** to:
+   ```text
+   https://<YOUR-SUPABASE-PROJECT-REF>.supabase.co/auth/v1/callback
+   http://localhost:3000/auth/callback
+   ```
+4. Copy your **Client ID** and **Client Secret**.
+
+### 4. Enable Google in Supabase
+1. In Supabase Dashboard → **Authentication** → **Providers** → **Google**.
+2. Toggle to **ON**, paste your **Client ID** and **Client Secret**, and click **Save**.
+
+### 5. Configure Local `.env` & Start
 ```bash
 cp .env.example .env.local
-cp .env.example .env
 ```
-Fill in your Supabase URL, anon key, service key, and LLM keys.
+Fill in your Supabase URL, anon key, and service role key in `.env.local`.
 
-### 3. Run Development Server
+Run the Next.js development server:
 ```bash
 npm run dev
 ```
-Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-### 4. Run Python Build Worker (Optional)
+Open [http://localhost:3000](http://localhost:3000), click **Continue with Google**, and complete the 3-step setup wizard!
+
+---
+
+## 🛠️ Local Development & Python Worker
+
+### 1. Run Next.js Dashboard
 ```bash
+npm run dev
+```
+
+### 2. Run Local Python Build Worker
+```bash
+# Setup virtual environment
 python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Activate environment
+# On Windows:
+.venv\Scripts\activate
+# On Linux/macOS:
+source .venv/bin/activate
+
+# Install worker dependencies
 pip install -r worker/requirements.txt
+
+# Start autonomous worker daemon
 python -m worker.worker
 ```
 
-### 5. Audit Security & PII
+### 3. Verify Zero PII Leaks
 ```bash
 npm run check:pii
 ```
 
+### 4. Build for Production
+```bash
+npm run build
+```
+
 ---
 
-## Project Structure
+## 📂 Repository Layout
 
-```
+```text
 Vicarius_Agent/
-├── public/                     # Architecture SVGs, icons, and static assets
+├── public/                     # Architecture SVGs, icons, and diagrams
 ├── setup/                      # Self-hosting setup scripts and schemas
 │   ├── check-pii.mjs           # Automated PII & credential scanner
-│   └── supabase.sql            # Single-step Supabase database schema
+│   └── supabase.sql            # 1-Click Supabase database schema & RLS
 ├── src/                        # Next.js 15 App Router Frontend & API Routes
 │   ├── app/
-│   │   ├── api/                # Edge and serverless route handlers
-│   │   ├── auth/callback/      # OAuth callback & credential vault
+│   │   ├── api/                # Tasks, briefing, ingest, profile, health routes
+│   │   ├── auth/callback/      # OAuth callback & encrypted token vault
 │   │   ├── login/              # Cognitive Heritage Google sign-in
-│   │   ├── setup/              # First-run onboarding wizard
-│   │   ├── layout.tsx          # Root layout
+│   │   ├── setup/              # 3-Step first-run onboarding wizard
+│   │   ├── layout.tsx          # Root layout & typography
 │   │   └── page.tsx            # Operations command dashboard
 │   ├── components/             # Cognitive Heritage UI components
-│   └── lib/                    # Supabase SSR clients, auth, and logic
+│   └── lib/                    # Supabase SSR clients, auth, and state graph
 ├── worker/                     # Autonomous Python LangGraph Worker
 │   ├── nodes/                  # Extractor, Planner, Thinker, Coder, Verifier
 │   ├── tools/                  # Antigravity CLI, ReAct tools, Drive, Telegram
-│   └── worker.py               # Polling daemon and task execution supervisor
+│   └── worker.py               # Task polling daemon and execution supervisor
 ├── .env.example                # Clean template for environment variables
-├── SETUP.md                    # Step-by-step self-hosting documentation
+├── LICENSE                     # MIT Open-Source License
+├── README.md                   # Repository overview and documentation
+├── SETUP.md                    # Detailed 10-minute self-hosting guide
 └── vercel.json                 # Vercel deployment & cron configuration
 ```
 
 ---
 
-## Author & Attribution
+## 🔒 Security & Privacy Architecture
 
-Built with pride by **Nisarg Patel**  
+* **Database Isolation**: Fail-closed PostgreSQL Row-Level Security on all tables.
+* **Credential Vault**: Refresh tokens stored in `google_credentials` with zero public client access.
+* **Edge Guard**: Middleware verified against Supabase Auth sessions on every dashboard navigation.
+* **Attribution & Privacy**: All personal student identifiers, enrollment numbers, and institutional affiliations are decoupled from code and stored strictly within the user's private database profile.
+
+---
+
+## 👤 Author & Attribution
+
+Architected and built with pride by **Nisarg Patel**  
 GitHub: [@nisargpatel1906](https://github.com/nisargpatel1906)
 
 ---
 
-## License
+## 📄 License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is open-source software licensed under the [MIT License](LICENSE).

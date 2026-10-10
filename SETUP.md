@@ -62,9 +62,10 @@ Google Classroom / Gmail  ──>  Next.js 15 App (Vercel)  <──>  Supabase P
 5. Under **Credentials → Create Credentials → OAuth client ID**:
    - Application type: **Web application**.
    - Name: `Vicarius Web Client`.
-   - **Authorized redirect URIs**: Add your Supabase Auth callback URI:
+   - **Authorized redirect URIs**: Add your Supabase Auth callback URI (and localhost for local development):
      ```
      https://<YOUR-SUPABASE-PROJECT-REF>.supabase.co/auth/v1/callback
+     http://localhost:3000/auth/callback
      ```
    - Click **Create** and save your **Client ID** and **Client Secret**.
 
